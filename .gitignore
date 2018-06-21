@@ -1,0 +1,13 @@
+speech/
+smop-master/
+1_MATLABCode/RIR_Data/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# virtualenv
+.venv/
+venv/
+ENV/
