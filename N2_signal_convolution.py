@@ -40,30 +40,18 @@ for dir,_,_ in os.walk("./speech/data/lisa/data/timit/raw/TIMIT/TRAIN/"):
         data = librosa.core.resample(data, fs_original, fs)
         data=data.astype(np.float32)
         # speech.extend(data)
-        # print(file)
-        pdb.set_trace()
-        length,_ = data.shape
-        N_loc,N_ch,_ = RIR.shape
+        print(file)
+        length = data.shape[0]
+        N_loc = RIR.shape[0]
+        N_ch = RIR.shape[1]
+        # pdb.set_trace()
         for i_loc in range(0,N_loc):
-            convolved=np.empty([N_ch, length])
-            for i_ch in rnage(0,N_ch):
-                convolved[i_ch]=scipy.signal.fftconvolve(data, RIR_one_loc[i_ch], mode='same')
-            speech_convolved.extend(convolved)
-
-# speech_gpu=cuda.mem_alloc(speech.nbytes)
-# cuda.memcpy_htod(speech_gpu, speech)
-speech_convolved=[]
-for data in speech:
-    pdb.set_trace()
-    length,_ = data.shape
-    N_ch,_ = RIR[1].shape
-    for RIR_one_angle in RIR:
-        convolved=np.empty([N_ch, length])
-        for i_ch in rnage(0,N_ch):
-            convolved[i_ch]=scipy.signal.fftconvolve(data, RIR_one_angle[i_ch], mode='same')
-        speech_convolved.extend(convolved)
-
-
+            convolved=np.zeros((N_ch, length))
+            for i_ch in range(0,N_ch):
+                convolved[i_ch]=sc.signal.fftconvolve(data, RIR[i_loc, i_ch], mode='same')
+            path='./speech/convolved/'+os.path.basename(file).replace('.wav','_{}.wav'.format(i_loc))
+            # 멀티채널 오디오 파일 저장 찾아봐야 함
+            librosa.output.write_wav(path,)
 
 
 #32 x 48k x 72
