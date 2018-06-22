@@ -3,7 +3,7 @@ clear
 addpath myfun speech old_data
 
 %% 1. Load 32 channel speech data
-load Filtered_Speech_6order.mat 
+% load Filtered_Speech_6order.mat 
 [src_signal,Fs_signal] = audioread('ar-01.wav');
 
 %% 2. Initialize variables
@@ -25,7 +25,7 @@ AnalNum = floor(DataSize/Nhop)-1;
 HanWin  = hann(Nframe,'periodic');
 HanWin_32 = repmat(HanWin,1,32);
 
-load Eigenmike_ph_th.mat 
+% load Eigenmike_ph_th.mat 
 mic_dirs_rad = mic_dirs_deg/180*pi;
 mic_r = 0.042;
 mic_n = 32;

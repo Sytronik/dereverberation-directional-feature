@@ -31,7 +31,7 @@ fs = 48000
 fs_original=0
 for dir,_,_ in os.walk("./speech/data/lisa/data/timit/raw/TIMIT/TRAIN/"):
     files=glob(os.path.join(dir,"*_converted.wav"))
-    if files==[]:
+    if files is None:
         continue
     for file in files:
         # print(file)
