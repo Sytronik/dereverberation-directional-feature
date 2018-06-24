@@ -19,7 +19,7 @@ import soundfile as sf
 # __global__ void
 # """)
 
-RIR = np.array(sc.io.loadmat("./1_MATLABCode/RIR_Data/RIR.mat", variable_names = 'RIR')['RIR'])
+RIR = np.array(sc.io.loadmat('./1_MATLABCode/RIR_Data/RIR.mat', variable_names = 'RIR')['RIR'])
 RIR = RIR.transpose((2,0,1)) #72 x 32 x 48k
 
 # RIR.astype(np.float32)
@@ -29,7 +29,7 @@ RIR = RIR.transpose((2,0,1)) #72 x 32 x 48k
 # speech = []
 # speech_convolved = []
 fs = 48000
-for dir, _, _ in os.walk("./speech/data/lisa/data/timit/raw/TIMIT/TRAIN/"):
+for dir, _, _ in os.walk('./speech/data/lisa/data/timit/raw/TIMIT/TRAIN/'):
     files = glob(os.path.join(dir, '*_converted.wav'))
     if files is None:
         continue
