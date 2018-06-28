@@ -44,7 +44,8 @@ def get_intensity(Asv, Wnv, Wpv, Vv, Nh_max):
 
     return 1/2*([D_x.real, D_y.real, D_z.real])
 
-speech_dir = './speech/data/lisa/data/timit/raw/TIMIT/TRAIN/'
+dir_speech = './speech/data/lisa/data/timit/raw/TIMIT/TRAIN/'
+dir_IV = './IV/TRAIN/'
 
 #RIR Data
 RIRmat = scio.loadmat('./1_MATLABCode/RIR_Data/RIR.mat', variable_names = 'RIR')
@@ -53,7 +54,7 @@ RIR = np.array(RIRmat['RIR'])
 RIR = RIR.transpose((2, 0, 1)) #72 x 32 x 48k
 N_loc, N_ch = RIR.shape[0:2]
 
-#bEqspec, Yenc Data
+#SFT Data
 sph_mat = scio.loadmat('./11_MATLABCode/sph_data.mat', variable_names='bEQspec\nYenc\nYs\nWnv\nWpv\nVv')
 bEQspec = np.matrix(sph_mat['bEQspec']).transpose()
 Yenc = np.matrix(sph_mat['Yenc']).transpose()
@@ -69,7 +70,7 @@ Lframe = fs*Lwin_ms/1000
 Nfft = Lframe
 Lhop = Lframe/2
 win = sc.signal.hamming(Lframe, sym=False)
-for folder, _, _ in os.walk(speech_dir):
+for folder, _, _ in os.walk(dir_speech):
     files = glob(os.path.join(folder, '*_converted.wav'))
     if files is None:
         continue
@@ -82,7 +83,6 @@ for folder, _, _ in os.walk(speech_dir):
         else:
             data, _ = sf.read(file)
         resampled = librosa.core.resample(data, fs_original, fs)
-
 
         length = resampled.shape[0]
         Nframe = np.floor(length/Lhop)-1
@@ -117,8 +117,12 @@ for folder, _, _ in os.walk(speech_dir):
                             = get_intensity(anm_free[:, i_freq], Wnv, Wpv, Vv)
                     IV_free[i_frame, ff, 3] = np.abs(anm_free[0, i_freq])
 
+            np.save(os.path.join(dir_IV,'%6d_%2d_room.npy'%(N_speech, i_loc)), IV_room)
+            np.save(os.path.join(dir_IV,'%6d_%2d_free.npy'%(N_speech, i_loc)), IV_free)
+
+
 
 print('Number of data: {}'.format(N_files))
 print('Sample Rate: {}'.format(fs))
-print('Number of location: {}'.format(N_loc))
+print('Number of source location: {}'.format(N_loc))
 print('Number of microphone channel: {}'.format(N_ch))
