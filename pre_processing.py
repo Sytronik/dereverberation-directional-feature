@@ -119,7 +119,7 @@ for folder, _, _ in os.walk(dir_speech):
 
             np.save(os.path.join(dir_IV,'%6d_%2d_room.npy'%(N_speech, i_loc)), IV_room)
             np.save(os.path.join(dir_IV,'%6d_%2d_free.npy'%(N_speech, i_loc)), IV_free)
-
+            print(N_speech)
 
 
 print('Number of data: {}'.format(N_files))
