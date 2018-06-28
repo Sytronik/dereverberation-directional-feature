@@ -54,9 +54,13 @@ RIR = RIR.transpose((2, 0, 1)) #72 x 32 x 48k
 N_loc, N_ch = RIR.shape[0:2]
 
 #bEqspec, Yenc Data
-sph_mat = scio.loadmat('./11_MATLABCode/sph_data.mat', variable_names='bEQspec\nYenc\nWnv\nWpv\nVv')
+sph_mat = scio.loadmat('./11_MATLABCode/sph_data.mat', variable_names='bEQspec\nYenc\nYs\nWnv\nWpv\nVv')
 bEQspec = np.matrix(sph_mat['bEQspec']).transpose()
 Yenc = np.matrix(sph_mat['Yenc']).transpose()
+Ys = np.array(sph_mat['Ys'])
+Wnv = np.array(sph_mat['Wnv'])
+Wpv = np.array(sph_mat['Wpv'])
+Vv = np.array(sph_mat['Vv'])
 
 N_speech = 0
 fs = 48000
