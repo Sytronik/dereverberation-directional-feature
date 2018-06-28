@@ -1,6 +1,6 @@
 clear
 
-addpath myfun speech old_data
+% addpath myfun speech old_data
 
 %% 1. Load 32 channel speech data
 % load Filtered_Speech_6order.mat 
@@ -25,7 +25,7 @@ AnalNum = floor(DataSize/Nhop)-1;
 HanWin  = hann(Nframe,'periodic');
 HanWin_32 = repmat(HanWin,1,32);
 
-% load Eigenmike_ph_th.mat 
+load Eigenmike_ph_th.mat 
 mic_dirs_rad = mic_dirs_deg/180*pi;
 mic_r = 0.042;
 mic_n = 32;
@@ -35,8 +35,9 @@ c = 343;
 kr = fax*2*pi/c*mic_r;
 
 %- SPH of sources
-[Ys, ~, ~] = sphrm(Nh_max,0,pi/2,'complex');
-
+for ii = 1:72
+[Ys{ii}, ~, ~] = sphrm(Nh_max,(ii-1)*pi/36,pi/2,'complex');
+end
 
 %- SPH of microphones
 [Ym, nm, mm] = sphrm(Nh_max,mic_dirs_rad(:,1),mic_dirs_rad(:,2),'complex');

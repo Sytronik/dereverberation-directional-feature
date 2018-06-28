@@ -1,4 +1,4 @@
-function [Intensity_sph_norm,Intensity_sph] = sphsmooth_new(Asv,Wnv,Wpv,Vv,Nh_max)
+function [Intensity_sph] = sphsmooth_new_intensity(Asv,Wnv,Wpv,Vv,Nh_max)
 
 nsrc = 1;
 
@@ -59,7 +59,7 @@ for ii = 1:nsrc
     
 %     Intensity_sph = 1/2*real( conj(Aug{1}(1)) .* [D_x D_y D_z]  ) ;
     Intensity_sph = 1/2*real([D_x D_y D_z] ) ;
-    Intensity_sph_norm  = Intensity_sph./sqrt(sum(Intensity_sph.^2));
+%     Intensity_sph_norm  = Intensity_sph./sqrt(sum(Intensity_sph.^2));
     
 end
 

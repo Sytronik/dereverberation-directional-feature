@@ -24,7 +24,8 @@ for xx = 1:length(ph_ax)
 
     HP = 0;                             % Optional high pass filter (0/1)
     src_type = 'o';                     % Directional source type ('o','c','s','h','b')
-    [src_ang(1),src_ang(2)] = mycart2sph(s{xx}(1)-sphLocation(1),s{xx}(2)-sphLocation(2),s{xx}(3)-sphLocation(3)); % Towards the receiver
+%     [src_ang(1),src_ang(2)] = mycart2sph(s{xx}(1)-sphLocation(1),s{xx}(2)-sphLocation(2),s{xx}(3)-sphLocation(3)); % Towards the receiver
+    [src_ang(1),src_ang(2)] = mycart2sph(sphLocation(1)-s{xx}(1),sphLocation(2)-s{xx}(2),sphLocation(3)-s{xx}(3)) % Towards the receiver
     src_ang*180/pi
 
     order = 6;                         % Reflection order (-1 is maximum reflection order)
@@ -58,7 +59,7 @@ for xx = 1:length(ph_ax)
                                             order, refl_coeff_ang_dep, HP, src_type, src_ang);
     toc
     
-    save(['Anm_FIR_6order_' num2str((xx-1)*5)  'azi_.mat'],'h1','H1','Fs','sphLocation','s','L','beta',...
+    save(['Anm_FIR_6orderNEW_' num2str((xx-1)*5)  'azi_.mat'],'h1','H1','Fs','sphLocation','s','L','beta',...
                                             'sphType', 'sphRadius', 'mic_dirs_deg', 'N_harm', 'nsample', 'K',...
                                             'order', 'refl_coeff_ang_dep', 'HP', 'src_type', 'src_ang');
 end
