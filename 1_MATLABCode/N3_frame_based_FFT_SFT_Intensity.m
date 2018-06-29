@@ -1,10 +1,10 @@
 clear
 
-% addpath myfun speech old_data
+addpath myfun speech old_data
 
 %% 1. Load 32 channel speech data
 % load Filtered_Speech_6order.mat 
-[src_signal,Fs_signal] = audioread('ar-01.wav');
+% [src_signal,Fs_signal] = audioread('ar-01.wav');
 
 %% 2. Initialize variables
 
@@ -20,8 +20,8 @@ Fs = 48000;
 Nframe = Fs*Analysis_ms/1000;
 Nfft = Nframe;
 Nhop = Nframe/2;
-DataSize = length(FilteredSignal(:,1));
-AnalNum = floor(DataSize/Nhop)-1;
+% DataSize = length(FilteredSignal(:,1));
+% AnalNum = floor(DataSize/Nhop)-1;
 HanWin  = hann(Nframe,'periodic');
 HanWin_32 = repmat(HanWin,1,32);
 
