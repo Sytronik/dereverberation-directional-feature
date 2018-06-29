@@ -16,7 +16,6 @@ from glob import glob
 import soundfile as sf
 
 def seltriag(Ain, nrord, shft):
-    # pdb.set_trace()
     N = int(np.ceil(np.sqrt(Ain.size))-1)
     idx = 0
     len_new = (N-nrord+1)**2
@@ -139,7 +138,6 @@ for folder, _, _ in os.walk(dir_speech):
 
             print(file_id)
             print('%.3f sec'%(time.time()-t_start))
-            pdb.set_trace()
 
 
 print('Number of data: {}'.format(N_speech))
