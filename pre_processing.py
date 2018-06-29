@@ -6,9 +6,12 @@ import numpy as np
 import scipy as sc
 import scipy.io as scio
 
+import matplotlib.pyplot as plt
+
 import librosa
 
 import os
+import time
 from glob import glob
 import soundfile as sf
 
@@ -17,7 +20,7 @@ def seltriag(Ain, nrord, shft):
     N = int(np.ceil(np.sqrt(Ain.size))-1)
     idx = 0
     len_new = (N-nrord+1)**2
-    Aout = np.zeros(len_new)
+    Aout = np.zeros(len_new, dtype=complex)
     for ii in range(N-nrord+1):
         for jj in range(-ii,ii+1):
             n=shft[0]+ii; m=shft[1]+jj
@@ -27,7 +30,7 @@ def seltriag(Ain, nrord, shft):
             idx += 1
     return Aout
 
-def get_intensity(Asv, Wnv, Wpv, Vv, Nh_max):
+def get_intensity(Asv, Wnv, Wpv, Vv):
     Asrv = seltriag(Asv, 1, [0, 0])
 
     Aug_1 = Asrv
@@ -42,33 +45,36 @@ def get_intensity(Asv, Wnv, Wpv, Vv, Nh_max):
     D_y = np.dot(Aug_1, partial_y)
     D_z = np.dot(Aug_1, partial_z)
 
-    return 1/2*([D_x.real, D_y.real, D_z.real])
+    return 1/2*np.real([D_x, D_y, D_z])
 
 dir_speech = './speech/data/lisa/data/timit/raw/TIMIT/TRAIN/'
 dir_IV = './IV/TRAIN/'
+if not os.path.exists(dir_IV):
+    os.makedirs(dir_IV)
 
 #RIR Data
-RIRmat = scio.loadmat('./1_MATLABCode/RIR_Data/RIR.mat', variable_names = 'RIR')
+RIRmat = scio.loadmat('./1_MATLABCode/RIR.mat', variable_names = 'RIR')
 RIR = np.array(RIRmat['RIR'])
-# pdb.set_trace()
 RIR = RIR.transpose((2, 0, 1)) #72 x 32 x 48k
-N_loc, N_ch = RIR.shape[0:2]
+N_loc, N_ch, L_RIR = RIR.shape
 
 #SFT Data
-sph_mat = scio.loadmat('./11_MATLABCode/sph_data.mat', variable_names='bEQspec\nYenc\nYs\nWnv\nWpv\nVv')
-bEQspec = np.matrix(sph_mat['bEQspec']).transpose()
-Yenc = np.matrix(sph_mat['Yenc']).transpose()
-Ys = np.array(sph_mat['Ys'])
-Wnv = np.array(sph_mat['Wnv'])
-Wpv = np.array(sph_mat['Wpv'])
-Vv = np.array(sph_mat['Vv'])
+sph_mat = scio.loadmat('./1_MATLABCode/sph_data.mat',
+                        variable_names=['bEQspec','Yenc','Ys','Wnv','Wpv','Vv'])
+bEQspec = np.array(sph_mat['bEQspec']).T
+Yenc = np.array(sph_mat['Yenc']).T
+Ys = np.array(sph_mat['Ys']).reshape(-1)
+Wnv = np.array(sph_mat['Wnv']).reshape(-1)
+Wpv = np.array(sph_mat['Wpv']).reshape(-1)
+Vv = np.array(sph_mat['Vv']).reshape(-1)
 
 N_speech = 0
 fs = 48000
-Lwin_ms = 20
-Lframe = fs*Lwin_ms/1000
+fs_original = 0
+Lwin_ms = 20.
+Lframe = int(fs*Lwin_ms/1000)
 Nfft = Lframe
-Lhop = Lframe/2
+Lhop = int(Lframe/2)
 win = sc.signal.hamming(Lframe, sym=False)
 for folder, _, _ in os.walk(dir_speech):
     files = glob(os.path.join(folder, '*_converted.wav'))
@@ -83,46 +89,60 @@ for folder, _, _ in os.walk(dir_speech):
         else:
             data, _ = sf.read(file)
         resampled = librosa.core.resample(data, fs_original, fs)
+        print(file)
 
-        length = resampled.shape[0]
-        Nframe = np.floor(length/Lhop)-1
+        len_free = resampled.shape[0]
+        Nframe_free = int(np.floor(len_free/Lhop)-1)
+
+        len_room = len_free+L_RIR-1
+        Nframe_room = int(np.floor(len_room/Lhop)-1)
         for i_loc in range(N_loc):
+            t_start = time.time()
             # RIR Filtering
-            filtered = np.zeros((N_ch, length))
+            filtered = np.zeros((N_ch, len_room))
             for i_ch in range(N_ch):
-                filtered[i_ch] = sc.signal.fftconvolve(resampled, RIR[i_loc, i_ch], mode = 'same')
+                filtered[i_ch] = sc.signal.fftconvolve(resampled, RIR[i_loc, i_ch])
 
-            IV_room = np.zeros((Nframe, Nfft/2, 4))
-            IV_free = np.zeros((Nframe, Nfft/2, 4))
-            # Intensity Vector Image
-            for i_frame = range(Nframe):
+            # Free-field Intensity Vector Image
+            IV_free = np.zeros((int(Nfft/2), Nframe_free, 4))
+            for i_frame in range(Nframe_free):
                 i_sample = i_frame*Lhop
 
-                frame_room = filtered[:, i_sample+range(Lframe)]
-                fft_room = np.fft.fft(frame_room*win, n=Nfft)
-
-                frame_free = resampled[:, i_sample+range(Lframe)]
+                frame_free = resampled[i_sample+np.arange(Lframe)]
                 fft_free = np.fft.fft(frame_free*win, n=Nfft)
+                anm_free = np.outer(Ys[i_loc].reshape(-1), fft_free.T)
 
-                anm_room = np.matmul(Yenc, fft_room) *bEQspec
-                anm_free = np.matmul(Ys, fft_free)
+                for i_freq in range(int(Nfft/2)):
+                    IV_free[i_freq, i_frame, 0:3] \
+                            = get_intensity(anm_free[:, i_freq], Wnv, Wpv, Vv)
+                    IV_free[i_freq, i_frame, 3] = np.abs(anm_free[0, i_freq])
 
-                for i_freq = range(Nfft/2):
-                    IV_room[i_frame, ff, 0:3] \
+            # Room Intensity Vector Image
+            IV_room = np.zeros((int(Nfft/2), Nframe_room, 4))
+            for i_frame in range(Nframe_room):
+                i_sample = i_frame*Lhop
+
+                frame_room = filtered[:, i_sample+np.arange(Lframe)]
+                fft_room = np.fft.fft(frame_room*win, n=Nfft)
+                anm_room = Yenc @ fft_room * bEQspec
+
+                for i_freq in range(int(Nfft/2)):
+                    IV_room[i_freq, i_frame, 0:3] \
                             = get_intensity(anm_room[:, i_freq], Wnv, Wpv, Vv)
-                    IV_room[i_frame, ff, 3] \
+                    IV_room[i_freq, i_frame, 3] \
                             = np.abs(anm_room[0, i_freq])
 
-                    IV_free[i_frame, ff, 0:3] \
-                            = get_intensity(anm_free[:, i_freq], Wnv, Wpv, Vv)
-                    IV_free[i_frame, ff, 3] = np.abs(anm_free[0, i_freq])
+            file_id='%06d_%2d'%(N_speech, i_loc)
+            np.save(os.path.join(dir_IV,file_id+'_room.npy'), IV_room)
+            np.save(os.path.join(dir_IV,file_id+'_free.npy'), IV_free)
+            # scio.savemat(os.path.join(dir_IV,file_id+'.mat'), {'IV_room':IV_room, 'IV_free':IV_free}, appendmat=False)
 
-            np.save(os.path.join(dir_IV,'%6d_%2d_room.npy'%(N_speech, i_loc)), IV_room)
-            np.save(os.path.join(dir_IV,'%6d_%2d_free.npy'%(N_speech, i_loc)), IV_free)
-            print(N_speech)
+            print(file_id)
+            print('%.3f sec'%(time.time()-t_start))
+            pdb.set_trace()
 
 
-print('Number of data: {}'.format(N_files))
+print('Number of data: {}'.format(N_speech))
 print('Sample Rate: {}'.format(fs))
 print('Number of source location: {}'.format(N_loc))
 print('Number of microphone channel: {}'.format(N_ch))
