@@ -1,11 +1,11 @@
 speech/
-smop-master/
-1_MATLABCode/RIR_Data/
+IV/
+1_MATLABCode/**/*.mat
 
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
+**.py[cod]
+**$py.class
 
 # virtualenv
 .venv/
