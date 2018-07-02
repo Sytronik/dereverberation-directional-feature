@@ -84,7 +84,6 @@ def main():
                         Yenc, Ys[i_loc], bEQspec,
                         Wnv, Wpv, Vv,
                         dir_IV, i_loc)
-                pdb.set_trace()
 
             print('%.3f sec'%(time.time()-t_start))
     print('Number of data: {}'.format(Nwavfile))
@@ -164,10 +163,10 @@ def save_IV(data, RIR,
                     = np.abs(anm_room[0, i_freq])
 
     file_id='%06d_%2d'%(Nwavfile, i_loc)
-    # np.save(os.path.join(dir_IV,file_id+'_room.npy'), IV_room)
-    # np.save(os.path.join(dir_IV,file_id+'_free.npy'), IV_free)
-    scio.savemat(os.path.join(dir_IV,file_id+'.mat'),
-                 {'IV_room_py':IV_room, 'IV_free_py':IV_free}, appendmat=False)
+    np.save(os.path.join(dir_IV,file_id+'_room.npy'), IV_room)
+    np.save(os.path.join(dir_IV,file_id+'_free.npy'), IV_free)
+    # scio.savemat(os.path.join(dir_IV,file_id+'.mat'),
+    #              {'IV_room_py':IV_room, 'IV_free_py':IV_free}, appendmat=False)
 
     print(file_id)
 
