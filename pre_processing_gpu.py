@@ -42,6 +42,7 @@ def main():
     if not os.path.exists(DIR_IV):
         os.makedirs(DIR_IV)
     N_exist=len(glob(os.path.join(DIR_IV, '*_%d_room.npy'%(Nloc-1))))
+    print('{} wave files have been already processed'.format(N_exist))
     # fs_original = 0
 
     win = cp.array(sc.signal.hamming(Lframe, sym=False))
@@ -93,22 +94,22 @@ def main():
 
             t_start = time.time()
             Parallel(n_jobs=int(N_CORES/2))(
-                delayed(save_IV)(data, RIR,
+                delayed(save_IV)(data, RIR[i_loc],
                                 Nframe_free, Nframe_room,
                                 Nwavfile,
                                 Nfft, win, Lframe, Lhop,
-                                Yenc, Ys, bEQspec,
+                                Yenc, Ys[i_loc], bEQspec,
                                 Wnv, Wpv, Vv,
                                 DIR_IV, i_loc)
                 for i_loc in range(Nloc)
             )
             # for i_loc in range(Nloc):
             #     t_start = time.time()
-            #     save_IV(data, RIR,
+            #     save_IV(data, RIR[i_loc],
             #             Nframe_free, Nframe_room,
             #             Nwavfile,
             #             Nfft, win, Lframe, Lhop,
-            #             Yenc, Ys, bEQspec,
+            #             Yenc, Ys[i_loc], bEQspec,
             #             Wnv, Wpv, Vv,
             #             DIR_IV, i_loc)
             print('%.3f sec'%(time.time()-t_start))
@@ -139,9 +140,10 @@ def seltriag(Ain, nrord:int, shft):
     for ii in range(N-nrord+1):
         for jj in range(-ii,ii+1):
             n=shft[0]+ii; m=shft[1]+jj
+            idx_from = m+n*(n+1)
             if -n <= m and m <= n and 0 <= n and n <= N and \
-                                                        m+n*(n+1) < Ain.shape[0]:
-                Aout[idx] = Ain[m+n*(n+1)]
+                                                        idx_from < Ain.shape[0]:
+                Aout[idx] = Ain[idx_from]
             idx += 1
     return Aout
 
