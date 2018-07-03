@@ -66,7 +66,7 @@ def main():
 
             Ndata_room = Ndata_free+L_RIR-1
             Nframe_room = int(np.floor(Ndata_room/Lhop)-1)
-            t_start = time.time()
+
 
             # Parallel(n_jobs=num_cores)(
             #     delayed(save_IV)(data, RIR[i_loc],
@@ -78,14 +78,16 @@ def main():
             #     for i_loc in range(Nloc)
             # )
             for i_loc in range(Nloc):
+                t_start = time.time()
                 save_IV(data, RIR[i_loc],
                         Nframe_free, Ndata_room, Nframe_room, Nloc, Nch, Nwavfile, Nfft,
                         win, Lframe, Lhop,
                         Yenc, Ys[i_loc], bEQspec,
                         Wnv, Wpv, Vv,
                         dir_IV, i_loc)
+                print('%.3f sec'%(time.time()-t_start))
 
-            print('%.3f sec'%(time.time()-t_start))
+
     print('Number of data: {}'.format(Nwavfile))
     # print('Sample Rate: {}'.format(fs))
     # print('Number of source location: {}'.format(Nloc))

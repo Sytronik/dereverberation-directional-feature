@@ -1,6 +1,5 @@
 import pdb
 
-# import math
 import numpy as np
 import cupy as cp
 import scipy as sc
@@ -10,6 +9,7 @@ import matplotlib.pyplot as plt
 
 import os
 import time
+import atexit
 from glob import glob
 
 import soundfile as sf
@@ -18,85 +18,113 @@ from joblib import Parallel, delayed
 import multiprocessing
 
 def main():
-    dir_speech = './speech/data/lisa/data/timit/raw/TIMIT/TRAIN/'
-    dir_IV = './IV/TRAIN/'
-    if not os.path.exists(dir_IV):
-        os.makedirs(dir_IV)
+    global Nwavfile
+    global fs
+    global Nloc
+    global Nch
+    global DIR_IV
+
+    #Constants
+    DIR_WAVFILE = './speech/data/lisa/data/timit/raw/TIMIT/TRAIN/'
+    DIR_IV = './IV/TRAIN/'
+
+    fs = 16000
+    Nwavfile = 0
+    Nloc = 0    #determined by RIR
+    Nch= 0      #determined by RIR
+    Lwin_ms = 20.
+    Lframe = int(fs*Lwin_ms/1000)
+    Nfft = Lframe
+    Lhop = int(Lframe/2)
+
+    N_CORES = multiprocessing.cpu_count()
+
+    if not os.path.exists(DIR_IV):
+        os.makedirs(DIR_IV)
+    N_exist=len(glob(os.path.join(DIR_IV, '*_%d_room.npy'%(Nloc-1))))
+    # fs_original = 0
+
+    win = cp.array(sc.signal.hamming(Lframe, sym=False))
 
     #RIR Data
-    RIRmat = scio.loadmat('./1_MATLABCode/RIR.mat', variable_names = 'RIR')
-    RIR = RIRmat['RIR']
+    RIR = scio.loadmat('./1_MATLABCode/RIR.mat', variable_names = 'RIR')['RIR']
     RIR = RIR.transpose((2, 0, 1)) #72 x 32 x 48k
     RIR = cp.array(RIR)
     Nloc, Nch, L_RIR = RIR.shape
 
     #SFT Data
     sph_mat = scio.loadmat('./1_MATLABCode/sph_data.mat',
-                            variable_names=['bEQspec','Yenc','Ys','Wnv','Wpv','Vv'])
+                        variable_names=['bEQspec','Yenc','Ys','Wnv','Wpv','Vv'])
     bEQspec = cp.array(sph_mat['bEQspec']).T
     Yenc = cp.array(sph_mat['Yenc']).T
+
     Ys_original = sph_mat['Ys'].reshape(-1)
     Ys_np = np.zeros((Ys_original.size,Ys_original[0].size), dtype=complex)
     for ii in range(Ys_original.size):
         Ys_np[ii] = Ys_original[ii].reshape(-1)
     Ys = cp.array(Ys_np)
-    Wnv = cp.array(sph_mat['Wnv']).reshape(-1)
-    Wpv = cp.array(sph_mat['Wpv']).reshape(-1)
-    Vv = cp.array(sph_mat['Vv']).reshape(-1)
 
-    Nwavfile = 0
-    fs = 16000
-    # fs_original = 0
-    Lwin_ms = 20.
-    Lframe = int(fs*Lwin_ms/1000)
-    Nfft = Lframe
-    Lhop = int(Lframe/2)
-    win = cp.array(sc.signal.hamming(Lframe, sym=False))
-    # pdb.set_trace()
-    num_cores = multiprocessing.cpu_count()
+    Wnv = cp.array(sph_mat['Wnv'], dtype=complex).reshape(-1)
+    Wpv = cp.array(sph_mat['Wpv'], dtype=complex).reshape(-1)
+    Vv = cp.array(sph_mat['Vv'], dtype=complex).reshape(-1)
 
-    for folder, _, _ in os.walk(dir_speech):
+    sph_mat = None
+
+    for folder, _, _ in os.walk(DIR_WAVFILE):
         files = glob(os.path.join(folder, '*_converted.wav'))
         if files is None:
             continue
         for file in files:
             Nwavfile += 1
+            if Nwavfile <= N_exist:
+                continue
 
             #File Open & Resample
             data, _ = sf.read(file)
-            data = cp.array(data)
             # data = librosa.core.resample(data, fs_original, fs)
+            data = cp.array(data)
+
             print(file)
-            Ndata_free = data.shape[0]
-            Nframe_free = int(np.floor(Ndata_free/Lhop)-1)
+            L_data_free = data.shape[0]
+            Nframe_free = int(np.floor(L_data_free/Lhop)-1)
 
-            Ndata_room = Ndata_free+L_RIR-1
-            Nframe_room = int(np.floor(Ndata_room/Lhop)-1)
+            L_data_room = L_data_free+L_RIR-1
+            Nframe_room = int(np.floor(L_data_room/Lhop)-1)
 
+            t_start = time.time()
+            Parallel(n_jobs=int(N_CORES/2))(
+                delayed(save_IV)(data, RIR,
+                                Nframe_free, Nframe_room,
+                                Nwavfile,
+                                Nfft, win, Lframe, Lhop,
+                                Yenc, Ys, bEQspec,
+                                Wnv, Wpv, Vv,
+                                DIR_IV, i_loc)
+                for i_loc in range(Nloc)
+            )
+            # for i_loc in range(Nloc):
+            #     t_start = time.time()
+            #     save_IV(data, RIR,
+            #             Nframe_free, Nframe_room,
+            #             Nwavfile,
+            #             Nfft, win, Lframe, Lhop,
+            #             Yenc, Ys, bEQspec,
+            #             Wnv, Wpv, Vv,
+            #             DIR_IV, i_loc)
+            print('%.3f sec'%(time.time()-t_start))
 
-            # Parallel(n_jobs=num_cores)(
-            #     delayed(save_IV)(data, RIR[i_loc],
-            #         Nframe_free, Ndata_room, Nframe_room, Nloc, Nch, Nwavfile, Nfft,
-            #         win, Lframe, Lhop,
-            #         Yenc, Ys[i_loc], bEQspec,
-            #         Wnv, Wpv, Vv,
-            #         dir_IV, i_loc)
-            #     for i_loc in range(Nloc)
-            # )
-            for i_loc in range(Nloc):
-                t_start = time.time()
-                save_IV(data, RIR[i_loc],
-                        Nframe_free, Ndata_room, Nframe_room, Nloc, Nch, Nwavfile, Nfft,
-                        win, Lframe, Lhop,
-                        Yenc, Ys[i_loc], bEQspec,
-                        Wnv, Wpv, Vv,
-                        dir_IV, i_loc)
-                print('%.3f sec'%(time.time()-t_start))
-
-    print('Number of data: {}'.format(Nwavfile))
-    # print('Sample Rate: {}'.format(fs))
-    # print('Number of source location: {}'.format(Nloc))
-    # print('Number of microphone channel: {}'.format(Nch))
+@atexit.register
+def print_information():
+    if 'Nwavfile' in globals():
+        print('Number of data: {}'.format(Nwavfile-1))
+    if 'fs' in globals():
+        print('Sample Rate: {}'.format(fs))
+    if 'Nloc' in globals():
+        print('Number of source location: {}'.format(Nloc))
+    if 'Nch' in globals():
+        print('Number of microphone channel: {}'.format(Nch))
+    if 'DIR_IV' in globals():
+        print('Saved the result in \"'+os.path.abspath(DIR_IV)+'\"')
 
 def seltriag(Ain, nrord:int, shft):
     if Ain.ndim == 1:
@@ -107,7 +135,7 @@ def seltriag(Ain, nrord:int, shft):
     idx = 0
     len_new = (N-nrord+1)**2
 
-    Aout = cp.zeros((len_new, Nfreq), dtype=complex)
+    Aout = cp.zeros((len_new, Nfreq), dtype=Ain.dtype)
     for ii in range(N-nrord+1):
         for jj in range(-ii,ii+1):
             n=shft[0]+ii; m=shft[1]+jj
@@ -133,48 +161,45 @@ def calcIntensity(Asv, Wnv, Wpv, Vv):
     return 1/2*cp.real(cp.concatenate((D_x, D_y, D_z), axis=1))
 
 def save_IV(data, RIR,
-            Nframe_free, Ndata_room, Nframe_room, Nloc, Nch, Nwavfile, Nfft,
-            win, Lframe, Lhop,
+            Nframe_free:int, Nframe_room:int,
+            Nwavfile:int,
+            Nfft:int, win, Lframe:int, Lhop:int,
             Yenc, Ys, bEQspec,
             Wnv, Wpv, Vv,
-            dir_IV, i_loc):
-    # RIR Filtering
-    filtered = cp.array(sc.signal.fftconvolve(data.reshape(1,-1).get(), RIR.get()))
-    print('filtered')
-    
+            DIR_IV:str, i_loc:int):
     # Free-field Intensity Vector Image
     IV_free = cp.zeros((int(Nfft/2), Nframe_free, 4))
     for i_frame in range(Nframe_free):
-        i_sample = i_frame*Lhop
-
-        fft_free = cp.fft.fft(data[i_sample+np.arange(Lframe)]*win, n=Nfft)
+        interval_frame = i_frame*Lhop + np.arange(Lframe)
+        fft_free = cp.fft.fft(data[interval_frame]*win, n=Nfft)
         anm_free = cp.outer(Ys.conj(), fft_free.T)
 
-        IV_free[:, i_frame, 0:3] \
-                = calcIntensity(anm_free[:, 0:int(Nfft/2)], Wnv, Wpv, Vv)
-        IV_free[:, i_frame, 3] = cp.abs(anm_free[0, 0:int(Nfft/2)])
-    print('IV_free calculated')
+        IV_free[:, i_frame, :3] \
+                = calcIntensity(anm_free[:, :int(Nfft/2)], Wnv, Wpv, Vv)
+        IV_free[:, i_frame, 3] = cp.abs(anm_free[0, :int(Nfft/2)])
+
+    # RIR Filtering
+    filtered \
+        = cp.array(sc.signal.fftconvolve(data.reshape(1,-1).get(), RIR.get()))
 
     # Room Intensity Vector Image
     IV_room = cp.zeros((int(Nfft/2), Nframe_room, 4))
     for i_frame in range(Nframe_room):
-        i_sample = i_frame*Lhop
-
-        fft_room = cp.fft.fft(filtered[:, i_sample+np.arange(Lframe)]*win, n=Nfft)
+        interval_frame = i_frame*Lhop + np.arange(Lframe)
+        fft_room = cp.fft.fft(filtered[:, interval_frame]*win, n=Nfft)
         anm_room = (Yenc @ fft_room) * bEQspec
 
-        IV_room[:, i_frame, 0:3] \
-                = calcIntensity(anm_room[:, 0:int(Nfft/2)], Wnv, Wpv, Vv)
+        IV_room[:, i_frame, :3] \
+                = calcIntensity(anm_room[:, :int(Nfft/2)], Wnv, Wpv, Vv)
         IV_room[:, i_frame, 3] \
-                = np.abs(anm_room[0, 0:int(Nfft/2)])
-    print('IV_room calculated')
+                = np.abs(anm_room[0, :int(Nfft/2)])
 
+    #Save
     file_id='%06d_%2d'%(Nwavfile, i_loc)
-    np.save(os.path.join(dir_IV,file_id+'_room.npy'), IV_room.get())
-    np.save(os.path.join(dir_IV,file_id+'_free.npy'), IV_free.get())
-    # scio.savemat(os.path.join(dir_IV,file_id+'.mat'),
+    np.save(os.path.join(DIR_IV,file_id+'_room.npy'), IV_room.get())
+    np.save(os.path.join(DIR_IV,file_id+'_free.npy'), IV_free.get())
+    # scio.savemat(os.path.join(DIR_IV,file_id+'.mat'),
     #              {'IV_room_py':IV_room, 'IV_free_py':IV_free}, appendmat=False)
-
     print(file_id)
 
 if __name__ == '__main__':
