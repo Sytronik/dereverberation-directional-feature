@@ -140,7 +140,7 @@ def seltriag(Ain, nrord:int, shft):
         for jj in range(-ii,ii+1):
             n=shft[0]+ii; m=shft[1]+jj
             if -n <= m and m <= n and 0 <= n and n <= N and \
-                                                        m+n*(n+1) < Ain.size:
+                                                        m+n*(n+1) < Ain.shape[0]:
                 Aout[idx] = Ain[m+n*(n+1)]
             idx += 1
     return Aout
