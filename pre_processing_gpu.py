@@ -41,9 +41,6 @@ def main():
 
     if not os.path.exists(DIR_IV):
         os.makedirs(DIR_IV)
-    N_exist=len(glob(os.path.join(DIR_IV, '*_%d_room.npy'%(Nloc-1))))
-    print('{} wave files have been already processed'.format(N_exist))
-    # fs_original = 0
 
     win = cp.array(sc.signal.hamming(Lframe, sym=False))
 
@@ -52,6 +49,9 @@ def main():
     RIR = RIR.transpose((2, 0, 1)) #72 x 32 x 48k
     RIR = cp.array(RIR)
     Nloc, Nch, L_RIR = RIR.shape
+
+    N_exist=len(glob(os.path.join(DIR_IV, '*_%d_room.npy'%(Nloc-1))))
+    print('{} wave files have been already processed'.format(N_exist))
 
     #SFT Data
     sph_mat = scio.loadmat('./1_MATLABCode/sph_data.mat',
