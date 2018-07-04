@@ -5,7 +5,6 @@ import cupy as cp
 import scipy as sc
 import scipy.io as scio
 import librosa
-import matplotlib.pyplot as plt
 
 import os
 import time
@@ -20,6 +19,9 @@ import multiprocessing
 def main():
     global Nwavfile
     global fs
+    global Nfft
+    global Lframe
+    global Lhop
     global Nloc
     global Nch
     global DIR_IV
@@ -80,6 +82,7 @@ def main():
             if Nwavfile <= N_exist:
                 continue
 
+            print_information()
             #File Open & Resample
             data, _ = sf.read(file)
             # data = librosa.core.resample(data, fs_original, fs)
@@ -116,16 +119,35 @@ def main():
 
 @atexit.register
 def print_information():
+    Metadata={}
     if 'Nwavfile' in globals():
         print('Number of data: {}'.format(Nwavfile-1))
+        Metadata['Nwavfile'] = Nwavfile
+
     if 'fs' in globals():
         print('Sample Rate: {}'.format(fs))
+        Metadata['fs'] = fs
+
     if 'Nloc' in globals():
         print('Number of source location: {}'.format(Nloc))
+        Metadata['Nloc'] = Nloc
+
     if 'Nch' in globals():
         print('Number of microphone channel: {}'.format(Nch))
+        # Metadata['Nch'] = Nch
+
     if 'DIR_IV' in globals():
         print('Saved the result in \"'+os.path.abspath(DIR_IV)+'\"')
+        Metadata['DIR_IV'] = DIR_IV
+
+    if 'Nfft' in globals():
+        Metadata['Nfft'] = Nfft
+    if 'Lframe' in globals():
+        Metadata['Lframe'] = Lframe
+    if 'Lhop' in globals():
+        Metadata['Lhop'] = Lhop
+
+    scio.savemat('Metadata.mat', Metadata, appendmat=False)
 
 def seltriag(Ain, nrord:int, shft):
     if Ain.ndim == 1:
@@ -174,7 +196,7 @@ def save_IV(data, RIR,
     for i_frame in range(Nframe_free):
         interval_frame = i_frame*Lhop + np.arange(Lframe)
         fft_free = cp.fft.fft(data[interval_frame]*win, n=Nfft)
-        anm_free = cp.outer(Ys.conj(), fft_free.T)
+        anm_free = cp.outer(Ys.conj(), fft_free)
 
         IV_free[:, i_frame, :3] \
                 = calcIntensity(anm_free[:, :int(Nfft/2)], Wnv, Wpv, Vv)
