@@ -1,6 +1,6 @@
 speech/
 IV/
-1_MATLABCode/**/*.mat
+**.mat
 
 # Python
 __pycache__/
