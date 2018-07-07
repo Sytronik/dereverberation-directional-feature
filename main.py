@@ -58,7 +58,7 @@ if __name__ == '__main__':
                         DIR_IV, FORM_FREE, FORM_ROOM,
                         RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv)
 
-        elif arg == 'show_IV_image' or arg == 'histogram':
+        elif arg.startswith('show_IV_image') or arg.startswith('histogram'):
             Metadata = np.load('Metadata.npy').item()
 
             Fs = Metadata['Fs']
@@ -69,16 +69,29 @@ if __name__ == '__main__':
             # N_LOC = Metadata['N_LOC']
 
             Metadata = None
-            if arg == 'show_IV_image':
-                showIV.show(os.path.join(DIR_IV, FORM_FREE%(5,36)),
-                            os.path.join(DIR_IV, FORM_ROOM%(5,36)),
+
+            IDX_WAV = 1
+            IDX_LOC = 0
+            arg_sp = arg.split()
+            if len(arg_sp)>1:
+                IDX_WAV = arg_sp[1]
+                if len(arg_sp)>2:
+                    IDX_LOC = arg_sp[2]
+
+            FNAME_FREE = os.path.join(DIR_IV, FORM_FREE%(IDX_WAV,IDX_LOC))
+            FNAME_ROOM = os.path.join(DIR_IV, FORM_ROOM%(IDX_WAV,IDX_LOC))
+
+            if arg.startswith('show_IV_image'):
+                showIV.show(os.path.join(DIR_IV, FNAME_FREE),
+                            os.path.join(DIR_IV, FNAME_ROOM),
                             ylim=[0, Fs/2])
 
-            elif arg == 'histogram':
-                plt.figure()
-                IV_free = np.load(os.path.join(DIR_IV, FORM_FREE%(5,0)))
-                IV_room = np.load(os.path.join(DIR_IV, FORM_ROOM%(5,0)))
+            elif arg.startswith('histogram'):
+                IV_free = np.load(FNAME_FREE)
+                IV_room = np.load(FNAME_ROOM)
                 bins = 200
+
+                plt.figure()
                 plt.subplot(2,2,1)
                 plt.hist(IV_free[:,:,:3].reshape(-1), bins=bins)
                 plt.xlim(IV_free[:,:,:3].min(), IV_free[:,:,:3].max())
