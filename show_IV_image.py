@@ -1,67 +1,76 @@
 import pdb
 
 import numpy as np
-import cupy as cp
-import scipy as sc
-import scipy.io as scio
-import librosa
 import matplotlib.pyplot as plt
 
 import os
-import time
-import atexit
-from glob import glob
-
-import soundfile as sf
 
 from joblib import Parallel, delayed
 import multiprocessing
 
-Metadata = scio.loadmat('Metadata.mat',
-                        variable_names = ['fs','Nfft','Lframe','Lhop',
-                                            'Nwavfile','Nloc', 'DIR_IV'])
-fs = Metadata['fs'].reshape(-1)[0]
-Nfft = int(Metadata['Nfft'].reshape(-1)[0])
-Lframe = int(Metadata['Lframe'].reshape(-1)[0])
-Lhop = int(Metadata['Lhop'].reshape(-1)[0])
-Nwavfile = int(Metadata['Nwavfile'].reshape(-1)[0])
-Nloc = int(Metadata['Nloc'].reshape(-1)[0])
-DIR_IV = Metadata['DIR_IV'].reshape(-1)[0]
+# mean + n*std -> upper
+# mean - n*std -> lower
+def norm_by_std(a, n, lower=0, upper=1):
+    return (a-np.mean(a))/(n*np.std(a)) * (upper-lower)/2 + (lower+upper)/2
 
-IV_free = np.load(os.path.join(DIR_IV, '000001_ 0_free.npy'))
-IV_room = np.load(os.path.join(DIR_IV, '000001_ 0_room.npy'))
+def show(*args, **kargs):
+    # Load IVs
+    IVs=[]
+    fname=[]
+    for arg in args:
+        fname.append(arg)
+        IVs.append(np.load(arg))
+    N_FIG = len(IVs)
 
-_,L_free,_ = IV_free.shape
-_,L_room,_ = IV_room.shape
+    L=np.zeros(N_FIG)
+    for i in range(N_FIG):
+        L[i] = IVs[i].shape[1]
 
-plt.figure(frameon=False)
+    # Initialize
+    H_CHESS = 50
+    axis = [1, np.max(L), 1, IVs[0].shape[0]]
+    for key, value in kargs.items():
+        if key == 'H_CHESS':
+            H_CHESS = value
+        elif key == 'axis':
+            axis = value
+        elif key == 'xlim':
+            axis[0:2] = value
+        elif key == 'ylim':
+            axis[2:4] = value
+        elif key == 'xmin':
+            axis[0] = value
+        elif key == 'xmax':
+            axis[1] = value
+        elif key == 'ymin':
+            axis[2] = value
+        elif key == 'ymax':
+            axis[3] = value
+    chess = (np.add.outer(range(H_CHESS), range(H_CHESS*2)) % 2)*0.3+0.7
+    extent = axis.copy()
 
-chess = (np.add.outer(range(50), range(50*2)) % 2)*0.3+0.7  # chessboard
-axis = [1, L_room, 0, fs*(Nfft/2.-1)/Nfft]
+    plt.figure(frameon=False)
+    for i in range(N_FIG):
+        #Normalize
+        IVs[i][:,:,:3] = norm_by_std(IVs[i][:,:,:3], 2).clip(0, 1)
+        IVs[i][:,:,3] = norm_by_std(IVs[i][:,:,3], 2).clip(0, 1)
 
-dx, dy = 1, fs/Nfft
+        min_alpha = IVs[i][:,:,3].min()
+        if min_alpha > 0:
+            IVs[i][:,:,3] = (IVs[i][:,:,3] - min_alpha)/(1. - min_alpha)
 
-x_free = np.arange(axis[0], L_free, dx)
-y_free = np.arange(axis[2], axis[3], dy)
-X_free, Y_free = np.meshgrid(x_free, y_free)
-extent_free = x_free.min(), x_free.max(), y_free.min(), y_free.max()
+        # flip frequency axis
+        IVs[i][:,:,:] = IVs[i][::-1,:,:]
 
-x_room = np.arange(axis[0], L_room, dx)
-y_room = np.arange(axis[2], axis[3], dy)
-X_room, Y_room = np.meshgrid(x_room, y_room)
-extent_room = x_room.min(), x_room.max(), y_room.min(), y_room.max()
+        extent[1] = L[i]
 
-IV_free = (IV_free+IV_free.min())/(IV_free.max()-IV_free.min())
-IV_room = (IV_room+IV_room.min())/(IV_room.max()-IV_room.min())
-
-plt.subplot(2,1,1)
-im_chess1 = plt.imshow(chess, cmap=plt.cm.gray, interpolation='nearest', vmin=0, vmax=1, extent=axis, aspect='auto')
-im_free = plt.imshow(IV_free[::-1,:,:]*10, extent=extent_free, aspect='auto')
-plt.axis(axis)
-
-plt.subplot(2,1,2)
-im_chess2 = plt.imshow(chess, cmap=plt.cm.gray, interpolation='nearest', vmin=0, vmax=1, extent=axis, aspect='auto')
-im_room = plt.imshow(IV_room[::-1,:,:]*10, extent=extent_room, aspect='auto')
-plt.axis(axis)
-
-plt.show()
+        plt.subplot(N_FIG,1,i+1)
+        plt.imshow(chess, cmap=plt.cm.gray, interpolation='nearest',
+                                    vmin=0, vmax=1, extent=axis, aspect='auto')
+        plt.imshow(IVs[i], interpolation='bilinear',
+                                            extent=extent.copy(), aspect='auto')
+        plt.axis(axis)
+        plt.title(os.path.basename(fname[i]))
+        plt.xlabel('Frame Index')
+        plt.ylabel('Frequency (Hz)')
+    plt.show()

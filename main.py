@@ -6,6 +6,8 @@ import cupy as cp
 import scipy as sc
 import scipy.io as scio
 
+import matplotlib.pyplot as plt
+
 import os
 from glob import glob
 
@@ -55,15 +57,41 @@ if __name__ == '__main__':
                         DIR_IV, FORM_FREE, FORM_ROOM,
                         RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv)
 
-        elif arg == 'show_IV_image':
-            Metadata = scio.loadmat('Metadata.mat',
-                            variable_names = ['Fs','N_FFT','L_FRAME','L_HOP',
-                                                'N_WAVFILE','N_LOC'])
-            Fs = Metadata['Fs'].reshape(-1)[0]
-            N_WAVFILE = int(Metadata['N_WAVFILE'].reshape(-1)[0])
-            N_FFT = int(Metadata['N_FFT'].reshape(-1)[0])
-            L_FRAME = int(Metadata['L_FRAME'].reshape(-1)[0])
-            L_HOP = int(Metadata['L_HOP'].reshape(-1)[0])
-            N_LOC = int(Metadata['N_LOC'].reshape(-1)[0])
+        elif arg == 'show_IV_image' or arg == 'histogram':
+            Metadata = np.load('Metadata.npy').item()
 
-            showIV.show(FORM_FREE%(1,0), FORM_ROOM%(1,0), Fs, N_FFT)
+            Fs = Metadata['Fs']
+            # N_WAVFILE = Metadata['N_WAVFILE']
+            # N_FFT = Metadata['N_FFT']
+            # L_FRAME = Metadata['L_FRAME']
+            # L_HOP = Metadata['L_HOP']
+            # N_LOC = Metadata['N_LOC']
+
+            Metadata = None
+            if arg == 'show_IV_image':
+                showIV.show(os.path.join(DIR_IV, FORM_FREE%(5,36)),
+                            os.path.join(DIR_IV, FORM_ROOM%(5,36)),
+                            ylim=[0, Fs/2]
+                            )
+            elif arg == 'histogram':
+                plt.figure()
+                IV_free = np.load(os.path.join(DIR_IV, FORM_FREE%(5,0)))
+                IV_room = np.load(os.path.join(DIR_IV, FORM_ROOM%(5,0)))
+                bins = 200
+                plt.subplot(2,2,1)
+                plt.hist(IV_free[:,:,:3].reshape(-1), bins=bins)
+                plt.xlim(IV_free[:,:,:3].min(), IV_free[:,:,:3].max())
+                plt.title('Histogram for RGB (Free-space)')
+                plt.subplot(2,2,2)
+                plt.hist(IV_free[:,:,3].reshape(-1), bins=bins)
+                plt.xlim(IV_free[:,:,3].min(), IV_free[:,:,3].max())
+                plt.title('Histogram for alpha (Free-space)')
+                plt.subplot(2,2,3)
+                plt.hist(IV_room[:,:,:3].reshape(-1), bins=bins)
+                plt.xlim(IV_room[:,:,:3].min(), IV_room[:,:,:3].max())
+                plt.title('Histogram for RGB (Room)')
+                plt.subplot(2,2,4)
+                plt.hist(IV_room[:,:,3].reshape(-1), bins=bins)
+                plt.xlim(IV_room[:,:,3].min(), IV_room[:,:,3].max())
+                plt.title('Histogram for alpha (Room))')
+                plt.show()
