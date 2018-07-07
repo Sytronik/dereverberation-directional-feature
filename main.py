@@ -51,7 +51,8 @@ if __name__ == '__main__':
             sph_mat = None
 
             N_START = len(glob(os.path.join(DIR_IV,
-                                        '*_%02d_room.npy'%(RIR.shape[0]-1))))+1
+                                            '*_%02d_room.npy'%(RIR.shape[0]-1)))
+                          )+1
 
             pre.process(DIR_WAVFILE, ID, N_START,
                         DIR_IV, FORM_FREE, FORM_ROOM,
@@ -71,8 +72,8 @@ if __name__ == '__main__':
             if arg == 'show_IV_image':
                 showIV.show(os.path.join(DIR_IV, FORM_FREE%(5,36)),
                             os.path.join(DIR_IV, FORM_ROOM%(5,36)),
-                            ylim=[0, Fs/2]
-                            )
+                            ylim=[0, Fs/2])
+
             elif arg == 'histogram':
                 plt.figure()
                 IV_free = np.load(os.path.join(DIR_IV, FORM_FREE%(5,0)))

@@ -83,7 +83,9 @@ def process(DIR_WAVFILE:str, ID:str, N_START,
                                 N_FFT, win, L_FRAME, L_HOP,
                                 Yenc, Ys[i_loc], bEQspec,
                                 Wnv, Wpv, Vv,
-                                DIR_IV,  FORM_FREE%(N_wavfile, i_loc),  FORM_ROOM%(N_wavfile, i_loc))
+                                DIR_IV,
+                                FORM_FREE%(N_wavfile, i_loc),
+                                FORM_ROOM%(N_wavfile, i_loc))
                 for i_loc in range(N_LOC)
             )
             print('%.3f sec'%(time.time()-t_start))

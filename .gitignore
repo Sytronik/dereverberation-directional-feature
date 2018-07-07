@@ -2,8 +2,9 @@ speech/
 IV/
 Figures/
 
-**.mat
-**.npy
+*.mat
+*.npy
+*.asv
 
 pre_processing_gpu_beta실험.py
 
