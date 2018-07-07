@@ -74,9 +74,9 @@ if __name__ == '__main__':
             IDX_LOC = 0
             arg_sp = arg.split()
             if len(arg_sp)>1:
-                IDX_WAV = arg_sp[1]
+                IDX_WAV = int(arg_sp[1])
                 if len(arg_sp)>2:
-                    IDX_LOC = arg_sp[2]
+                    IDX_LOC = int(arg_sp[2])
 
             FNAME_FREE = os.path.join(DIR_IV, FORM_FREE%(IDX_WAV,IDX_LOC))
             FNAME_ROOM = os.path.join(DIR_IV, FORM_ROOM%(IDX_WAV,IDX_LOC))
