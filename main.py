@@ -82,9 +82,7 @@ if __name__ == '__main__':
             FNAME_ROOM = os.path.join(DIR_IV, FORM_ROOM%(IDX_WAV,IDX_LOC))
 
             if arg.startswith('show_IV_image'):
-                showIV.show(os.path.join(DIR_IV, FNAME_FREE),
-                            os.path.join(DIR_IV, FNAME_ROOM),
-                            ylim=[0, Fs/2])
+                showIV.show(FNAME_FREE, FNAME_ROOM, ylim=[0, Fs/2])
 
             elif arg.startswith('histogram'):
                 IV_free = np.load(FNAME_FREE)
