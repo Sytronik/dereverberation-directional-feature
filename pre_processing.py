@@ -75,7 +75,7 @@ def process(DIR_WAVFILE:str, ID:str, N_START,
 
             L_data_room = L_data_free+L_RIR-1
             Nframe_room = int(np.floor(L_data_room/L_HOP)-1)
-            
+
             t_start = time.time()
             Parallel(n_jobs=int(N_CORES/2))(
                 delayed(save_IV)(data, RIR[i_loc],
@@ -87,6 +87,8 @@ def process(DIR_WAVFILE:str, ID:str, N_START,
                 for i_loc in range(N_LOC)
             )
             print('%.3f sec'%(time.time()-t_start))
+    print('Done.')
+    print_information()
 
 def save_IV(data, RIR,
             Nframe_free:int, Nframe_room:int,
@@ -164,7 +166,6 @@ def calcIntensity(Asv, Wnv, Wpv, Vv):
 
     return 1/2*cp.real(cp.concatenate((D_x, D_y, D_z), axis=1))
 
-@atexit.register
 def print_information():
     Metadata={}
     if 'N_wavfile' in globals():
@@ -192,8 +193,8 @@ def print_information():
         print('Number of microphone channel: {}'.format(N_MIC))
         # Metadata['N_MIC'] = N_MIC
 
-    scio.savemat('Metadata.mat', Metadata, appendmat=False)
+    np.save('Metadata.npy', Metadata)
 
-if __name__ == '__main__':
-    print_information()
+# if __name__ == '__main__':
+#     print_information()
 #     process()
