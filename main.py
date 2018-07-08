@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import os
 from glob import glob
 
-import pre_processing as pre
+from pre_processing import PreProcessor as Pre
 import show_IV_image as showIV
 
 if __name__ == '__main__':
@@ -32,7 +32,7 @@ if __name__ == '__main__':
 
             #SFT Data
             sph_mat = scio.loadmat('./1_MATLABCode/sph_data.mat',
-                        variable_names=['bEQspec','Yenc','Ys','Wnv','Wpv','Vv'])
+                    variable_names=['bEQspec','Yenc','Ys','Wnv','Wpv','Vv'])
             bEQspec = cp.array(sph_mat['bEQspec']).T
             Yenc = cp.array(sph_mat['Yenc']).T
 
@@ -50,23 +50,17 @@ if __name__ == '__main__':
 
             sph_mat = None
 
-            N_START = len(glob(os.path.join(DIR_IV,
-                                            '*_%02d_room.npy'%(RIR.shape[0]-1)))
-                          )+1
+            N_START = len(glob(
+                os.path.join(DIR_IV, '*_%02d_room.npy'%(RIR.shape[0]-1))
+            ))+1
 
-            pre.process(DIR_WAVFILE, ID, N_START,
-                        DIR_IV, FORM_FREE, FORM_ROOM,
-                        RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv)
+            p = Pre(RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv)
+            p.process(DIR_WAVFILE, ID, N_START, DIR_IV, FORM_FREE, FORM_ROOM)
 
         elif arg.startswith('show_IV_image') or arg.startswith('histogram'):
             metadata = np.load('metadata.npy').item()
 
             Fs = metadata['Fs']
-            # N_WAVFILE = metadata['N_WAVFILE']
-            # N_FFT = metadata['N_FFT']
-            # L_FRAME = metadata['L_FRAME']
-            # L_HOP = metadata['L_HOP']
-            # N_LOC = metadata['N_LOC']
 
             metadata = None
 
