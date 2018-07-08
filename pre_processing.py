@@ -142,8 +142,8 @@ class PreProcessor:
         print(FNAME_ROOM)
 
     def __str__(self):
-        return 'Number of data: {}\n'.format(self.N_wavfile-1)
-               + 'Sample Rate: {}\n'.format(self.Fs)
+        return 'Number of data: {}\n'.format(self.N_wavfile-1) \
+               + 'Sample Rate: {}\n'.format(self.Fs) \
                + 'Number of source location: {}'.format(self.N_LOC)
 
     def print_save_info(self):
