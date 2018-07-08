@@ -38,7 +38,7 @@ if __name__ == '__main__':
 
             Ys_original = sph_mat['Ys'].reshape(-1)
             Ys_np = np.zeros((Ys_original.size,Ys_original[0].size),
-                                                                dtype=complex)
+                             dtype=complex)
             for ii in range(Ys_original.size):
                 Ys_np[ii] = Ys_original[ii].reshape(-1)
             Ys = cp.array(Ys_np)
@@ -59,16 +59,16 @@ if __name__ == '__main__':
                         RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv)
 
         elif arg.startswith('show_IV_image') or arg.startswith('histogram'):
-            Metadata = np.load('Metadata.npy').item()
+            metadata = np.load('metadata.npy').item()
 
-            Fs = Metadata['Fs']
-            # N_WAVFILE = Metadata['N_WAVFILE']
-            # N_FFT = Metadata['N_FFT']
-            # L_FRAME = Metadata['L_FRAME']
-            # L_HOP = Metadata['L_HOP']
-            # N_LOC = Metadata['N_LOC']
+            Fs = metadata['Fs']
+            # N_WAVFILE = metadata['N_WAVFILE']
+            # N_FFT = metadata['N_FFT']
+            # L_FRAME = metadata['L_FRAME']
+            # L_HOP = metadata['L_HOP']
+            # N_LOC = metadata['N_LOC']
 
-            Metadata = None
+            metadata = None
 
             IDX_WAV = 1
             IDX_LOC = 0

@@ -13,6 +13,7 @@ import multiprocessing
 def norm_by_std(a, n, lower=0, upper=1):
     return (a-np.mean(a))/(n*np.std(a)) * (upper-lower)/2 + (lower+upper)/2
 
+
 def show(*args, **kargs):
     # Load IVs
     IVs=[]
@@ -47,7 +48,7 @@ def show(*args, **kargs):
         elif key == 'ymax':
             axis[3] = value
     chess = (np.add.outer(range(H_CHESS), range(H_CHESS*2)) % 2)*0.3+0.7
-    extent = axis.copy()
+    extent = axis[:]
 
     plt.figure(frameon=False)
     for i in range(N_FIG):
@@ -66,9 +67,9 @@ def show(*args, **kargs):
 
         plt.subplot(N_FIG,1,i+1)
         plt.imshow(chess, cmap=plt.cm.gray, interpolation='nearest',
-                                    vmin=0, vmax=1, extent=axis, aspect='auto')
+                   vmin=0, vmax=1, extent=axis, aspect='auto')
         plt.imshow(IVs[i], interpolation='bilinear',
-                                            extent=extent.copy(), aspect='auto')
+                   extent=extent[:], aspect='auto')
         plt.axis(axis)
         plt.title(os.path.basename(fname[i]))
         plt.xlabel('Frame Index')
