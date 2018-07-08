@@ -113,8 +113,8 @@ class PreProcessor:
             anm_free = cp.outer(Ys.conj(), fft_free)
 
             IV_free[:,i_frame,:3] \
-                    = PreProcessor.calc_intensity(anm_free[:,:int(self.N_fft/2)],
-                                     self.Wnv, self.Wpv, self.Vv)
+                = PreProcessor.calc_intensity(anm_free[:,:int(self.N_fft/2)],
+                                              self.Wnv, self.Wpv, self.Vv)
             IV_free[:,i_frame,3] = cp.abs(anm_free[0,:int(self.N_fft/2)])
 
         # RIR Filtering
@@ -131,8 +131,8 @@ class PreProcessor:
             anm_room = (self.Yenc @ fft_room) * self.bEQspec
 
             IV_room[:,i_frame,:3] \
-                    = PreProcessor.calc_intensity(anm_room[:,:int(self.N_fft/2)],
-                                     self.Wnv, self.Wpv, self.Vv)
+                = PreProcessor.calc_intensity(anm_room[:,:int(self.N_fft/2)],
+                                              self.Wnv, self.Wpv, self.Vv)
             IV_room[:,i_frame,3] = np.abs(anm_room[0,:int(self.N_fft/2)])
 
         #Save
@@ -141,10 +141,13 @@ class PreProcessor:
         np.save(os.path.join(self.DIR_IV,FNAME_ROOM), IV_room.get())
         print(FNAME_ROOM)
 
+    def __str__(self):
+        return 'Number of data: {}\n'.format(self.N_wavfile-1)
+               + 'Sample Rate: {}\n'.format(self.Fs)
+               + 'Number of source location: {}'.format(self.N_LOC)
+
     def print_save_info(self):
-        print('Number of data: {}'.format(self.N_wavfile-1))
-        print('Sample Rate: {}'.format(self.Fs))
-        print('Number of source location: {}'.format(self.N_LOC))
+        print(self)
 
         metadata={}
         metadata['N_WAVFILE'] = self.N_wavfile
