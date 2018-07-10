@@ -28,7 +28,7 @@ def show(*args, **kargs):
         L[i] = IVs[i].shape[1]
 
     # Initialize
-    H_CHESS = 50
+    H_CHESS = 100
     axis = [1, np.max(L), 1, IVs[0].shape[0]]
     for key, value in kargs.items():
         if key == 'H_CHESS':
