@@ -15,13 +15,9 @@ from glob import glob
 import soundfile as sf
 
 from joblib import Parallel, delayed
-import multiprocessing
 
 class PreProcessor:
     def __init__(self, RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv, L_WIN_MS=20.):
-        # Always Same
-        self.N_CORES = multiprocessing.cpu_count()
-
         # From Parameters
         self.RIR = RIR
         self.N_LOC, self.N_MIC, self.L_RIR = RIR.shape
@@ -48,7 +44,7 @@ class PreProcessor:
         self.win = None
 
     def process(self, DIR_WAVFILE:str, ID:str, N_START,
-                DIR_IV:str, FORM_FREE:str, FORM_ROOM:str):
+                DIR_IV:str, FORM:str, N_CORES):
         if not os.path.exists(DIR_IV):
             os.makedirs(DIR_IV)
         self.DIR_IV = DIR_IV
@@ -65,8 +61,8 @@ class PreProcessor:
             if not files:
                 continue
             for file in files:
-                self.N_wavfile += 1
-                if self.N_wavfile < N_START:
+                if self.N_wavfile < N_START-1:
+                    self.N_wavfile += 1
                     continue
 
                 #File Open & Resample
@@ -91,31 +87,36 @@ class PreProcessor:
                 self.N_frame_room = int(np.floor(L_data_room/self.L_hop)-1)
 
                 t_start = time.time()
-                Parallel(n_jobs=int(self.N_CORES/2))(
+                Parallel(n_jobs=int(N_CORES))(
                     delayed(self.save_IV)(RIR[i_loc], Ys[i_loc],
-                                          FORM_FREE%(self.N_wavfile, i_loc),
-                                          FORM_ROOM%(self.N_wavfile, i_loc))
+                                          FORM%(self.N_wavfile, i_loc))
                     for i_loc in range(self.N_LOC)
                 )
                 print('%.3f sec'%(time.time()-t_start))
+                self.N_wavfile += 1
+                self.print_save_info()
+
         self.RIR = RIR
         self.Ys = Ys
         print('Done.')
         self.print_save_info()
 
-    def save_IV(self, RIR, Ys, FNAME_FREE:str, FNAME_ROOM:str):
+    def save_IV(self, RIR, Ys, FNAME:str):
         # Free-field Intensity Vector Image
         IV_free = cp.zeros((int(self.N_fft/2), self.N_frame_free, 4))
+        norm_factor_free = float('-inf')
         for i_frame in range(self.N_frame_free):
-            interval_frame = i_frame*self.L_hop + np.arange(self.L_frame)
-            fft_free = cp.fft.fft(self.data[interval_frame]*self.win,
-                                  n=self.N_fft)
-            anm_free = cp.outer(Ys.conj(), fft_free)
+            interval = i_frame*self.L_hop + np.arange(self.L_frame)
+            fft = cp.fft.fft(self.data[interval]*self.win, n=self.N_fft)
+            anm = cp.outer(Ys.conj(), fft)
+            max_in_frame \
+                = cp.max(cp.sqrt(cp.sum(cp.abs(anm)**2,axis=0))).get().item()
+            norm_factor_free = np.max([norm_factor_free, max_in_frame])
 
             IV_free[:,i_frame,:3] \
-                = PreProcessor.calc_intensity(anm_free[:,:int(self.N_fft/2)],
+                = PreProcessor.calc_intensity(anm[:,:int(self.N_fft/2)],
                                               self.Wnv, self.Wpv, self.Vv)
-            IV_free[:,i_frame,3] = cp.abs(anm_free[0,:int(self.N_fft/2)])
+            IV_free[:,i_frame,3] = cp.abs(anm[0,:int(self.N_fft/2)])
 
         # RIR Filtering
         filtered \
@@ -124,25 +125,31 @@ class PreProcessor:
 
         # Room Intensity Vector Image
         IV_room = cp.zeros((int(self.N_fft/2), self.N_frame_room, 4))
+        norm_factor_room = float('-inf')
         for i_frame in range(self.N_frame_room):
-            interval_frame = i_frame*self.L_hop + np.arange(self.L_frame)
-            fft_room = cp.fft.fft(filtered[:,interval_frame]*self.win,
-                                  n=self.N_fft)
-            anm_room = (self.Yenc @ fft_room) * self.bEQspec
+            interval = i_frame*self.L_hop + np.arange(self.L_frame)
+            fft = cp.fft.fft(filtered[:,interval]*self.win, n=self.N_fft)
+            anm = (self.Yenc @ fft) * self.bEQspec
+            max_in_frame \
+                = cp.max(cp.sqrt(cp.sum(cp.abs(anm)**2,axis=0))).get().item()
+            norm_factor_room = np.max([norm_factor_room, max_in_frame])
 
             IV_room[:,i_frame,:3] \
-                = PreProcessor.calc_intensity(anm_room[:,:int(self.N_fft/2)],
+                = PreProcessor.calc_intensity(anm[:,:int(self.N_fft/2)],
                                               self.Wnv, self.Wpv, self.Vv)
-            IV_room[:,i_frame,3] = np.abs(anm_room[0,:int(self.N_fft/2)])
+            IV_room[:,i_frame,3] = np.abs(anm[0,:int(self.N_fft/2)])
 
         #Save
-        np.save(os.path.join(self.DIR_IV,FNAME_FREE), IV_free.get())
-        print(FNAME_FREE)
-        np.save(os.path.join(self.DIR_IV,FNAME_ROOM), IV_room.get())
-        print(FNAME_ROOM)
+        dict = {'IV_free':IV_free.get(),
+                'IV_room':IV_room.get(),
+                'norm_factor_free':norm_factor_free,
+                'norm_factor_room':norm_factor_room}
+        np.save(os.path.join(self.DIR_IV,FNAME), dict)
+        print(FNAME)
 
     def __str__(self):
-        return 'Number of data: {}\n'.format(self.N_wavfile-1) \
+        return 'Number of wave files already processed: {}\n'\
+                    .format(self.N_wavfile) \
                + 'Sample Rate: {}\n'.format(self.Fs) \
                + 'Number of source location: {}'.format(self.N_LOC)
 
@@ -150,7 +157,7 @@ class PreProcessor:
         print(self)
 
         metadata={}
-        metadata['N_WAVFILE'] = self.N_wavfile
+        metadata['N_wavfile'] = self.N_wavfile
         metadata['Fs'] = self.Fs
         metadata['N_fft'] = self.N_fft
         metadata['L_frame'] = self.L_frame
@@ -176,7 +183,7 @@ class PreProcessor:
                 m = shft[1] + jj
                 idx_from = m + n*(n+1)
                 if -n <= m and m <= n and 0 <= n and n <= N and \
-                                                            idx_from < Ain.shape[0]:
+                        idx_from < Ain.shape[0]:
                     Aout[idx] = Ain[idx_from]
                 idx += 1
         return Aout

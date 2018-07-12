@@ -24,32 +24,17 @@ def print_cuda_tensors():
 
 
 class IVDataset(Dataset):
-    def __init__(self, DIR:str, FORM:str, X_POSTFIX:str, Y_POSTFIX:str,
-                 L_cut_x, L_cut_y=1):
+    def __init__(self, DIR:str, FORM:str, XNAME:str, YNAME:str,
+                 N_wavfile:int, N_LOC:int, L_cut_x, L_cut_y=1):
         self.DIR = DIR
         self.FORM = FORM
-        self.X_POSTFIX = X_POSTFIX
-        self.Y_POSTFIX = Y_POSTFIX
+        self.XNAME = XNAME
+        self.YNAME = YNAME
+        self.len = N_wavfile*N_LOC
+        self.N_LOC = N_LOC
         self.L_cut_x = L_cut_x
         self.L_cut_y = L_cut_y
 
-        n_y = 0
-        n_x = 0
-        for f in os.scandir(DIR):
-            if f.name.endswith(Y_POSTFIX):
-                n_y += 1
-            elif f.name.endswith(X_POSTFIX):
-                n_x += 1
-
-        self.len = np.min((n_y, n_x))
-        if self.len==0:
-            raise Exception('No data')
-
-        count = 0
-        while os.path.isfile(os.path.join(DIR, FORM % (1, count) + Y_POSTFIX)):
-            count += 1
-
-        self.N_loc = count
     #     self._rand_idx = self.shuffle()
     #
     # def shuffle(self):
@@ -61,15 +46,12 @@ class IVDataset(Dataset):
 
     def __getitem__(self, idx):
         # idx = self._rand_idx[idx]
-        i_wavfile = 1 + int(idx / self.N_loc)
-        i_loc = idx % self.N_loc
-        x_file = os.path.join(self.DIR,
-                              self.FORM%(i_wavfile, i_loc)+self.X_POSTFIX)
-        y_file = os.path.join(self.DIR,
-                              self.FORM%(i_wavfile, i_loc)+self.Y_POSTFIX)
+        i_wavfile = 1 + int(idx / self.N_LOC)
+        i_loc = idx % self.N_LOC
+        data_dict = np.load(os.path.join(self.DIR, self.FORM%(i_wavfile, i_loc))).item()
 
-        x = np.load(x_file)
-        y = np.load(y_file)
+        x = data_dict[self.XNAME]
+        y = data_dict[self.YNAME]
 
         N_freq = x.shape[0]
         channel = x.shape[2]
@@ -155,8 +137,10 @@ class NNTrainer():
     #     x = x.view(x.size(0), N_fft/2, len, 4)
     #     return x
 
-    def __init__(self, Fs, N_fft, L_frame, L_hop,
-                 DIR, DIR_TRAIN, DIR_TEST, FORM_IV, X_POSTFIX, Y_POSTFIX):
+    def __init__(self, Fs, N_fft:int, L_frame:int, L_hop:int,
+                 N_wavfile:int, N_LOC:int,
+                 DIR:str, DIR_TRAIN:str, DIR_TEST:str, FORM_IV:str,
+                 XNAME:str, YNAME:str):
         self.Fs = Fs
         self.N_fft = N_fft
         self.L_frame = L_frame
@@ -166,13 +150,13 @@ class NNTrainer():
         self.DIR_TEST = DIR_TEST
         self.FORM_IV = FORM_IV
 
-        L_cut_x = 8000/L_hop
+        L_cut_x = 4160/L_hop
         n_input = int(L_cut_x*N_fft/2*4)
-        n_hidden = int(4000/L_hop*N_fft/2*4)
+        n_hidden = int(3200/L_hop*N_fft/2*4)
         n_output = int(N_fft/2*4)
 
-        data_train = IVDataset(DIR_TRAIN, FORM_IV, X_POSTFIX, Y_POSTFIX,
-                               L_cut_x)
+        data_train = IVDataset(DIR_TRAIN, FORM_IV, XNAME, YNAME,
+                               N_wavfile, N_LOC, L_cut_x)
         self.loader_train = DataLoader(data_train,
                                        batch_size=NNTrainer.batch_size,
                                        shuffle=True,
@@ -190,8 +174,8 @@ class NNTrainer():
             for data in self.loader_train:
                 # pdb.set_trace()
                 x_stacked, y = data
-                input = x_stacked.view(x_stacked.size(0), -1)
-                input = Variable(input).cuda()
+                input = x_stacked.view(x_stacked.size(0), -1).cuda()
+                # input = Variable(input).cuda()
                 del x_stacked
                 # ===================forward=====================
                 output = self.model(input)
@@ -199,8 +183,8 @@ class NNTrainer():
                 # ===================backward====================
                 self.optimizer.zero_grad()
                 loss.backward()
-                pdb.set_trace()
                 self.optimizer.step()
+                print('.', end='')
             # ===================log========================
             print('epoch [{}/{}], loss:{:.4f}'
                   .format(epoch + 1, num_epochs, loss.data[0]))
@@ -210,3 +194,17 @@ class NNTrainer():
                 # save_image(mat, './MLP_img/image_{}.png'.format(epoch))
 
         torch.save(model.state_dict(), './sim_MLP.pth')
+
+    def test(self):
+        with torch.no_grad():
+            correct = 0
+            total = 0
+            # for images, labels in test_loader:
+            #     images = images.reshape(-1, 28*28).to(device)
+            #     labels = labels.to(device)
+            #     outputs = model(images)
+            #     _, predicted = torch.max(outputs.data, 1)
+            #     total += labels.size(0)
+            #     correct += (predicted == labels).sum().item()
+
+            print('Accuracy of the network on the 10000 test images: {} %'.format(100 * correct / total))

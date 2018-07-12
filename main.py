@@ -14,21 +14,25 @@ from glob import glob
 from pre_processing import PreProcessor as Pre
 import show_IV_image as showIV
 from train_nn import NNTrainer
+import multiprocessing
 
 if __name__ == '__main__':
     DIR_WAVFILE = './speech/data/lisa/data/timit/raw/TIMIT/TRAIN/'
     DIR = './IV'
     DIR_TRAIN = './IV/TRAIN/'
     DIR_TEST = './IV/TEST/'
-    FORM = '%04d_%02d'
-    X_POSTFIX = '_room.npy'
-    Y_POSTFIX = '_free.npy'
-    FORM_FREE = FORM+Y_POSTFIX
-    FORM_ROOM = FORM+X_POSTFIX
+    FORM = '%04d_%02d.npy'
     ID = '*_converted.wav'
 
     for arg in sys.argv[1:]:
-        if arg == 'pre_processing':
+        if arg.startswith('pre_processing'):
+            # N_CORES
+            N_CORES = multiprocessing.cpu_count()
+            try:
+                N_CORES *= float(arg.split()[1])
+            except IndexError:
+                N_CORES *= 0.5
+
             #RIR Data
             RIR = scio.loadmat('./1_MATLABCode/RIR.mat',
                                 variable_names = 'RIR')['RIR']
@@ -56,11 +60,11 @@ if __name__ == '__main__':
             del sph_mat
 
             N_START = len(glob(
-                os.path.join(DIR_TRAIN, '*_%02d_room.npy'%(RIR.shape[0]-1))
+                os.path.join(DIR_TRAIN, '*_%02d.npy'%(RIR.shape[0]-1))
             ))+1
 
             p = Pre(RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv)
-            p.process(DIR_WAVFILE, ID, N_START, DIR_TRAIN, FORM_FREE, FORM_ROOM)
+            p.process(DIR_WAVFILE, ID, N_START, DIR_TRAIN, FORM, N_CORES)
 
         else:
             metadata = np.load('metadata.npy').item()
@@ -70,7 +74,7 @@ if __name__ == '__main__':
             L_frame = metadata['L_frame']
             L_hop = metadata['L_hop']
             N_wavfile = metadata['N_wavfile']
-            N_loc = metadata['N_LOC']
+            N_LOC = metadata['N_LOC']
 
             del metadata
 
@@ -84,16 +88,21 @@ if __name__ == '__main__':
                 except IndexError:
                     pass
 
-                FNAME_FREE = os.path.join(DIR_TRAIN,
-                                          FORM_FREE%(IDX_WAV,IDX_LOC))
-                FNAME_ROOM = os.path.join(DIR_TRAIN,
-                                          FORM_ROOM%(IDX_WAV,IDX_LOC))
+                data_dict = np.load(os.path.join(DIR_TRAIN,
+                                          FORM%(IDX_WAV,IDX_LOC))).item()
 
-                showIV.show(FNAME_FREE, FNAME_ROOM, ylim=[0, Fs/2])
+                showIV.show(data_dict['IV_free'], data_dict['IV_room'],
+                            title=[FORM%(IDX_WAV,IDX_LOC)+' (free)',
+                                   FORM%(IDX_WAV,IDX_LOC)+' (room)'],
+                            norm_factor=[data_dict['norm_factor_free'],
+                                         data_dict['norm_factor_room']],
+                            ylim=[0, Fs/2])
+
             elif arg.startswith('train_nn'):
                 trainer = NNTrainer(Fs, N_fft, L_frame, L_hop,
+                                    N_wavfile, N_LOC,
                                     DIR, DIR_TRAIN, DIR_TEST,
-                                    FORM, X_POSTFIX, Y_POSTFIX)
+                                    FORM, 'IV_room', 'IV_free')
                 trainer.train()
 
             # elif arg.startswith('histogram'):
