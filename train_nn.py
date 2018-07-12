@@ -30,6 +30,8 @@ class IVDataset(Dataset):
         self.FORM = FORM
         self.XNAME = XNAME
         self.YNAME = YNAME
+        while not os.path.isfile(os.path.join(DIR, FORM%(N_wavfile, N_LOC-1))):
+            N_wavfile -= 1
         self.len = N_wavfile*N_LOC
         self.N_LOC = N_LOC
         self.L_cut_x = L_cut_x
