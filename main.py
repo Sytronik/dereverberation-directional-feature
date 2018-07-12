@@ -80,21 +80,21 @@ if __name__ == '__main__':
             del metadata
 
             if arg.startswith('show_IV_image'):
-                IDX_WAV = 1
-                IDX_LOC = 0
+                FNAME = ''
                 arg_sp = arg.split()
                 try:
-                    IDX_WAV = int(arg_sp[1])
-                    IDX_LOC = int(arg_sp[2])
+                    FNAME = arg_sp[1]
+                    if not FNAME.endswith('.npy'):
+                        FNAME += '.npy'
                 except IndexError:
-                    pass
+                    FNAME = FORM%(1, 0)
 
                 data_dict = np.load(os.path.join(DIR_TRAIN,
-                                          FORM%(IDX_WAV,IDX_LOC))).item()
+                                          FNAME)).item()
 
                 showIV.show(data_dict['IV_free'], data_dict['IV_room'],
-                            title=[FORM%(IDX_WAV,IDX_LOC)+' (free)',
-                                   FORM%(IDX_WAV,IDX_LOC)+' (room)'],
+                            title=[FNAME+' (free)',
+                                   FNAME+' (room)'],
                             norm_factor=[data_dict['norm_factor_free'],
                                          data_dict['norm_factor_room']],
                             ylim=[0, Fs/2])
