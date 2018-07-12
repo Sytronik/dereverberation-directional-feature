@@ -32,6 +32,7 @@ if __name__ == '__main__':
                 N_CORES *= float(arg.split()[1])
             except IndexError:
                 N_CORES *= 0.5
+            N_CORES = int(N_CORES)
 
             #RIR Data
             RIR = scio.loadmat('./1_MATLABCode/RIR.mat',

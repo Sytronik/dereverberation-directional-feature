@@ -44,7 +44,7 @@ class PreProcessor:
         self.win = None
 
     def process(self, DIR_WAVFILE:str, ID:str, N_START,
-                DIR_IV:str, FORM:str, N_CORES):
+                DIR_IV:str, FORM:str, N_CORES:int):
         if not os.path.exists(DIR_IV):
             os.makedirs(DIR_IV)
         self.DIR_IV = DIR_IV
@@ -87,7 +87,7 @@ class PreProcessor:
                 self.N_frame_room = int(np.floor(L_data_room/self.L_hop)-1)
 
                 t_start = time.time()
-                Parallel(n_jobs=int(N_CORES))(
+                Parallel(n_jobs=N_CORES)(
                     delayed(self.save_IV)(RIR[i_loc], Ys[i_loc],
                                           FORM%(self.N_wavfile, i_loc))
                     for i_loc in range(self.N_LOC)
