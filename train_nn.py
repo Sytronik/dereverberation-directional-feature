@@ -189,9 +189,9 @@ class NNTrainer():
                 print('.', end='')
             # ===================log========================
             print('epoch [{}/{}], loss:{:.4f}'
-                  .format(epoch + 1, num_epochs, loss.data[0]))
-            if epoch % 10 == 0:
-                mat = to_mat(output.cpu().data, y.size(2))
+                  .format(epoch + 1, NNTrainer.num_epochs, loss.data[0]))
+            # if epoch % 10 == 0:
+            #     mat = to_mat(output.cpu().data, y.size(2))
                 # os.path.join(DIR_IV, 'MLP_out/')
                 # save_image(mat, './MLP_img/image_{}.png'.format(epoch))
 
