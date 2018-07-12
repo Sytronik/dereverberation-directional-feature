@@ -73,7 +73,7 @@ def show(*args, title=[], norm_factor=[], **kargs):
     chess = (np.add.outer(range(H_CHESS), range(H_CHESS*2)) % 2)*0.3+0.7
     extent = axis[:]
 
-    plt.figure(frameon=False)
+    plt.figure(frameon=False, figsize=(9,9))
     for i in range(N_FIG):
         try:
             title_i=title[i]
@@ -82,7 +82,6 @@ def show(*args, title=[], norm_factor=[], **kargs):
             title_i=''
             print('no title')
 
-        pdb.set_trace()
         #RGB Channel
         #Normalize
         try:
@@ -93,7 +92,7 @@ def show(*args, title=[], norm_factor=[], **kargs):
             IVs[i][:,:,:3] = norm_by_minmax(IVs[i][:,:,:3])
 
         #Correction
-        IVs[i][:,:,:3] = 1./(1.+np.exp(-25*(IVs[i][:,:,:3]-0.5)))
+        IVs[i][:,:,:3] = 1./(1.+np.exp(-30*(IVs[i][:,:,:3]-0.5)))
         # Histogram Equalization
         # IV_gray = np.sqrt(np.sum(IVs[i][:,:,:3]**2, axis=2))
         # IV_gray /= IV_gray.max()
@@ -108,7 +107,11 @@ def show(*args, title=[], norm_factor=[], **kargs):
         #Correction
         # IVs[i][:,:,3] = 1
         # IVs[i][:,:,3] = IVs[i][:,:,3]**(1/5)
-        # IVs[i][:,:,3] = 1/(1+np.exp(-10*(IVs[i][:,:,3]-np.mean(IVs[i][:,:,3]))))
+
+        # IVs[i][:,:,3] = IVs[i][:,:,3]/2. + 0.5
+        # IVs[i][:,:,3] = 1/(1+np.exp(-10*(IVs[i][:,:,3]-0.5)))
+        # IVs[i][:,:,3] = (IVs[i][:,:,3]-0.5)*2
+
         IVs[i][:,:,3],_ = hist_eq(IVs[i][:,:,3])
 
         # flip frequency axis
@@ -125,4 +128,5 @@ def show(*args, title=[], norm_factor=[], **kargs):
         plt.title(title_i)
         plt.xlabel('Frame Index')
         plt.ylabel('Frequency (Hz)')
+    plt.tight_layout()
     plt.show()
