@@ -130,3 +130,4 @@ def show(*args, title=[], norm_factor=[], **kargs):
         plt.ylabel('Frequency (Hz)')
     plt.tight_layout()
     plt.show()
+    # plt.savefig(title[0].split()[0]+'.png', dip=300)
