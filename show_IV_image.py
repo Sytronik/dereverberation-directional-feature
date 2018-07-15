@@ -78,7 +78,7 @@ def show(*args, title=[], norm_factor=[], **kargs):
         try:
             title_i=title[i]
             print(title[i])
-        except:
+        except (IndexError, TypeError):
             title_i=''
             print('no title')
 
@@ -88,7 +88,7 @@ def show(*args, title=[], norm_factor=[], **kargs):
             IVs[i][:,:,:3] /= (2*norm_factor[i])
             IVs[i][:,:,:3] += 0.5
             IVs[i][:,:,:3] = IVs[i][:,:,:3].clip(0, 1)
-        except:
+        except (IndexError, TypeError):
             IVs[i][:,:,:3] = norm_by_minmax(IVs[i][:,:,:3])
 
         #Correction

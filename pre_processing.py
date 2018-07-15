@@ -4,12 +4,10 @@ import numpy as np
 import cupy as cp
 import scipy as sc
 import scipy.signal
-import scipy.io as scio
 # import librosa
 
 import os
 import time
-import atexit
 from glob import glob
 
 import soundfile as sf
@@ -144,7 +142,7 @@ class PreProcessor:
                 'IV_room':IV_room.get(),
                 'norm_factor_free':norm_factor_free,
                 'norm_factor_room':norm_factor_room}
-        np.save(os.path.join(self.DIR_IV,FNAME), dict)
+        np.save(os.path.join(self.DIR_IV, FNAME), dict)
         print(FNAME)
 
     def __str__(self):
@@ -182,8 +180,8 @@ class PreProcessor:
                 n = shft[0] + ii
                 m = shft[1] + jj
                 idx_from = m + n*(n+1)
-                if -n <= m and m <= n and 0 <= n and n <= N and \
-                        idx_from < Ain.shape[0]:
+                if -n <= m and m <= n and 0 <= n and n <= N \
+                        and idx_from < Ain.shape[0]:
                     Aout[idx] = Ain[idx_from]
                 idx += 1
         return Aout
@@ -198,11 +196,11 @@ class PreProcessor:
         Aug_4 = cls.seltriag(Vv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, 0)) \
                 + cls.seltriag(Vv, 1, (1, 0))*cls.seltriag(Asv, 1, (1, 0))
 
-        D_x = cp.sum(Aug_1.conj()*(Aug_2+Aug_3)/2, axis=0).reshape(-1,1)
-        D_y = cp.sum(Aug_1.conj()*(Aug_2-Aug_3)/2j, axis=0).reshape(-1,1)
-        D_z = cp.sum(Aug_1.conj()*Aug_4, axis=0).reshape(-1,1)
+        D_x = cp.sum(Aug_1.conj()*(Aug_2+Aug_3)/2, axis=0)
+        D_y = cp.sum(Aug_1.conj()*(Aug_2-Aug_3)/2j, axis=0)
+        D_z = cp.sum(Aug_1.conj()*Aug_4, axis=0)
 
-        return 0.5*cp.real(cp.concatenate((D_x, D_y, D_z), axis=1))
+        return 0.5*cp.real(cp.stack((D_x, D_y, D_z), axis=1))
 
 
 if __name__ == '__main__':

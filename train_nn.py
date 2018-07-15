@@ -1,10 +1,7 @@
 import os
 import pdb
 
-import random
 import numpy as np
-import scipy as sc
-import scipy.io as scio
 
 import torch
 from torch import nn
@@ -139,10 +136,10 @@ class NNTrainer():
     #     x = x.view(x.size(0), N_fft/2, len, 4)
     #     return x
 
-    def __init__(self, Fs, N_fft:int, L_frame:int, L_hop:int,
-                 N_wavfile:int, N_LOC:int,
-                 DIR:str, DIR_TRAIN:str, DIR_TEST:str, FORM_IV:str,
-                 XNAME:str, YNAME:str):
+    def __init__(self, DIR:str, DIR_TRAIN:str, DIR_TEST:str, FORM_IV:str,
+                 XNAME:str, YNAME:str,
+                 Fs, N_fft:int, L_frame:int, L_hop:int,
+                 N_wavfile:int, N_LOC:int):
         self.Fs = Fs
         self.N_fft = N_fft
         self.L_frame = L_frame
@@ -209,4 +206,5 @@ class NNTrainer():
             #     total += labels.size(0)
             #     correct += (predicted == labels).sum().item()
 
-            print('Accuracy of the network on the 10000 test images: {} %'.format(100 * correct / total))
+            print('Accuracy of the network on the 10000 test images: {} %' \
+                  .format(100 * correct / total))

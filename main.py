@@ -1,5 +1,4 @@
 import pdb
-import sys
 
 import numpy as np
 import cupy as cp
@@ -10,11 +9,12 @@ import scipy.io as scio
 
 import os
 from glob import glob
+import sys
+import multiprocessing
 
 from pre_processing import PreProcessor as Pre
 import show_IV_image as showIV
 from train_nn import NNTrainer
-import multiprocessing
 
 if __name__ == '__main__':
     DIR_WAVFILE = './speech/data/lisa/data/timit/raw/TIMIT/TRAIN/'
@@ -37,26 +37,25 @@ if __name__ == '__main__':
             #RIR Data
             RIR = scio.loadmat('./1_MATLABCode/RIR.mat',
                                 variable_names = 'RIR')['RIR']
-            RIR = RIR.transpose((2, 0, 1)) #72 x 32 x 48k
-            RIR = cp.array(RIR)
+            RIR = cp.array(RIR.transpose((2, 0, 1))) #72 x 32 x 48k
 
             #SFT Data
             sph_mat = scio.loadmat('./1_MATLABCode/sph_data.mat',
                     variable_names=['bEQspec','Yenc','Ys','Wnv','Wpv','Vv'])
-            bEQspec = cp.array(sph_mat['bEQspec']).T
-            Yenc = cp.array(sph_mat['Yenc']).T
+            bEQspec = cp.array(sph_mat['bEQspec'].T)
+            Yenc = cp.array(sph_mat['Yenc'].T)
 
-            Ys_original = sph_mat['Ys'].reshape(-1)
+            Ys_original = np.squeeze(sph_mat['Ys'])
             Ys_np = np.zeros((Ys_original.size,Ys_original[0].size),
                              dtype=complex)
             for ii in range(Ys_original.size):
-                Ys_np[ii] = Ys_original[ii].reshape(-1)
+                Ys_np[ii] = np.squeeze(Ys_original[ii])
             Ys = cp.array(Ys_np)
             del Ys_original
 
-            Wnv = cp.array(sph_mat['Wnv'], dtype=complex).reshape(-1)
-            Wpv = cp.array(sph_mat['Wpv'], dtype=complex).reshape(-1)
-            Vv = cp.array(sph_mat['Vv'], dtype=complex).reshape(-1)
+            Wnv = cp.array(np.squeeze(sph_mat['Wnv']), dtype=complex)
+            Wpv = cp.array(np.squeeze(sph_mat['Wpv']), dtype=complex)
+            Vv = cp.array(np.squeeze(sph_mat['Vv']), dtype=complex)
 
             del sph_mat
 
@@ -70,14 +69,14 @@ if __name__ == '__main__':
         else:
             metadata = np.load('metadata.npy').item()
 
-            Fs = metadata['Fs']
-            N_fft = metadata['N_fft']
-            L_frame = metadata['L_frame']
-            L_hop = metadata['L_hop']
-            N_wavfile = metadata['N_wavfile']
-            N_LOC = metadata['N_LOC']
+            # Fs = metadata['Fs']
+            # N_fft = metadata['N_fft']
+            # L_frame = metadata['L_frame']
+            # L_hop = metadata['L_hop']
+            # N_wavfile = metadata['N_wavfile']
+            # N_LOC = metadata['N_LOC']
 
-            del metadata
+            # del metadata
 
             if arg.startswith('show_IV_image'):
                 FNAME = ''
@@ -97,13 +96,14 @@ if __name__ == '__main__':
                                    FNAME+' (room)'],
                             norm_factor=[data_dict['norm_factor_free'],
                                          data_dict['norm_factor_room']],
-                            ylim=[0, Fs/2])
+                            ylim=[0, metadata['Fs']/2])
 
             elif arg.startswith('train_nn'):
-                trainer = NNTrainer(Fs, N_fft, L_frame, L_hop,
-                                    N_wavfile, N_LOC,
-                                    DIR, DIR_TRAIN, DIR_TEST,
-                                    FORM, 'IV_room', 'IV_free')
+                del metadata['path_wavfiles']
+                trainer = NNTrainer(DIR, DIR_TRAIN, DIR_TEST,
+                                    FORM, 'IV_room', 'IV_free',
+                                    **metadata)
+
                 trainer.train()
 
             # elif arg.startswith('histogram'):
