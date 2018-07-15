@@ -11,13 +11,13 @@ from torchvision.utils import save_image
 
 import gc
 
+
 def print_cuda_tensors():
     for obj in gc.get_objects():
         try:
-            if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+            if torch.is_tensor(obj) or \
+                    (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
                 print(type(obj), obj.size())
-        except:
-            continue
 
 
 class IVDataset(Dataset):
@@ -27,7 +27,9 @@ class IVDataset(Dataset):
         self.FORM = FORM
         self.XNAME = XNAME
         self.YNAME = YNAME
-        while not os.path.isfile(os.path.join(DIR, FORM%(N_wavfile, N_LOC-1))):
+        while not os.path.isfile(
+            os.path.join(DIR, FORM % (N_wavfile, N_LOC-1))
+        ):
             N_wavfile -= 1
         self.len = N_wavfile*N_LOC
         self.N_LOC = N_LOC
@@ -47,7 +49,8 @@ class IVDataset(Dataset):
         # idx = self._rand_idx[idx]
         i_wavfile = 1 + int(idx / self.N_LOC)
         i_loc = idx % self.N_LOC
-        data_dict = np.load(os.path.join(self.DIR, self.FORM%(i_wavfile, i_loc))).item()
+        FNAME = os.path.join(self.DIR, self.FORM % (i_wavfile, i_loc))
+        data_dict = np.load(FNAME).item()
 
         x = data_dict[self.XNAME]
         y = data_dict[self.YNAME]
@@ -56,19 +59,19 @@ class IVDataset(Dataset):
         channel = x.shape[2]
 
         if x.shape[1] < y.shape[1]:
-            x=np.concatenate(
+            x = np.concatenate(
                 (x, np.zeros((N_freq, y.shape[1]-x.shape[1], channel))),
                 axis=1
             )
         elif x.shape[1] > y.shape[1]:
-            y=np.concatenate(
+            y = np.concatenate(
                 (y, np.zeros((N_freq,x.shape[1]-y.shape[1], channel))),
                 axis=1
             )
 
         len = x.shape[1]
         if self.L_cut_x > 1:
-            x=np.concatenate(
+            x = np.concatenate(
                 (
                     np.zeros((N_freq, int(self.L_cut_x/2), channel)),
                     x,
@@ -81,11 +84,13 @@ class IVDataset(Dataset):
         #                     y,
         #                     np.zeros(N_fft, int(self.L_cut_y/2-1))), axis=1)
 
-        x_stacked = np.stack([ \
-                x[:,ii-int(self.L_cut_x/2):ii+int(self.L_cut_x/2),:] \
-                for ii in range(int(self.L_cut_x/2), len+int(self.L_cut_x/2)) \
+        x_stacked = np.stack([
+                x[:,
+                  ii-int(self.L_cut_x/2):ii+int(self.L_cut_x/2),
+                  :]
+                for ii in range(int(self.L_cut_x/2), len+int(self.L_cut_x/2))
         ])
-        y=y.transpose((1,0,2)).reshape(len,N_freq,1,-1);
+        y = y.transpose((1, 0, 2)).reshape(len, N_freq, 1, -1)
 
         x_stacked = torch.tensor(x_stacked, dtype=torch.float)
         y = torch.tensor(y, dtype=torch.float)
@@ -165,8 +170,8 @@ class NNTrainer():
 
         self.criterion = nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.model.parameters(),
-                                     lr=NNTrainer.learning_rate,
-                                     weight_decay=1e-5)
+                                          lr=NNTrainer.learning_rate,
+                                          weight_decay=1e-5)
 
     def train(self):
         for epoch in range(NNTrainer.num_epochs):
@@ -178,7 +183,7 @@ class NNTrainer():
                 del x_stacked
                 # ===================forward=====================
                 output = self.model(input)
-                loss = self.criterion(output, y.view(y.size(0),-1).cuda())
+                loss = self.criterion(output, y.view(y.size(0), -1).cuda())
                 # ===================backward====================
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -189,8 +194,8 @@ class NNTrainer():
                   .format(epoch + 1, NNTrainer.num_epochs, loss.data[0]))
             # if epoch % 10 == 0:
             #     mat = to_mat(output.cpu().data, y.size(2))
-                # os.path.join(DIR_IV, 'MLP_out/')
-                # save_image(mat, './MLP_img/image_{}.png'.format(epoch))
+            #     os.path.join(DIR_IV, 'MLP_out/')
+            #     save_image(mat, './MLP_img/image_{}.png'.format(epoch))
 
         torch.save(model.state_dict(), './sim_MLP.pth')
 
@@ -206,5 +211,5 @@ class NNTrainer():
             #     total += labels.size(0)
             #     correct += (predicted == labels).sum().item()
 
-            print('Accuracy of the network on the 10000 test images: {} %' \
+            print('Accuracy of the network on the 10000 test images: {} %'
                   .format(100 * correct / total))
