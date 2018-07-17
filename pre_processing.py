@@ -4,17 +4,16 @@ import numpy as np
 import cupy as cp
 import scipy as sc
 import scipy.signal
-import scipy.io as scio
 # import librosa
 
 import os
 import time
-import atexit
 from glob import glob
 
 import soundfile as sf
 
 from joblib import Parallel, delayed
+
 
 class PreProcessor:
     def __init__(self, RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv, L_WIN_MS=20.):
@@ -65,8 +64,8 @@ class PreProcessor:
                     self.N_wavfile += 1
                     continue
 
-                #File Open & Resample
-                if self.Fs==0:
+                # File Open & Resample
+                if self.Fs == 0:
                     data, self.Fs = sf.read(file)
                     self.L_frame = int(self.Fs*self.L_WIN_MS/1000)
                     self.N_fft = self.L_frame
@@ -89,10 +88,10 @@ class PreProcessor:
                 t_start = time.time()
                 Parallel(n_jobs=N_CORES)(
                     delayed(self.save_IV)(RIR[i_loc], Ys[i_loc],
-                                          FORM%(self.N_wavfile, i_loc))
+                                          FORM % (self.N_wavfile, i_loc))
                     for i_loc in range(self.N_LOC)
                 )
-                print('%.3f sec'%(time.time()-t_start))
+                print('%.3f sec' % (time.time()-t_start))
                 self.N_wavfile += 1
                 self.print_save_info()
 
@@ -110,7 +109,7 @@ class PreProcessor:
             fft = cp.fft.fft(self.data[interval]*self.win, n=self.N_fft)
             anm = cp.outer(Ys.conj(), fft)
             max_in_frame \
-                = cp.max(cp.sqrt(cp.sum(cp.abs(anm)**2,axis=0))).get().item()
+                = cp.max(cp.sqrt(cp.sum(cp.abs(anm)**2, axis=0))).get().item()
             norm_factor_free = np.max([norm_factor_free, max_in_frame])
 
             IV_free[:,i_frame,:3] \
@@ -120,7 +119,7 @@ class PreProcessor:
 
         # RIR Filtering
         filtered \
-            = cp.array(sc.signal.fftconvolve(self.data.reshape(1,-1).get(),
+            = cp.array(sc.signal.fftconvolve(self.data.reshape(1, -1).get(),
                                              RIR.get()))
 
         # Room Intensity Vector Image
@@ -131,7 +130,7 @@ class PreProcessor:
             fft = cp.fft.fft(filtered[:,interval]*self.win, n=self.N_fft)
             anm = (self.Yenc @ fft) * self.bEQspec
             max_in_frame \
-                = cp.max(cp.sqrt(cp.sum(cp.abs(anm)**2,axis=0))).get().item()
+                = cp.max(cp.sqrt(cp.sum(cp.abs(anm)**2, axis=0))).get().item()
             norm_factor_room = np.max([norm_factor_room, max_in_frame])
 
             IV_room[:,i_frame,:3] \
@@ -139,12 +138,12 @@ class PreProcessor:
                                               self.Wnv, self.Wpv, self.Vv)
             IV_room[:,i_frame,3] = np.abs(anm[0,:int(self.N_fft/2)])
 
-        #Save
-        dict = {'IV_free':IV_free.get(),
-                'IV_room':IV_room.get(),
-                'norm_factor_free':norm_factor_free,
-                'norm_factor_room':norm_factor_room}
-        np.save(os.path.join(self.DIR_IV,FNAME), dict)
+        # Save
+        dict = {'IV_free': IV_free.get(),
+                'IV_room': IV_room.get(),
+                'norm_factor_free': norm_factor_free,
+                'norm_factor_room': norm_factor_room}
+        np.save(os.path.join(self.DIR_IV, FNAME), dict)
         print(FNAME)
 
     def __str__(self):
@@ -156,13 +155,12 @@ class PreProcessor:
     def print_save_info(self):
         print(self)
 
-        metadata={}
-        metadata['N_wavfile'] = self.N_wavfile
-        metadata['Fs'] = self.Fs
-        metadata['N_fft'] = self.N_fft
-        metadata['L_frame'] = self.L_frame
-        metadata['L_hop'] = self.L_hop
-        metadata['N_LOC'] = self.N_LOC
+        metadata = {'N_wavfile': self.N_wavfile,
+                    'Fs': self.Fs,
+                    'N_fft': self.N_fft,
+                    'L_frame': self.L_frame,
+                    'L_hop': self.L_hop,
+                    'N_LOC': self.N_LOC}
 
         np.save('metadata.npy', metadata)
 
@@ -178,12 +176,12 @@ class PreProcessor:
 
         Aout = cp.zeros((len_new, Nfreq), dtype=Ain.dtype)
         for ii in range(N-nrord+1):
-            for jj in range(-ii,ii+1):
+            for jj in range(-ii, ii+1):
                 n = shft[0] + ii
                 m = shft[1] + jj
                 idx_from = m + n*(n+1)
-                if -n <= m and m <= n and 0 <= n and n <= N and \
-                        idx_from < Ain.shape[0]:
+                if -n <= m and m <= n and 0 <= n and n <= N \
+                        and idx_from < Ain.shape[0]:
                     Aout[idx] = Ain[idx_from]
                 idx += 1
         return Aout
@@ -198,11 +196,11 @@ class PreProcessor:
         Aug_4 = cls.seltriag(Vv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, 0)) \
                 + cls.seltriag(Vv, 1, (1, 0))*cls.seltriag(Asv, 1, (1, 0))
 
-        D_x = cp.sum(Aug_1.conj()*(Aug_2+Aug_3)/2, axis=0).reshape(-1,1)
-        D_y = cp.sum(Aug_1.conj()*(Aug_2-Aug_3)/2j, axis=0).reshape(-1,1)
-        D_z = cp.sum(Aug_1.conj()*Aug_4, axis=0).reshape(-1,1)
+        D_x = cp.sum(Aug_1.conj()*(Aug_2+Aug_3)/2, axis=0)
+        D_y = cp.sum(Aug_1.conj()*(Aug_2-Aug_3)/2j, axis=0)
+        D_z = cp.sum(Aug_1.conj()*Aug_4, axis=0)
 
-        return 0.5*cp.real(cp.concatenate((D_x, D_y, D_z), axis=1))
+        return 0.5*cp.real(cp.stack((D_x, D_y, D_z), axis=1))
 
 
 if __name__ == '__main__':
