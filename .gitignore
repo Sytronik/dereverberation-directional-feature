@@ -6,6 +6,9 @@ Figures/
 *.npy
 *.asv
 
+.ftpconfig
+.ftpignore
+
 pre_processing_gpu_beta실험.py
 
 # Python

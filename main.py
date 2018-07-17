@@ -17,10 +17,11 @@ from train_nn import NNTrainer
 import multiprocessing
 
 if __name__ == '__main__':
-    DIR_WAVFILE = './speech/data/lisa/data/timit/raw/TIMIT/TRAIN/'
-    DIR = './IV'
-    DIR_TRAIN = './IV/TRAIN/'
-    DIR_TEST = './IV/TEST/'
+    DIR_DATA = '../../De-Reverberation Data'
+    DIR_WAVFILE = DIR_DATA + '/speech/data/lisa/data/timit/raw/TIMIT/TRAIN'
+    DIR_IV = DIR_DATA + '/IV'
+    DIR_TRAIN = DIR_IV + '/TRAIN'
+    DIR_TEST = DIR_IV + '/TEST'
     FORM = '%04d_%02d.npy'
     ID = '*_converted.wav'
 
@@ -102,7 +103,7 @@ if __name__ == '__main__':
             elif arg.startswith('train_nn'):
                 trainer = NNTrainer(Fs, N_fft, L_frame, L_hop,
                                     N_wavfile, N_LOC,
-                                    DIR, DIR_TRAIN, DIR_TEST,
+                                    DIR_IV, DIR_TRAIN, DIR_TEST,
                                     FORM, 'IV_room', 'IV_free')
                 trainer.train()
 
