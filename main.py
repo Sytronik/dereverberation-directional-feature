@@ -100,18 +100,10 @@ if __name__ == '__main__':
                             ylim=[0, metadata['Fs']/2])
 
             elif arg.startswith('train_nn'):
-<<<<<<< HEAD
-                trainer = NNTrainer(Fs, N_fft, L_frame, L_hop,
-                                    N_wavfile, N_LOC,
-                                    DIR_IV, DIR_TRAIN, DIR_TEST,
-                                    FORM, 'IV_room', 'IV_free')
-=======
                 del metadata['path_wavfiles']
                 trainer = NNTrainer(DIR, DIR_TRAIN, DIR_TEST,
                                     FORM, 'IV_room', 'IV_free',
                                     **metadata)
-
->>>>>>> d68c3c84eead6964148393c02a64487516274a87
                 trainer.train()
 
             # elif arg.startswith('histogram'):
