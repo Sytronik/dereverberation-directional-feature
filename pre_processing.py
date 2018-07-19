@@ -3,7 +3,7 @@ import pdb
 import numpy as np
 import cupy as cp
 import scipy as sc
-import scipy.signal
+import scipy.signal as scsig
 # import librosa
 
 import os
@@ -14,18 +14,40 @@ import soundfile as sf
 
 from joblib import Parallel, delayed
 
+N_CUDA_DEV = 4
+
+import multiprocessing as mp
+import gc
+import logging
+
 
 class PreProcessor:
     def __init__(self, RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv, L_WIN_MS=20.):
+        np.fft.restore_all()
         # From Parameters
         self.RIR = RIR
         self.N_LOC, self.N_MIC, self.L_RIR = RIR.shape
         self.bEQspec = bEQspec
         self.Yenc = Yenc
         self.Ys = Ys
+
         self.Wnv = Wnv
         self.Wpv = Wpv
         self.Vv = Vv
+        #
+        # for i_loc in range(self.N_LOC):
+        #     with cp.cuda.Device(i_loc % N_CUDA_DEV):
+        #         self.RIR.append(cp.array(RIR[i_loc]))
+        #         self.Ys.append(cp.array(Ys[i_loc]))
+        #
+        # for i_dev in range(N_CUDA_DEV):
+        #     with cp.cuda.Device(i_dev):
+        #         self.bEQspec.append(cp.array(bEQspec))
+        #         self.Yenc.append(cp.array(Yenc))
+        #         self.Wnv.append(cp.array(Wnv))
+        #         self.Wpv.append(cp.array(Wpv))
+        #         self.Vv.append(cp.array(Vv))
+
         self.L_WIN_MS = L_WIN_MS
 
         # Determined during process
@@ -33,6 +55,7 @@ class PreProcessor:
         self.data = None
         self.N_frame_free = 0
         self.N_frame_room = 0
+        self.all_files = []
 
         # Common for all wav file
         self.Fs = 0
@@ -42,7 +65,7 @@ class PreProcessor:
         self.L_hop = 0
         self.win = None
 
-    def process(self, DIR_WAVFILE:str, ID:str, N_START,
+    def process(self, DIR_WAVFILE:str, ID:str, N_START:int,
                 DIR_IV:str, FORM:str, N_CORES:int):
         if not os.path.exists(DIR_IV):
             os.makedirs(DIR_IV)
@@ -50,105 +73,155 @@ class PreProcessor:
 
         print('Start processing from the {}-th wave file'.format(N_START))
 
+        win = None
         RIR = self.RIR
+        bEQspec = self.bEQspec
+        Yenc = self.Yenc
         Ys = self.Ys
-        self.RIR = None
-        self.Ys = None
+        Wnv = self.Wnv
+        Wpv = self.Wpv
+        Vv = self.Vv
 
+        self.RIR = None
+        self.bEQspec = None
+        self.Yenc = None
+        self.Ys = None
+        self.Wnv = None
+        self.Wpv = None
+        self.Vv = None
+
+        # Search all wav files
+        self.all_files=[]
         for folder, _, _ in os.walk(DIR_WAVFILE):
             files = glob(os.path.join(folder, ID))
             if not files:
                 continue
-            for file in files:
-                if self.N_wavfile < N_START-1:
-                    self.N_wavfile += 1
-                    continue
+            self.all_files.extend(files)
 
-                # File Open & Resample
-                if self.Fs == 0:
-                    data, self.Fs = sf.read(file)
-                    self.L_frame = int(self.Fs*self.L_WIN_MS/1000)
-                    self.N_fft = self.L_frame
-                    self.L_hop = int(self.L_frame/2)
-                    self.win \
-                        = cp.array(sc.signal.hamming(self.L_frame, sym=False))
-                    self.print_save_info()
-                else:
-                    data, _ = sf.read(file)
-                # data = librosa.core.resample(data, Fs_original, Fs)
-                self.data = cp.array(data)
-
-                print(file)
-                L_data_free = self.data.shape[0]
-                self.N_frame_free = int(np.floor(L_data_free/self.L_hop)-1)
-
-                L_data_room = L_data_free+self.L_RIR-1
-                self.N_frame_room = int(np.floor(L_data_room/self.L_hop)-1)
-
-                t_start = time.time()
-                Parallel(n_jobs=N_CORES)(
-                    delayed(self.save_IV)(RIR[i_loc], Ys[i_loc],
-                                          FORM % (self.N_wavfile, i_loc))
-                    for i_loc in range(self.N_LOC)
-                )
-                print('%.3f sec' % (time.time()-t_start))
+        # Main Process
+        for file in self.all_files:
+            if self.N_wavfile < N_START-1:
                 self.N_wavfile += 1
+                continue
+
+            # File Open (& Resample)
+            if self.Fs == 0:
+                data, self.Fs = sf.read(file)
+                self.L_frame = int(self.Fs*self.L_WIN_MS/1000)
+                self.N_fft = self.L_frame
+                self.L_hop = int(self.L_frame/2)
+
+                win = scsig.hamming(self.L_frame, sym=False)
                 self.print_save_info()
+            else:
+                data, _ = sf.read(file)
+
+            print(file)
+            L_data_free = data.shape[0]
+            self.N_frame_free = int(np.floor(L_data_free/self.L_hop)-1)
+
+            L_data_room = L_data_free+self.L_RIR-1
+            self.N_frame_room = int(np.floor(L_data_room/self.L_hop)-1)
+
+            t_start = time.time()
+
+            # logger = mp.log_to_stderr()  #debugging subprocess
+            # logger.setLevel(mp.SUBDEBUG) #debugging subprocess
+            pool = mp.Pool(N_CORES - N_CORES % N_CUDA_DEV)
+            for i_loc in range(self.N_LOC):
+                pool.apply_async(self.save_IV,
+                                 args=(i_loc % N_CUDA_DEV,
+                                       data, win,
+                                       RIR[i_loc], bEQspec, Yenc, Ys[i_loc],
+                                       Wnv, Wpv, Vv,
+                                       FORM % (self.N_wavfile+1, i_loc)))
+            pool.close()
+            pool.join()
+
+            # Non-parallel
+            # for i_loc in range(self.N_LOC):
+            #     self.save_IV(i_loc % N_CUDA_DEV,
+            #                  data, win,
+            #                  RIR[i_loc], bEQspec,
+            #                  Yenc, Ys[i_loc],
+            #                  Wnv, Wpv, Vv,
+            #                  FORM % (self.N_wavfile+1, i_loc))
+
+            print('%.3f sec' % (time.time()-t_start))
+            self.N_wavfile += 1
+            self.print_save_info()
 
         self.RIR = RIR
+        self.bEQspec = bEQspec
+        self.Yenc = Yenc
         self.Ys = Ys
+        self.Ys = Ys
+        self.Wnv = Wnv
+        self.Wpv = Wpv
+        self.Vv = Vv
         print('Done.')
         self.print_save_info()
 
-    def save_IV(self, RIR, Ys, FNAME:str):
+    def save_IV(self, i_dev:int, _data, _win, _RIR, _bEQspec, _Yenc, _Ys,
+                _Wnv, _Wpv, _Vv, FNAME:str):
+        cp.cuda.Device(i_dev).use()
+        data = cp.asarray(_data)
+        win = cp.asarray(_win)
+        RIR = cp.asarray(_RIR)
+        bEQspec = cp.asarray(_bEQspec)
+        Yenc = cp.asarray(_Yenc)
+        Ys = cp.asarray(_Ys)
+        Wnv = cp.asarray(_Wnv)
+        Wpv = cp.asarray(_Wpv)
+        Vv = cp.asarray(_Vv)
+
+        # RIR Filtering
+        filtered = cp.asarray(scsig.fftconvolve(_data.reshape(1, -1), _RIR))
+
         # Free-field Intensity Vector Image
         IV_free = cp.zeros((int(self.N_fft/2), self.N_frame_free, 4))
         norm_factor_free = float('-inf')
         for i_frame in range(self.N_frame_free):
             interval = i_frame*self.L_hop + np.arange(self.L_frame)
-            fft = cp.fft.fft(self.data[interval]*self.win, n=self.N_fft)
+            fft = cp.fft.fft(data[interval]*win, n=self.N_fft)
             anm = cp.outer(Ys.conj(), fft)
             max_in_frame \
-                = cp.max(cp.sqrt(cp.sum(cp.abs(anm)**2, axis=0))).get().item()
+                = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
             norm_factor_free = np.max([norm_factor_free, max_in_frame])
 
             IV_free[:,i_frame,:3] \
                 = PreProcessor.calc_intensity(anm[:,:int(self.N_fft/2)],
-                                              self.Wnv, self.Wpv, self.Vv)
+                                              Wnv, Wpv, Vv)
             IV_free[:,i_frame,3] = cp.abs(anm[0,:int(self.N_fft/2)])
-
-        # RIR Filtering
-        filtered \
-            = cp.array(sc.signal.fftconvolve(self.data.reshape(1, -1).get(),
-                                             RIR.get()))
 
         # Room Intensity Vector Image
         IV_room = cp.zeros((int(self.N_fft/2), self.N_frame_room, 4))
         norm_factor_room = float('-inf')
         for i_frame in range(self.N_frame_room):
             interval = i_frame*self.L_hop + np.arange(self.L_frame)
-            fft = cp.fft.fft(filtered[:,interval]*self.win, n=self.N_fft)
-            anm = (self.Yenc @ fft) * self.bEQspec
+            fft = cp.fft.fft(filtered[:,interval]*win, n=self.N_fft)
+            anm = (Yenc @ fft) * bEQspec
             max_in_frame \
-                = cp.max(cp.sqrt(cp.sum(cp.abs(anm)**2, axis=0))).get().item()
+                = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
             norm_factor_room = np.max([norm_factor_room, max_in_frame])
 
             IV_room[:,i_frame,:3] \
                 = PreProcessor.calc_intensity(anm[:,:int(self.N_fft/2)],
-                                              self.Wnv, self.Wpv, self.Vv)
-            IV_room[:,i_frame,3] = np.abs(anm[0,:int(self.N_fft/2)])
+                                              Wnv, Wpv, Vv)
+            IV_room[:,i_frame,3] = cp.abs(anm[0,:int(self.N_fft/2)])
 
         # Save
-        dict = {'IV_free': IV_free.get(),
-                'IV_room': IV_room.get(),
+        dict = {'IV_free': cp.asnumpy(IV_free),
+                'IV_room': cp.asnumpy(IV_room),
                 'norm_factor_free': norm_factor_free,
                 'norm_factor_room': norm_factor_room}
         np.save(os.path.join(self.DIR_IV, FNAME), dict)
+
         print(FNAME)
 
     def __str__(self):
-        return 'Number of wave files already processed: {}\n'\
-                    .format(self.N_wavfile) \
+        return 'Wav Files Processed/Total: {}/{}\n'\
+                    .format(self.N_wavfile, len(self.all_files)) \
                + 'Sample Rate: {}\n'.format(self.Fs) \
                + 'Number of source location: {}'.format(self.N_LOC)
 
@@ -160,7 +233,8 @@ class PreProcessor:
                     'N_fft': self.N_fft,
                     'L_frame': self.L_frame,
                     'L_hop': self.L_hop,
-                    'N_LOC': self.N_LOC}
+                    'N_LOC': self.N_LOC,
+                    'path_wavfiles': self.all_files}
 
         np.save('metadata.npy', metadata)
 

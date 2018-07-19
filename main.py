@@ -1,7 +1,6 @@
 import pdb
 
 import numpy as np
-import cupy as cp
 import scipy as sc
 import scipy.io as scio
 
@@ -10,7 +9,7 @@ import scipy.io as scio
 import os
 from glob import glob
 import sys
-import multiprocessing
+import multiprocessing as mp
 
 from pre_processing import PreProcessor as Pre
 import show_IV_image as showIV
@@ -28,7 +27,7 @@ if __name__ == '__main__':
     for arg in sys.argv[1:]:
         if arg.startswith('pre_processing'):
             # N_CORES
-            N_CORES = multiprocessing.cpu_count()
+            N_CORES = mp.cpu_count()
             try:
                 N_CORES *= float(arg.split()[1])
             except IndexError:
@@ -36,28 +35,27 @@ if __name__ == '__main__':
             N_CORES = int(N_CORES)
 
             # RIR Data
-            RIR = scio.loadmat('./1_MATLABCode/RIR.mat',
+            RIR = scio.loadmat(os.path.join(DIR_DATA, 'RIR.mat'),
                                variable_names='RIR')['RIR']
-            RIR = cp.array(RIR.transpose((2, 0, 1)))  # 72 x 32 x 48k
+            RIR = RIR.transpose((2, 0, 1))  # 72 x 32 x 48k
 
             # SFT Data
-            sph_mat = scio.loadmat('./1_MATLABCode/sph_data.mat',
+            sph_mat = scio.loadmat(os.path.join(DIR_DATA, 'sph_data.mat'),
                                    variable_names=['bEQspec', 'Yenc', 'Ys',
                                                    'Wnv', 'Wpv', 'Vv'])
-            bEQspec = cp.array(sph_mat['bEQspec'].T)
-            Yenc = cp.array(sph_mat['Yenc'].T)
+            bEQspec = sph_mat['bEQspec'].T
+            Yenc = sph_mat['Yenc'].T
 
             Ys_original = np.squeeze(sph_mat['Ys'])
-            Ys_np = np.zeros((Ys_original.size, Ys_original[0].size),
+            Ys = np.zeros((Ys_original.size, Ys_original[0].size),
                              dtype=complex)
             for ii in range(Ys_original.size):
-                Ys_np[ii] = np.squeeze(Ys_original[ii])
-            Ys = cp.array(Ys_np)
+                Ys[ii] = np.squeeze(Ys_original[ii])
             del Ys_original
 
-            Wnv = cp.array(np.squeeze(sph_mat['Wnv']), dtype=complex)
-            Wpv = cp.array(np.squeeze(sph_mat['Wpv']), dtype=complex)
-            Vv = cp.array(np.squeeze(sph_mat['Vv']), dtype=complex)
+            Wnv = np.array(np.squeeze(sph_mat['Wnv']), dtype=complex)
+            Wpv = np.array(np.squeeze(sph_mat['Wpv']), dtype=complex)
+            Vv = np.array(np.squeeze(sph_mat['Vv']), dtype=complex)
 
             del sph_mat
 
