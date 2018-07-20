@@ -34,19 +34,6 @@ class PreProcessor:
         self.Wnv = Wnv
         self.Wpv = Wpv
         self.Vv = Vv
-        #
-        # for i_loc in range(self.N_LOC):
-        #     with cp.cuda.Device(i_loc % N_CUDA_DEV):
-        #         self.RIR.append(cp.array(RIR[i_loc]))
-        #         self.Ys.append(cp.array(Ys[i_loc]))
-        #
-        # for i_dev in range(N_CUDA_DEV):
-        #     with cp.cuda.Device(i_dev):
-        #         self.bEQspec.append(cp.array(bEQspec))
-        #         self.Yenc.append(cp.array(Yenc))
-        #         self.Wnv.append(cp.array(Wnv))
-        #         self.Wpv.append(cp.array(Wpv))
-        #         self.Vv.append(cp.array(Vv))
 
         self.L_WIN_MS = L_WIN_MS
 
@@ -73,23 +60,6 @@ class PreProcessor:
 
         print('Start processing from the {}-th wave file'.format(N_START))
 
-        win = None
-        RIR = self.RIR
-        bEQspec = self.bEQspec
-        Yenc = self.Yenc
-        Ys = self.Ys
-        Wnv = self.Wnv
-        Wpv = self.Wpv
-        Vv = self.Vv
-
-        self.RIR = None
-        self.bEQspec = None
-        self.Yenc = None
-        self.Ys = None
-        self.Wnv = None
-        self.Wpv = None
-        self.Vv = None
-
         # Search all wav files
         self.all_files=[]
         for folder, _, _ in os.walk(DIR_WAVFILE):
@@ -111,7 +81,7 @@ class PreProcessor:
                 self.N_fft = self.L_frame
                 self.L_hop = int(self.L_frame/2)
 
-                win = scsig.hamming(self.L_frame, sym=False)
+                self.win = scsig.hamming(self.L_frame, sym=False)
                 self.print_save_info()
             else:
                 data, _ = sf.read(file)
@@ -127,97 +97,90 @@ class PreProcessor:
 
             # logger = mp.log_to_stderr()  #debugging subprocess
             # logger.setLevel(mp.SUBDEBUG) #debugging subprocess
-            pool = mp.Pool(N_CORES - N_CORES % N_CUDA_DEV)
-            for i_loc in range(self.N_LOC):
+            pool = mp.Pool(N_CORES)
+            for i_proc in range(N_CORES):
                 pool.apply_async(self.save_IV,
-                                 args=(i_loc % N_CUDA_DEV,
-                                       data, win,
-                                       RIR[i_loc], bEQspec, Yenc, Ys[i_loc],
-                                       Wnv, Wpv, Vv,
-                                       FORM % (self.N_wavfile+1, i_loc)))
+                                 (i_proc % N_CUDA_DEV,
+                                  data,
+                                  range(i_proc*int(self.N_LOC/N_CORES),
+                                        (i_proc+1)*int(self.N_LOC/N_CORES)),
+                                  FORM, self.N_wavfile+1))
             pool.close()
             pool.join()
 
             # Non-parallel
-            # for i_loc in range(self.N_LOC):
-            #     self.save_IV(i_loc % N_CUDA_DEV,
-            #                  data, win,
-            #                  RIR[i_loc], bEQspec,
-            #                  Yenc, Ys[i_loc],
-            #                  Wnv, Wpv, Vv,
-            #                  FORM % (self.N_wavfile+1, i_loc))
+            # for i_dev in range(N_CUDA_DEV):
+            #     self.save_IV(i_dev,
+            #                  data,
+            #                  range(i_dev*int(self.N_LOC/N_CUDA_DEV),
+            #                        (i_dev+1)*int(self.N_LOC/N_CUDA_DEV)),
+            #                  FORM, self.N_wavfile+1)
 
             print('%.3f sec' % (time.time()-t_start))
             self.N_wavfile += 1
             self.print_save_info()
 
-        self.RIR = RIR
-        self.bEQspec = bEQspec
-        self.Yenc = Yenc
-        self.Ys = Ys
-        self.Ys = Ys
-        self.Wnv = Wnv
-        self.Wpv = Wpv
-        self.Vv = Vv
         print('Done.')
         self.print_save_info()
 
-    def save_IV(self, i_dev:int, _data, _win, _RIR, _bEQspec, _Yenc, _Ys,
-                _Wnv, _Wpv, _Vv, FNAME:str):
+    def save_IV(self, i_dev:int, data, range_loc:iter, FORM:str, *args):
         cp.cuda.Device(i_dev).use()
-        data = cp.asarray(_data)
-        win = cp.asarray(_win)
-        RIR = cp.asarray(_RIR)
-        bEQspec = cp.asarray(_bEQspec)
-        Yenc = cp.asarray(_Yenc)
-        Ys = cp.asarray(_Ys)
-        Wnv = cp.asarray(_Wnv)
-        Wpv = cp.asarray(_Wpv)
-        Vv = cp.asarray(_Vv)
+        data = cp.asarray(data)
+        win = cp.asarray(self.win)
+        RIR = cp.asarray(self.RIR)
+        bEQspec = cp.asarray(self.bEQspec)
+        Yenc = cp.asarray(self.Yenc)
+        Ys = cp.asarray(self.Ys)
+        Wnv = cp.asarray(self.Wnv)
+        Wpv = cp.asarray(self.Wpv)
+        Vv = cp.asarray(self.Vv)
 
-        # RIR Filtering
-        filtered = cp.asarray(scsig.fftconvolve(_data.reshape(1, -1), _RIR))
+        for i_loc in range_loc:
+            # RIR Filtering
+            filtered \
+                = cp.asarray(scsig.fftconvolve(cp.asnumpy(data.reshape(1, -1)),
+                                               self.RIR[i_loc]))
 
-        # Free-field Intensity Vector Image
-        IV_free = cp.zeros((int(self.N_fft/2), self.N_frame_free, 4))
-        norm_factor_free = float('-inf')
-        for i_frame in range(self.N_frame_free):
-            interval = i_frame*self.L_hop + np.arange(self.L_frame)
-            fft = cp.fft.fft(data[interval]*win, n=self.N_fft)
-            anm = cp.outer(Ys.conj(), fft)
-            max_in_frame \
-                = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
-            norm_factor_free = np.max([norm_factor_free, max_in_frame])
+            # Free-field Intensity Vector Image
+            IV_free = cp.zeros((int(self.N_fft/2), self.N_frame_free, 4))
+            norm_factor_free = float('-inf')
+            for i_frame in range(self.N_frame_free):
+                interval = i_frame*self.L_hop + np.arange(self.L_frame)
+                fft = cp.fft.fft(data[interval]*win, n=self.N_fft)
+                anm = cp.outer(Ys[i_loc].conj(), fft)
+                max_in_frame \
+                    = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
+                norm_factor_free = np.max([norm_factor_free, max_in_frame])
 
-            IV_free[:,i_frame,:3] \
-                = PreProcessor.calc_intensity(anm[:,:int(self.N_fft/2)],
-                                              Wnv, Wpv, Vv)
-            IV_free[:,i_frame,3] = cp.abs(anm[0,:int(self.N_fft/2)])
+                IV_free[:,i_frame,:3] \
+                    = PreProcessor.calc_intensity(anm[:,:int(self.N_fft/2)],
+                                                  Wnv, Wpv, Vv)
+                IV_free[:,i_frame,3] = cp.abs(anm[0,:int(self.N_fft/2)])
 
-        # Room Intensity Vector Image
-        IV_room = cp.zeros((int(self.N_fft/2), self.N_frame_room, 4))
-        norm_factor_room = float('-inf')
-        for i_frame in range(self.N_frame_room):
-            interval = i_frame*self.L_hop + np.arange(self.L_frame)
-            fft = cp.fft.fft(filtered[:,interval]*win, n=self.N_fft)
-            anm = (Yenc @ fft) * bEQspec
-            max_in_frame \
-                = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
-            norm_factor_room = np.max([norm_factor_room, max_in_frame])
+            # Room Intensity Vector Image
+            IV_room = cp.zeros((int(self.N_fft/2), self.N_frame_room, 4))
+            norm_factor_room = float('-inf')
+            for i_frame in range(self.N_frame_room):
+                interval = i_frame*self.L_hop + np.arange(self.L_frame)
+                fft = cp.fft.fft(filtered[:,interval]*win, n=self.N_fft)
+                anm = (Yenc @ fft) * bEQspec
+                max_in_frame \
+                    = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
+                norm_factor_room = np.max([norm_factor_room, max_in_frame])
 
-            IV_room[:,i_frame,:3] \
-                = PreProcessor.calc_intensity(anm[:,:int(self.N_fft/2)],
-                                              Wnv, Wpv, Vv)
-            IV_room[:,i_frame,3] = cp.abs(anm[0,:int(self.N_fft/2)])
+                IV_room[:,i_frame,:3] \
+                    = PreProcessor.calc_intensity(anm[:,:int(self.N_fft/2)],
+                                                  Wnv, Wpv, Vv)
+                IV_room[:,i_frame,3] = cp.abs(anm[0,:int(self.N_fft/2)])
 
-        # Save
-        dict = {'IV_free': cp.asnumpy(IV_free),
-                'IV_room': cp.asnumpy(IV_room),
-                'norm_factor_free': norm_factor_free,
-                'norm_factor_room': norm_factor_room}
-        np.save(os.path.join(self.DIR_IV, FNAME), dict)
+            # Save
+            dict = {'IV_free': cp.asnumpy(IV_free),
+                    'IV_room': cp.asnumpy(IV_room),
+                    'norm_factor_free': norm_factor_free,
+                    'norm_factor_room': norm_factor_room}
+            np.save(os.path.join(self.DIR_IV, FORM % (args+(i_loc,))), dict)
 
-        print(FNAME)
+            print(FORM % (args+(i_loc,)))
 
     def __str__(self):
         return 'Wav Files Processed/Total: {}/{}\n'\
@@ -236,7 +199,7 @@ class PreProcessor:
                     'N_LOC': self.N_LOC,
                     'path_wavfiles': self.all_files}
 
-        np.save('metadata.npy', metadata)
+        np.save(os.path.join(self.DIR_IV,'metadata.npy'), metadata)
 
     @classmethod
     def seltriag(cls, Ain, nrord:int, shft):
