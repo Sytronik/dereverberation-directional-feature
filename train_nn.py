@@ -17,27 +17,25 @@ def print_cuda_tensors():
         try:
             if torch.is_tensor(obj) \
                     or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
-                print(type(obj), obj.size())
+                print(type(obj), obj.size(), obj.device)
         finally:
             pass
 
 
 class IVDataset(Dataset):
-    def __init__(self, DIR:str, FORM:str, XNAME:str, YNAME:str,
-                 N_wavfile:int, N_LOC:int, L_cut_x, L_cut_y=1):
+    def __init__(self, DIR:str, XNAME:str, YNAME:str, L_cut_x, L_cut_y=1):
         self.DIR = DIR
-        self.FORM = FORM
         self.XNAME = XNAME
         self.YNAME = YNAME
-        while not os.path.isfile(
-            os.path.join(DIR, FORM % (N_wavfile, N_LOC-1))
-        ):
-            N_wavfile -= 1
-        self.len = N_wavfile*N_LOC
-        self.N_LOC = N_LOC
+
+        self.all_files = []
+        for file in os.scandir(DIR):
+            self.all_files.append(file.path)
+
         self.L_cut_x = L_cut_x
         self.L_cut_y = L_cut_y
 
+        print('{} data prepared.'.format(len(self.all_files)))
     #     self._rand_idx = self.shuffle()
     #
     # def shuffle(self):
@@ -45,14 +43,13 @@ class IVDataset(Dataset):
     #     return random.shuffle(idx)
 
     def __len__(self):
-        return self.len
+        return len(self.all_files)
 
     def __getitem__(self, idx):
-        # idx = self._rand_idx[idx]
-        i_wavfile = 1 + int(idx / self.N_LOC)
-        i_loc = idx % self.N_LOC
-        FNAME = os.path.join(self.DIR, self.FORM % (i_wavfile, i_loc))
-        data_dict = np.load(FNAME).item()
+        try:
+            data_dict = np.load(self.all_files[idx]).item()
+        except:
+            pdb.set_trace()
 
         x = data_dict[self.XNAME]
         y = data_dict[self.YNAME]
@@ -67,7 +64,7 @@ class IVDataset(Dataset):
             )
         elif x.shape[1] > y.shape[1]:
             y = np.concatenate(
-                (y, np.zeros((N_freq,x.shape[1]-y.shape[1], channel))),
+                (y, np.zeros((N_freq, x.shape[1]-y.shape[1], channel))),
                 axis=1
             )
 
@@ -132,7 +129,7 @@ class MLP(nn.Module):
 
 
 class NNTrainer():
-    num_epochs = 100
+    num_epochs = 50
     batch_size = 1
     learning_rate = 1e-3
 
@@ -143,32 +140,38 @@ class NNTrainer():
     #     x = x.view(x.size(0), N_fft/2, len, 4)
     #     return x
 
-    def __init__(self, DIR:str, DIR_TRAIN:str, DIR_TEST:str, FORM_IV:str,
+    def __init__(self, DIR:str, DIR_TRAIN:str, DIR_TEST:str,
                  XNAME:str, YNAME:str,
-                 Fs, N_fft:int, L_frame:int, L_hop:int,
-                 N_wavfile:int, N_LOC:int):
-        self.Fs = Fs
+                 N_fft:int, L_frame:int, L_hop:int):
         self.N_fft = N_fft
         self.L_frame = L_frame
         self.L_hop = L_hop
         self.DIR = DIR
         self.DIR_TRAIN = DIR_TRAIN
         self.DIR_TEST = DIR_TEST
-        self.FORM_IV = FORM_IV
 
-        L_cut_x = 4160/L_hop
+        L_cut_x = 3200/L_hop
         n_input = int(L_cut_x*N_fft/2*4)
-        n_hidden = int(3200/L_hop*N_fft/2*4)
+        n_hidden = int(1600/L_hop*N_fft/2*4)
         n_output = int(N_fft/2*4)
 
-        data_train = IVDataset(DIR_TRAIN, FORM_IV, XNAME, YNAME,
-                               N_wavfile, N_LOC, L_cut_x)
+        data_train = IVDataset(DIR_TRAIN, XNAME, YNAME, L_cut_x)
         self.loader_train = DataLoader(data_train,
                                        batch_size=NNTrainer.batch_size,
                                        shuffle=True,
                                        collate_fn=IVDataset.my_collate)
 
-        self.model = MLP(n_input, n_hidden, n_output).cuda()
+        data_test = IVDataset(DIR_TEST, XNAME, YNAME, L_cut_x)
+        self.loader_test = DataLoader(data_test,
+                                       batch_size=1,
+                                       shuffle=True,
+                                       collate_fn=IVDataset.my_collate)
+
+        self.model = nn.DataParallel(MLP(n_input, n_hidden, n_output),
+                                     device_ids=[*range(
+                                                      torch.cuda.device_count()
+                                                  )]
+                                    ).cuda()
 
         self.criterion = nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.model.parameters(),
@@ -176,6 +179,8 @@ class NNTrainer():
                                           weight_decay=1e-5)
 
     def train(self):
+        loss_train = np.zeros(NNTrainer.num_epochs)
+        loss_test = np.zeros(NNTrainer.num_epochs)
         for epoch in range(NNTrainer.num_epochs):
             for data in self.loader_train:
                 # pdb.set_trace()
@@ -186,32 +191,44 @@ class NNTrainer():
                 # ===================forward=====================
                 output = self.model(input)
                 loss = self.criterion(output, y.view(y.size(0), -1).cuda())
+                loss_train[epoch] += loss.data.cpu().item()
                 # ===================backward====================
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-                print('.', end='')
             # ===================log========================
-            print('epoch [{}/{}], loss:{:.4f}'
-                  .format(epoch + 1, NNTrainer.num_epochs, loss.data[0]))
+            print(('epoch [{}/{}], average training loss: {:e}, '
+                  + 'loss of the last data: {:e}')
+                  .format(epoch + 1, NNTrainer.num_epochs,
+                          loss_train[-1].item()/len(self.loader_train), loss.data.item()))
+
+            loss_test[epoch] = self.test()
+            if epoch > 0 \
+                    and loss_test[-1] - loss_test[-2] < loss_test[-2]/10.:
+                break
             # if epoch % 10 == 0:
             #     mat = to_mat(output.cpu().data, y.size(2))
             #     os.path.join(DIR_IV, 'MLP_out/')
             #     save_image(mat, './MLP_img/image_{}.png'.format(epoch))
-
-        torch.save(model.state_dict(), './sim_MLP.pth')
+        np.save('loss.npy', {'loss_train':loss_train,
+                             'loss_test':loss_test})
+        torch.save(model.state_dict(), './MLP.pth')
 
     def test(self):
         with torch.no_grad():
-            correct = 0
-            total = 0
-            # for images, labels in test_loader:
-            #     images = images.reshape(-1, 28*28).to(device)
-            #     labels = labels.to(device)
-            #     outputs = model(images)
-            #     _, predicted = torch.max(outputs.data, 1)
-            #     total += labels.size(0)
-            #     correct += (predicted == labels).sum().item()
+            loss_test = 0
 
-            print('Accuracy of the network on the 10000 test images: {} %'
-                  .format(100 * correct / total))
+            for data in self.loader_test:
+                # pdb.set_trace()
+                x_stacked, y = data
+                input = x_stacked.view(x_stacked.size(0), -1).cuda()
+                # input = Variable(input).cuda()
+                del x_stacked
+                # ===================forward=====================
+                output = self.model(input)
+                loss = self.criterion(output, y.view(y.size(0), -1).cuda())
+                loss_test += loss.data.cpu().item()
+
+            print('loss of the test data: {:e} %'
+                  .format(loss_test / len(self.loader_test)))
+        return self.loss_test

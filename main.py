@@ -23,6 +23,7 @@ if __name__ == '__main__':
     DIR_TEST = DIR_IV + '/TEST'
     FORM = '%04d_%02d.npy'
     ID = '*_converted.wav'
+    # ID = '*.WAV'
 
     for arg in sys.argv[1:]:
         if arg.startswith('pre_processing'):
@@ -69,15 +70,6 @@ if __name__ == '__main__':
         else:
             metadata = np.load('metadata.npy').item()
 
-            # Fs = metadata['Fs']
-            # N_fft = metadata['N_fft']
-            # L_frame = metadata['L_frame']
-            # L_hop = metadata['L_hop']
-            # N_wavfile = metadata['N_wavfile']
-            # N_LOC = metadata['N_LOC']
-
-            # del metadata
-
             if arg.startswith('show_IV_image'):
                 FNAME = ''
                 arg_sp = arg.split()
@@ -99,9 +91,11 @@ if __name__ == '__main__':
 
             elif arg.startswith('train_nn'):
                 del metadata['path_wavfiles']
-                trainer = NNTrainer(DIR, DIR_TRAIN, DIR_TEST,
-                                    FORM, 'IV_room', 'IV_free',
-                                    **metadata)
+                trainer = NNTrainer(DIR_IV, DIR_TRAIN, DIR_TEST,
+                                    'IV_room', 'IV_free',
+                                    metadata['N_fft'],
+                                    metadata['L_frame'],
+                                    metadata['L_hop'])
                 trainer.train()
 
             # elif arg.startswith('histogram'):
