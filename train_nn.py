@@ -232,7 +232,6 @@ class NNTrainer():
                           loss.data.item()))
 
             loss_test[epoch] = self.test()
-            print('test loss: {:e}'.format(loss_test[epoch]))
 
             # Early Stopping
             if epoch > 0 and loss_test[epoch] > 0.9*loss_test[epoch-1]:

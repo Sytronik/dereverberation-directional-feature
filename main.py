@@ -37,6 +37,18 @@ if __name__ == '__main__':
     DIR_IV = DIR_IV_DIC[KIND_DATA]
 
     if sys.argv[1] == 'pre_processing':
+<<<<<<< HEAD
+=======
+        # N_CORES
+        # N_CORES = mp.cpu_count()
+        # try:
+        #     N_CORES *= float(arg.split()[1])
+        # except IndexError:
+        #     N_CORES *= 0.5
+        # N_CORES = int(N_CORES)
+        DIR_WAVFILE += KIND_DATA
+
+>>>>>>> 1649a162b388777a816b0638da99f0480a3abc10
         # RIR Data
         RIR = scio.loadmat(os.path.join(DIR_DATA, 'RIR.mat'),
                            variable_names='RIR')['RIR']
@@ -45,27 +57,28 @@ if __name__ == '__main__':
         # SFT Data
         sph_mat = scio.loadmat(os.path.join(DIR_DATA, 'sph_data.mat'),
                                variable_names=['bEQspec', 'Yenc', 'Ys',
-                                               'Wnv', 'Wpv', 'Vv'])
-        sph_mat['bEQspec'] = sph_mat['bEQspec'].T
-        sph_mat['Yenc'] = sph_mat['Yenc'].T
+                                               'Wnv', 'Wpv', 'Vv'],
+                               squeeze_me=True)
 
-        Ys_original = np.squeeze(sph_mat['Ys'])
+        bEQspec = sph_mat['bEQspec'].T
+        Yenc = sph_mat['Yenc'].T
+
+        Ys_original = sph_mat['Ys']
         Ys = np.zeros((Ys_original.size, Ys_original[0].size), dtype=complex)
         for ii in range(Ys_original.size):
-            Ys[ii] = np.squeeze(Ys_original[ii])
-        sph_mat['Ys'] = Ys
+            Ys[ii] = Ys_original[ii]
 
-        sph_mat['Wnv'] = np.squeeze(sph_mat['Wnv']).astype(complex)
-        sph_mat['Wpv'] = np.squeeze(sph_mat['Wpv']).astype(complex)
-        sph_mat['Vv'] = np.squeeze(sph_mat['Vv']).astype(complex)
+        Wnv = sph_mat['Wnv'].astype(complex)
+        Wpv = sph_mat['Wpv'].astype(complex)
+        Vv = sph_mat['Vv'].astype(complex)
 
         # The index of the first wave file that have to be processed
         IDX_START = len(glob(
             os.path.join(DIR_IV, '*_%02d.npy' % (RIR.shape[0]-1))
         ))+1
 
-        p = Pre(RIR, **sph_mat)
-        p.process(DIR_WAVFILE, ID, IDX_START, DIR_IV, FORM, N_CORES)
+        p = Pre(RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv)
+        p.process(DIR_WAVFILE, ID, N_START, DIR_IV, FORM)
 
     else: # the functions that need metadata
         metadata = np.load(os.path.join(DIR_IV, 'metadata.npy')).item()
