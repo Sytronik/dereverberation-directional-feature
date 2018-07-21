@@ -226,7 +226,7 @@ class NNTrainer():
                           loss_train[-1].item()/len(self.loader_train), loss.data.item()))
 
             loss_test[epoch] = self.test()
-            print('test loss: {:e}'.format(loss_test[epoch]))
+            # print('test loss: {:e}'.format(loss_test[epoch]))
             if epoch > 0 \
                     and loss_test[-1] - loss_test[-2] < loss_test[-2]/10.:
                 break
