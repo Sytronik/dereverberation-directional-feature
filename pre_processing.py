@@ -23,6 +23,7 @@ import logging
 
 class PreProcessor:
     def __init__(self, RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv, L_WIN_MS=20.):
+        # Bug Fix
         np.fft.restore_all()
         # From Parameters
         self.RIR = RIR
@@ -30,7 +31,6 @@ class PreProcessor:
         self.bEQspec = bEQspec
         self.Yenc = Yenc
         self.Ys = Ys
-
         self.Wnv = Wnv
         self.Wpv = Wpv
         self.Vv = Vv
@@ -39,12 +39,11 @@ class PreProcessor:
 
         # Determined during process
         self.DIR_IV = ''
-        self.data = None
         self.N_frame_free = 0
         self.N_frame_room = 0
         self.all_files = []
 
-        # Common for all wav file
+        # Common for all wave file
         self.Fs = 0
         self.N_wavfile = 0
         self.N_fft = 0
@@ -52,25 +51,24 @@ class PreProcessor:
         self.L_hop = 0
         self.win = None
 
-    def process(self, DIR_WAVFILE:str, ID:str, N_START:int,
+    def process(self, DIR_WAVFILE:str, ID:str, IDX_START:int,
                 DIR_IV:str, FORM:str, N_CORES:int):
         if not os.path.exists(DIR_IV):
             os.makedirs(DIR_IV)
         self.DIR_IV = DIR_IV
 
-        print('Start processing from the {}-th wave file'.format(N_START))
+        print('Start processing from the {}-th wave file'.format(IDX_START))
 
-        # Search all wav files
+        # Search all wave files
         self.all_files=[]
         for folder, _, _ in os.walk(DIR_WAVFILE):
             files = glob(os.path.join(folder, ID))
-            if not files:
-                continue
+            if not files: continue
             self.all_files.extend(files)
 
         # Main Process
         for file in self.all_files:
-            if self.N_wavfile < N_START-1:
+            if self.N_wavfile < IDX_START-1:
                 self.N_wavfile += 1
                 continue
 
@@ -87,6 +85,8 @@ class PreProcessor:
                 data, _ = sf.read(file)
 
             print(file)
+
+            # Data length
             L_data_free = data.shape[0]
             self.N_frame_free = int(np.floor(L_data_free/self.L_hop)-1)
 
@@ -124,6 +124,7 @@ class PreProcessor:
         self.print_save_info()
 
     def save_IV(self, i_dev:int, data, range_loc:iter, FORM:str, *args):
+        # CUDA Ready
         cp.cuda.Device(i_dev).use()
         data = cp.array(data)
         win = cp.array(self.win)
@@ -148,14 +149,15 @@ class PreProcessor:
                 interval = i_frame*self.L_hop + np.arange(self.L_frame)
                 fft = cp.fft.fft(data[interval]*win, n=self.N_fft)
                 anm = cp.outer(Ys[i_loc].conj(), fft)
-                max_in_frame \
-                    = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
-                norm_factor_free = np.max([norm_factor_free, max_in_frame])
 
                 IV_free[:,i_frame,:3] \
                     = PreProcessor.calc_intensity(anm[:,:int(self.N_fft/2)],
                                                   Wnv, Wpv, Vv)
                 IV_free[:,i_frame,3] = cp.abs(anm[0,:int(self.N_fft/2)])
+
+                max_in_frame \
+                    = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
+                norm_factor_free = np.max([norm_factor_free, max_in_frame])
 
             # Room Intensity Vector Image
             IV_room = cp.zeros((int(self.N_fft/2), self.N_frame_room, 4))
@@ -164,26 +166,28 @@ class PreProcessor:
                 interval = i_frame*self.L_hop + np.arange(self.L_frame)
                 fft = cp.fft.fft(filtered[:,interval]*win, n=self.N_fft)
                 anm = (Yenc @ fft) * bEQspec
-                max_in_frame \
-                    = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
-                norm_factor_room = np.max([norm_factor_room, max_in_frame])
 
                 IV_room[:,i_frame,:3] \
                     = PreProcessor.calc_intensity(anm[:,:int(self.N_fft/2)],
                                                   Wnv, Wpv, Vv)
                 IV_room[:,i_frame,3] = cp.abs(anm[0,:int(self.N_fft/2)])
 
+                max_in_frame \
+                    = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
+                norm_factor_room = np.max([norm_factor_room, max_in_frame])
+
             # Save
-            dict = {'IV_free': cp.asnumpy(IV_free),
+            dic = {'IV_free': cp.asnumpy(IV_free),
                     'IV_room': cp.asnumpy(IV_room),
                     'norm_factor_free': norm_factor_free,
                     'norm_factor_room': norm_factor_room}
-            np.save(os.path.join(self.DIR_IV, FORM % (args+(i_loc,))), dict)
+            FNAME = FORM % (args+(i_loc,))
+            np.save(os.path.join(self.DIR_IV, FNAME), dic)
 
             print(FORM % (args+(i_loc,)))
 
     def __str__(self):
-        return 'Wav Files Processed/Total: {}/{}\n'\
+        return 'Wave Files Processed/Total: {}/{}\n'\
                     .format(self.N_wavfile, len(self.all_files)) \
                + 'Sample Rate: {}\n'.format(self.Fs) \
                + 'Number of source location: {}'.format(self.N_LOC)
@@ -201,8 +205,8 @@ class PreProcessor:
 
         np.save(os.path.join(self.DIR_IV,'metadata.npy'), metadata)
 
-    @classmethod
-    def seltriag(cls, Ain, nrord:int, shft):
+    @staticmethod
+    def seltriag(Ain, nrord:int, shft):
         if Ain.ndim == 1:
             Nfreq = 1
         else:

@@ -13,6 +13,7 @@ import gc
 import sys
 
 
+# Progress Bar
 def printProgress (iteration, total,
                    prefix = '', suffix = '',
                    decimals = 1, barLength = 57):
@@ -26,6 +27,7 @@ def printProgress (iteration, total,
     sys.stdout.flush()
 
 
+# Print All CUDA Tensors
 def print_cuda_tensors():
     for obj in gc.get_objects():
         try:
@@ -51,12 +53,13 @@ class IVDataset(Dataset):
                 self.all_files.append(file.path)
                 self.len += 1
             if self.len == N_data:
-                break;
+                break
 
         self.L_cut_x = L_cut_x
         self.L_cut_y = L_cut_y
 
-        print('{} data prepared.'.format(len(self.all_files)))
+        print('{} data prepared from {}.'\
+            .format(len(self.all_files), os.path.basename(DIR)))
     #     self._rand_idx = self.shuffle()
     #
     # def shuffle(self):
@@ -67,6 +70,7 @@ class IVDataset(Dataset):
         return len(self.all_files)
 
     def __getitem__(self, idx):
+        # File Open
         try:
             data_dict = np.load(self.all_files[idx]).item()
             x = data_dict[self.XNAME]
@@ -75,25 +79,26 @@ class IVDataset(Dataset):
             pdb.set_trace()
 
         N_freq = x.shape[0]
-        channel = x.shape[2]
+        N_ch = x.shape[2]
 
+        # Zero-Padding for the same length of x and y
         if x.shape[1] < y.shape[1]:
             x = np.concatenate(
-                (x, np.zeros((N_freq, y.shape[1]-x.shape[1], channel))),
+                (x, np.zeros((N_freq, y.shape[1]-x.shape[1], N_ch))),
                 axis=1
             )
         elif x.shape[1] > y.shape[1]:
             y = np.concatenate(
-                (y, np.zeros((N_freq, x.shape[1]-y.shape[1], channel))),
+                (y, np.zeros((N_freq, x.shape[1]-y.shape[1], N_ch))),
                 axis=1
             )
 
-        len = x.shape[1]
+        # Zero-Padding for grouping of frames
         if self.L_cut_x > 1:
             x = np.concatenate(
-                (np.zeros((N_freq, int(self.L_cut_x/2), channel)),
+                (np.zeros((N_freq, int(self.L_cut_x/2), N_ch)),
                  x,
-                 np.zeros((N_freq, int(self.L_cut_x/2-1), channel))
+                 np.zeros((N_freq, int(self.L_cut_x/2-1), N_ch))
                 ),
                 axis=1
             )
@@ -103,10 +108,15 @@ class IVDataset(Dataset):
         #                     y,
         #                     np.zeros(N_fft, int(self.L_cut_y/2-1))), axis=1)
 
-        x_stacked = np.stack([
-                x[:, ii-int(self.L_cut_x/2):ii+int(self.L_cut_x/2), :]
-                for ii in range(int(self.L_cut_x/2), len+int(self.L_cut_x/2))])
-        y = y.transpose((1, 0, 2)).reshape(len, N_freq, 1, -1)
+        # Make groups of the frames of x and stack the groups
+        # x_stacked: (time_length) x (N_fft) x (L_cut_x) x (XYZ0 channel)
+        # y_stacked: (time_length) x (N_fft) x 1 x (XYZ0 channel)
+        length = x.shape[1]
+        half = int(self.L_cut_x/2)
+        x_stacked = np.stack([ x[:, ii-half:ii+half, :]
+                               for ii in range(half, half+length)
+                             ])
+        y = y.transpose((1, 0, 2)).reshape(length, N_freq, 1, -1)
 
         x_stacked = torch.tensor(x_stacked, dtype=torch.float)
         y = torch.tensor(y, dtype=torch.float)
@@ -146,16 +156,11 @@ class MLP(nn.Module):
 
 
 class NNTrainer():
-    num_epochs = 50
+    N_epochs = 50
     batch_size = 1
     learning_rate = 1e-3
-
-    # @staticmethod
-    # def to_mat(x, len):
-    #     x = 0.5 * (x + 1)
-    #     x = x.clamp(0, 1)
-    #     x = x.view(x.size(0), N_fft/2, len, 4)
-    #     return x
+    L_cut_x = 3200/L_hop
+    N_data = 18000
 
     def __init__(self, DIR_TRAIN:str, DIR_TEST:str,
                  XNAME:str, YNAME:str,
@@ -166,47 +171,47 @@ class NNTrainer():
         self.DIR_TRAIN = DIR_TRAIN
         self.DIR_TEST = DIR_TEST
 
-        L_cut_x = 3200/L_hop
-        n_input = int(L_cut_x*N_fft/2*4)
+        n_input = int(NNTrainer.L_cut_x*N_fft/2*4)
         n_hidden = int(1600/L_hop*N_fft/2*4)
         n_output = int(N_fft/2*4)
 
-        data_train = IVDataset(DIR_TRAIN, XNAME, YNAME, L_cut_x, N_data=36000)
+        # Training Dataset
+        data_train = IVDataset(DIR_TRAIN, XNAME, YNAME,
+                               NNTrainer.L_cut_x, N_data=NNTrainer.N_data)
         self.loader_train = DataLoader(data_train,
                                        batch_size=NNTrainer.batch_size,
                                        shuffle=True,
                                        collate_fn=IVDataset.my_collate)
 
-        data_test = IVDataset(DIR_TEST, XNAME, YNAME, L_cut_x, N_data=9000)
+        # Test Dataset
+        data_test = IVDataset(DIR_TEST, XNAME, YNAME,
+                              NNTrainer.L_cut_x, N_data=NNTrainer.N_data)
         self.loader_test = DataLoader(data_test,
                                        batch_size=1,
                                        shuffle=True,
                                        collate_fn=IVDataset.my_collate)
 
-        self.model = nn.DataParallel(MLP(n_input, n_hidden, n_output),
-                                     device_ids=[*range(
-                                                      torch.cuda.device_count()
-                                                  )]
-                                    ).cuda()
+        # Model (Using Parallel GPU)
+        self.model = nn.DataParallel(MLP(n_input, n_hidden, n_output)).cuda()
 
+        # MSE Loss and Adam Optimizer
         self.criterion = nn.MSELoss()
         self.optimizer = torch.optim.Adam(self.model.parameters(),
                                           lr=NNTrainer.learning_rate,
                                           weight_decay=1e-5)
 
     def train(self):
-        loss_train = np.zeros(NNTrainer.num_epochs)
-        loss_test = np.zeros(NNTrainer.num_epochs)
-        for epoch in range(NNTrainer.num_epochs):
+        loss_train = np.zeros(NNTrainer.N_epochs)
+        loss_test = np.zeros(NNTrainer.N_epochs)
+        for epoch in range(NNTrainer.N_epochs):
             iteration = 0
             printProgress(iteration, len(self.loader_train),
                           'epoch [{}/{}]: '.format(epoch+1,
-                                                   NNTrainer.num_epochs))
+                                                   NNTrainer.N_epochs))
             for data in self.loader_train:
                 iteration += 1
                 x_stacked, y = data
                 input = x_stacked.view(x_stacked.size(0), -1).cuda()
-                # input = Variable(input).cuda()
                 del x_stacked
                 # ===================forward=====================
                 output = self.model(input)
@@ -218,43 +223,46 @@ class NNTrainer():
                 self.optimizer.step()
                 printProgress(iteration, len(self.loader_train),
                               'epoch [{}/{}]: '.format(epoch+1,
-                                                       NNTrainer.num_epochs))
+                                                       NNTrainer.N_epochs))
             # ===================log========================
-            print(('epoch [{}/{}], average training loss: {:e}, '
+            print(('epoch [{}/{}]: average training loss: {:e}, '
                   + 'loss of the last data: {:e}')
-                  .format(epoch + 1, NNTrainer.num_epochs,
-                          loss_train[-1].item()/len(self.loader_train), loss.data.item()))
+                  .format(epoch + 1, NNTrainer.N_epochs,
+                          loss_train[epoch]/len(self.loader_train),
+                          loss.data.item()))
 
             loss_test[epoch] = self.test()
             print('test loss: {:e}'.format(loss_test[epoch]))
-            if epoch > 0 \
-                    and loss_test[-1] - loss_test[-2] < loss_test[-2]/10.:
+
+            # Early Stopping
+            if epoch > 0 and loss_test[epoch] > 0.9*loss_test[epoch-1]:
+                print('Early Stopped')
                 break
             # if epoch % 10 == 0:
             #     mat = to_mat(output.cpu().data, y.size(2))
             #     os.path.join(DIR_IV, 'MLP_out/')
             #     save_image(mat, './MLP_img/image_{}.png'.format(epoch))
-        np.save('loss.npy', {'loss_train':loss_train,
-                             'loss_test':loss_test})
+        loss_train /= len(self.loader_train)
+        np.save('loss.npy', {'loss_train':loss_train, 'loss_test':loss_test})
         torch.save(model.state_dict(), './MLP.pth')
 
     def test(self):
+        loss_test = 0
+        iteration = 0
+        printProgress(iteration, len(self.loader_test), 'test: ')
         with torch.no_grad():
-            loss_test = 0
-            iteration = 0
-            printProgress(iteration, len(self.loader_test), 'test: ')
             for data in self.loader_test:
                 iteration += 1
                 x_stacked, y = data
                 input = x_stacked.view(x_stacked.size(0), -1).cuda()
-                # input = Variable(input).cuda()
                 del x_stacked
                 # ===================forward=====================
                 output = self.model(input)
                 loss = self.criterion(output, y.view(y.size(0), -1).cuda())
                 loss_test += loss.data.cpu().item()
                 printProgress(iteration, len(self.loader_test), 'test: ')
-
+            loss_test /= len(self.loader_test)
+            # ===================log========================
             print('loss of the test data: {:e} %'
-                  .format(loss_test / len(self.loader_test)))
+                  .format(loss_test))
         return loss_test

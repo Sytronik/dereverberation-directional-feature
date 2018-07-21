@@ -9,6 +9,7 @@ from joblib import Parallel, delayed
 import multiprocessing
 
 
+# Not used
 def norm_by_std(a, n, lower=0, upper=1):
     # mean + n*std -> upper
     # mean - n*std -> lower
@@ -19,6 +20,7 @@ def norm_by_minmax(a, upper=1.):
     return upper*(a-a.min())/(a.max()-a.min())
 
 
+# Histogram Equalization
 def hist_eq(a):
     dtype = a.dtype
     if dtype == float:
@@ -41,19 +43,20 @@ def hist_eq(a):
 
 
 def show(*args, title=[], norm_factor=[], **kargs):
-    # Load IVs
+    # IVs from *args
     IVs = []
     for arg in args:
         IVs.append(arg)
     N_FIG = len(IVs)
 
-    L = np.zeros(N_FIG)
+    length = np.zeros(N_FIG)
     for i in range(N_FIG):
-        L[i] = IVs[i].shape[1]
+        length[i] = IVs[i].shape[1]
 
     # Initialize
-    H_CHESS = 100
-    axis = [1, np.max(L), 1, IVs[0].shape[0]]
+    H_CHESS = 100 # Number of cells of a column in the chess board
+    axis = [1, np.max(length), 1, IVs[0].shape[0]]
+    needToSave = False
     for key, value in kargs.items():
         if key == 'H_CHESS':
             H_CHESS = value
@@ -71,9 +74,46 @@ def show(*args, title=[], norm_factor=[], **kargs):
             axis[2] = value
         elif key == 'ymax':
             axis[3] = value
+        elif key == 'needToSave':
+            needToSave = value
     chess = (np.add.outer(range(H_CHESS), range(H_CHESS*2)) % 2)*0.3+0.7
     extent = axis[:]
 
+    # =========================Image Processing=========================
+    for i in range(N_FIG):
+        # ======================RGB Channel======================
+        # Normalize
+        try:
+            IVs[i][:,:,:3] /= (2*norm_factor[i])
+            IVs[i][:,:,:3] += 0.5
+            IVs[i][:,:,:3] = IVs[i][:,:,:3].clip(0, 1)
+        except (IndexError, TypeError):
+            IVs[i][:,:,:3] = norm_by_minmax(IVs[i][:,:,:3])
+
+        # Contrast Enhancement
+        IVs[i][:,:,:3] = 1./(1.+np.exp(-30*(IVs[i][:,:,:3]-0.5)))
+        # -Histogram Equalization
+        # IV_gray = np.sqrt(np.sum(IVs[i][:,:,:3]**2, axis=2))
+        # IV_gray /= IV_gray.max()
+        # _,cdf = hist_eq(IV_gray)
+        # for ch in range(3):
+        #     IVs[i][:,:,ch] = cdf[(255*IVs[i][:,:,ch]).astype('uint8')]/255.
+
+        # ======================Alpha Channel======================
+        # Normalize
+        IVs[i][:,:,3] = norm_by_minmax(IVs[i][:,:,3])
+
+        # Contrast Enhancement
+        IVs[i][:,:,3], _ = hist_eq(IVs[i][:,:,3])
+        # IVs[i][:,:,3] = IVs[i][:,:,3]**(1/5)
+        # IVs[i][:,:,3] = IVs[i][:,:,3]/2. + 0.5
+        # IVs[i][:,:,3] = 1/(1+np.exp(-10*(IVs[i][:,:,3]-0.5)))
+        # IVs[i][:,:,3] = (IVs[i][:,:,3]-0.5)*2
+
+        # flip frequency axis
+        IVs[i][:,:,:] = IVs[i][::-1,:,:]
+
+    # =========================Show Figure=========================
     plt.figure(frameon=False, figsize=(9, 9))
     for i in range(N_FIG):
         try:
@@ -83,42 +123,7 @@ def show(*args, title=[], norm_factor=[], **kargs):
             title_i = ''
             print('no title')
 
-        # RGB Channel
-        # Normalize
-        try:
-            IVs[i][:,:,:3] /= (2*norm_factor[i])
-            IVs[i][:,:,:3] += 0.5
-            IVs[i][:,:,:3] = IVs[i][:,:,:3].clip(0, 1)
-        except (IndexError, TypeError):
-            IVs[i][:,:,:3] = norm_by_minmax(IVs[i][:,:,:3])
-
-        # Correction
-        IVs[i][:,:,:3] = 1./(1.+np.exp(-30*(IVs[i][:,:,:3]-0.5)))
-        # Histogram Equalization
-        # IV_gray = np.sqrt(np.sum(IVs[i][:,:,:3]**2, axis=2))
-        # IV_gray /= IV_gray.max()
-        # _,cdf = hist_eq(IV_gray)
-        # for ch in range(3):
-        #     IVs[i][:,:,ch] = cdf[(255*IVs[i][:,:,ch]).astype('uint8')]/255.
-
-        # Alpha Channel
-        # Normalize
-        IVs[i][:,:,3] = norm_by_minmax(IVs[i][:,:,3])
-
-        # Correction
-        # IVs[i][:,:,3] = 1
-        # IVs[i][:,:,3] = IVs[i][:,:,3]**(1/5)
-
-        # IVs[i][:,:,3] = IVs[i][:,:,3]/2. + 0.5
-        # IVs[i][:,:,3] = 1/(1+np.exp(-10*(IVs[i][:,:,3]-0.5)))
-        # IVs[i][:,:,3] = (IVs[i][:,:,3]-0.5)*2
-
-        IVs[i][:,:,3], _ = hist_eq(IVs[i][:,:,3])
-
-        # flip frequency axis
-        IVs[i][:,:,:] = IVs[i][::-1,:,:]
-
-        extent[1] = L[i]
+        extent[1] = length[i]
 
         plt.subplot(N_FIG, 1, i+1)
         plt.imshow(chess, cmap=plt.cm.gray, interpolation='nearest',
@@ -131,4 +136,4 @@ def show(*args, title=[], norm_factor=[], **kargs):
         plt.ylabel('Frequency (Hz)')
     plt.tight_layout()
     plt.show()
-    # plt.savefig(title[0].split()[0]+'.png', dip=300)
+    if needToSave: plt.savefig(title[0].split()[0]+'.png', dpi=300)

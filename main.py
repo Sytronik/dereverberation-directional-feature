@@ -21,28 +21,22 @@ if __name__ == '__main__':
     DIR_IV_DIC = {'TRAIN': DIR_DATA + '/IV/TRAIN',
               'TEST': DIR_DATA + '/IV/TEST'}
     FORM = '%04d_%02d.npy'
-    ID = '*.WAV'
+    ID = '*.WAV' # The common name of wave file
 
+    # main needs the arguments
+    # python main.py FUNCTION [TRAIN(default) | TEST] [ADDITIONAL_ARG]
     if len(sys.argv) == 1:
         print('Arguments are needed')
         exit()
 
-    try:
+    # the second argument is 'TRAIN' or 'TEST'
+    if len(sys.argv) >= 3:
         KIND_DATA = sys.argv[2].upper()
-    except IndexError:
+    else:
         KIND_DATA = 'TRAIN'
-
     DIR_IV = DIR_IV_DIC[KIND_DATA]
 
     if sys.argv[1] == 'pre_processing':
-        # N_CORES
-        # N_CORES = mp.cpu_count()
-        # try:
-        #     N_CORES *= float(arg.split()[1])
-        # except IndexError:
-        #     N_CORES *= 0.5
-        # N_CORES = int(N_CORES)
-
         # RIR Data
         RIR = scio.loadmat(os.path.join(DIR_DATA, 'RIR.mat'),
                            variable_names='RIR')['RIR']
@@ -65,34 +59,38 @@ if __name__ == '__main__':
         sph_mat['Wpv'] = np.squeeze(sph_mat['Wpv']).astype(complex)
         sph_mat['Vv'] = np.squeeze(sph_mat['Vv']).astype(complex)
 
-        N_START = len(glob(
+        # The index of the first wave file that have to be processed
+        IDX_START = len(glob(
             os.path.join(DIR_IV, '*_%02d.npy' % (RIR.shape[0]-1))
         ))+1
 
         p = Pre(RIR, **sph_mat)
-        p.process(DIR_WAVFILE, ID, N_START, DIR_IV, FORM, N_CORES)
+        p.process(DIR_WAVFILE, ID, IDX_START, DIR_IV, FORM, N_CORES)
 
-    else:
+    else: # the functions that need metadata
         metadata = np.load(os.path.join(DIR_IV, 'metadata.npy')).item()
 
         if sys.argv[1] == 'show_IV_image':
-            FNAME = ''
-            arg_sp = arg.split()
-            try:
-                FNAME = arg_sp[1]
+            # The default file to be shown is 0001_00.npy
+            FNAME = FORM % (1, 0)
+            if len(sys.argv) >= 4:
+                FNAME = sys.argv[3]
                 if not FNAME.endswith('.npy'):
                     FNAME += '.npy'
-            except IndexError:
-                FNAME = FORM % (1, 0)
+
+            needToSave = False
+            if len(sys.argv) >= 5:
+                if sys.argv[4] == '--save' or sys.argv[4] == '-S':
+                    needToSave = True
 
             data_dic = np.load(os.path.join(DIR_IV, FNAME)).item()
 
             showIV.show(data_dic['IV_free'], data_dic['IV_room'],
-                        title=[FNAME+' (free)',
-                               FNAME+' (room)'],
-                        norm_factor=[data_dic['norm_factor_free'],
-                                     data_dic['norm_factor_room']],
-                        ylim=[0, metadata['Fs']/2])
+                        title=[FNAME+' (free)', FNAME+' (room)'],
+                        norm_factor=(data_dic['norm_factor_free'],
+                                     data_dic['norm_factor_room']),
+                        ylim=[0, metadata['Fs']/2],
+                        needToSave=needToSave)
 
         elif sys.argv[1] == 'train_nn':
             trainer = NNTrainer(DIR_IV_DIC['TRAIN'], DIR_IV_DIC['TEST'],
@@ -101,27 +99,3 @@ if __name__ == '__main__':
                                 metadata['L_frame'],
                                 metadata['L_hop'])
             trainer.train()
-
-            # elif arg.startswith('histogram'):
-            #     IV_free = np.load(FNAME_FREE)
-            #     IV_room = np.load(FNAME_ROOM)
-            #     bins = 200
-            #
-            #     plt.figure()
-            #     plt.subplot(2,2,1)
-            #     plt.hist(IV_free[:,:,:3].reshape(-1), bins=bins)
-            #     plt.xlim(IV_free[:,:,:3].min(), IV_free[:,:,:3].max())
-            #     plt.title('Histogram for RGB (Free-space)')
-            #     plt.subplot(2,2,2)
-            #     plt.hist(IV_free[:,:,3].reshape(-1), bins=bins)
-            #     plt.xlim(IV_free[:,:,3].min(), IV_free[:,:,3].max())
-            #     plt.title('Histogram for alpha (Free-space)')
-            #     plt.subplot(2,2,3)
-            #     plt.hist(IV_room[:,:,:3].reshape(-1), bins=bins)
-            #     plt.xlim(IV_room[:,:,:3].min(), IV_room[:,:,:3].max())
-            #     plt.title('Histogram for RGB (Room)')
-            #     plt.subplot(2,2,4)
-            #     plt.hist(IV_room[:,:,3].reshape(-1), bins=bins)
-            #     plt.xlim(IV_room[:,:,3].min(), IV_room[:,:,3].max())
-            #     plt.title('Histogram for alpha (Room))')
-            #     plt.show()
