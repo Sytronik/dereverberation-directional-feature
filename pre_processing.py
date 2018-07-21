@@ -125,20 +125,20 @@ class PreProcessor:
 
     def save_IV(self, i_dev:int, data, range_loc:iter, FORM:str, *args):
         cp.cuda.Device(i_dev).use()
-        data = cp.asarray(data)
-        win = cp.asarray(self.win)
-        RIR = cp.asarray(self.RIR)
-        bEQspec = cp.asarray(self.bEQspec)
-        Yenc = cp.asarray(self.Yenc)
-        Ys = cp.asarray(self.Ys)
-        Wnv = cp.asarray(self.Wnv)
-        Wpv = cp.asarray(self.Wpv)
-        Vv = cp.asarray(self.Vv)
+        data = cp.array(data)
+        win = cp.array(self.win)
+        RIR = cp.array(self.RIR)
+        bEQspec = cp.array(self.bEQspec)
+        Yenc = cp.array(self.Yenc)
+        Ys = cp.array(self.Ys)
+        Wnv = cp.array(self.Wnv)
+        Wpv = cp.array(self.Wpv)
+        Vv = cp.array(self.Vv)
 
         for i_loc in range_loc:
             # RIR Filtering
             filtered \
-                = cp.asarray(scsig.fftconvolve(cp.asnumpy(data.reshape(1, -1)),
+                = cp.array(scsig.fftconvolve(cp.asnumpy(data.reshape(1, -1)),
                                                self.RIR[i_loc]))
 
             # Free-field Intensity Vector Image
