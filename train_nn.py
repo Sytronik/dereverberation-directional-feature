@@ -37,7 +37,8 @@ def print_cuda_tensors():
 
 
 class IVDataset(Dataset):
-    def __init__(self, DIR:str, XNAME:str, YNAME:str, L_cut_x, L_cut_y=1, N_data=-1):
+    def __init__(self, DIR:str, XNAME:str, YNAME:str,
+                 L_cut_x, L_cut_y=1, N_data=-1):
         self.DIR = DIR
         self.XNAME = XNAME
         self.YNAME = YNAME
@@ -156,13 +157,12 @@ class NNTrainer():
     #     x = x.view(x.size(0), N_fft/2, len, 4)
     #     return x
 
-    def __init__(self, DIR:str, DIR_TRAIN:str, DIR_TEST:str,
+    def __init__(self, DIR_TRAIN:str, DIR_TEST:str,
                  XNAME:str, YNAME:str,
                  N_fft:int, L_frame:int, L_hop:int):
         self.N_fft = N_fft
         self.L_frame = L_frame
         self.L_hop = L_hop
-        self.DIR = DIR
         self.DIR_TRAIN = DIR_TRAIN
         self.DIR_TEST = DIR_TEST
 

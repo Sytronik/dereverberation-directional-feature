@@ -1,7 +1,3 @@
-pre_processing test/train 왔다갔다 할 수 있게
-
-metadata 열 때 파일 위치 잘 지정
-
 NN에서 estimated free-field IV(from test data) 저장
 NN 에 BN / Dropout 적용
 
