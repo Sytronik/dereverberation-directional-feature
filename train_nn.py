@@ -10,6 +10,20 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision.utils import save_image
 
 import gc
+import sys
+
+
+def printProgress (iteration, total,
+                   prefix = '', suffix = '',
+                   decimals = 1, barLength = 57):
+    formatStr = "{0:." + str(decimals) + "f}"
+    percent = formatStr.format(100 * (iteration / float(total)))
+    filledLength = int(round(barLength * iteration / float(total)))
+    bar = '#' * filledLength + '-' * (barLength - filledLength)
+    sys.stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percent, '%', suffix))
+    if iteration == total:
+        sys.stdout.write('\n')
+    sys.stdout.flush()
 
 
 def print_cuda_tensors():
@@ -23,14 +37,20 @@ def print_cuda_tensors():
 
 
 class IVDataset(Dataset):
-    def __init__(self, DIR:str, XNAME:str, YNAME:str, L_cut_x, L_cut_y=1):
+    def __init__(self, DIR:str, XNAME:str, YNAME:str, L_cut_x, L_cut_y=1, N_data=-1):
         self.DIR = DIR
         self.XNAME = XNAME
         self.YNAME = YNAME
 
         self.all_files = []
+        self.len = 0
+
         for file in os.scandir(DIR):
-            self.all_files.append(file.path)
+            if file.is_file() and file.name.endswith('.npy'):
+                self.all_files.append(file.path)
+                self.len += 1
+            if self.len == N_data:
+                break;
 
         self.L_cut_x = L_cut_x
         self.L_cut_y = L_cut_y
@@ -48,11 +68,10 @@ class IVDataset(Dataset):
     def __getitem__(self, idx):
         try:
             data_dict = np.load(self.all_files[idx]).item()
+            x = data_dict[self.XNAME]
+            y = data_dict[self.YNAME]
         except:
             pdb.set_trace()
-
-        x = data_dict[self.XNAME]
-        y = data_dict[self.YNAME]
 
         N_freq = x.shape[0]
         channel = x.shape[2]
@@ -71,11 +90,11 @@ class IVDataset(Dataset):
         len = x.shape[1]
         if self.L_cut_x > 1:
             x = np.concatenate(
-                (
-                    np.zeros((N_freq, int(self.L_cut_x/2), channel)),
-                    x,
-                    np.zeros((N_freq, int(self.L_cut_x/2-1), channel))
-                ), axis=1
+                (np.zeros((N_freq, int(self.L_cut_x/2), channel)),
+                 x,
+                 np.zeros((N_freq, int(self.L_cut_x/2-1), channel))
+                ),
+                axis=1
             )
 
         # if self.L_cut_y > 1:
@@ -84,11 +103,8 @@ class IVDataset(Dataset):
         #                     np.zeros(N_fft, int(self.L_cut_y/2-1))), axis=1)
 
         x_stacked = np.stack([
-                x[:,
-                  ii-int(self.L_cut_x/2):ii+int(self.L_cut_x/2),
-                  :]
-                for ii in range(int(self.L_cut_x/2), len+int(self.L_cut_x/2))
-        ])
+                x[:, ii-int(self.L_cut_x/2):ii+int(self.L_cut_x/2), :]
+                for ii in range(int(self.L_cut_x/2), len+int(self.L_cut_x/2))])
         y = y.transpose((1, 0, 2)).reshape(len, N_freq, 1, -1)
 
         x_stacked = torch.tensor(x_stacked, dtype=torch.float)
@@ -118,7 +134,7 @@ class MLP(nn.Module):
         )
         self.output = nn.Sequential(
             nn.Linear(n_hidden, n_output),
-            nn.ReLU(True)
+            # nn.ReLU(True)
         )
 
     def forward(self, x):
@@ -155,13 +171,13 @@ class NNTrainer():
         n_hidden = int(1600/L_hop*N_fft/2*4)
         n_output = int(N_fft/2*4)
 
-        data_train = IVDataset(DIR_TRAIN, XNAME, YNAME, L_cut_x)
+        data_train = IVDataset(DIR_TRAIN, XNAME, YNAME, L_cut_x, N_data=36000)
         self.loader_train = DataLoader(data_train,
                                        batch_size=NNTrainer.batch_size,
                                        shuffle=True,
                                        collate_fn=IVDataset.my_collate)
 
-        data_test = IVDataset(DIR_TEST, XNAME, YNAME, L_cut_x)
+        data_test = IVDataset(DIR_TEST, XNAME, YNAME, L_cut_x, N_data=9000)
         self.loader_test = DataLoader(data_test,
                                        batch_size=1,
                                        shuffle=True,
@@ -182,8 +198,12 @@ class NNTrainer():
         loss_train = np.zeros(NNTrainer.num_epochs)
         loss_test = np.zeros(NNTrainer.num_epochs)
         for epoch in range(NNTrainer.num_epochs):
+            iteration = 0
+            printProgress(iteration, len(self.loader_train),
+                          'epoch [{}/{}]: '.format(epoch+1,
+                                                   NNTrainer.num_epochs))
             for data in self.loader_train:
-                # pdb.set_trace()
+                iteration += 1
                 x_stacked, y = data
                 input = x_stacked.view(x_stacked.size(0), -1).cuda()
                 # input = Variable(input).cuda()
@@ -196,6 +216,9 @@ class NNTrainer():
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
+                printProgress(iteration, len(self.loader_train),
+                              'epoch [{}/{}]: '.format(epoch+1,
+                                                       NNTrainer.num_epochs))
             # ===================log========================
             print(('epoch [{}/{}], average training loss: {:e}, '
                   + 'loss of the last data: {:e}')
@@ -203,6 +226,7 @@ class NNTrainer():
                           loss_train[-1].item()/len(self.loader_train), loss.data.item()))
 
             loss_test[epoch] = self.test()
+            print('test loss: {:e}'.format(loss_test[epoch]))
             if epoch > 0 \
                     and loss_test[-1] - loss_test[-2] < loss_test[-2]/10.:
                 break
@@ -217,9 +241,10 @@ class NNTrainer():
     def test(self):
         with torch.no_grad():
             loss_test = 0
-
+            iteration = 0
+            printProgress(iteration, len(self.loader_test), 'test: ')
             for data in self.loader_test:
-                # pdb.set_trace()
+                iteration += 1
                 x_stacked, y = data
                 input = x_stacked.view(x_stacked.size(0), -1).cuda()
                 # input = Variable(input).cuda()
@@ -228,7 +253,8 @@ class NNTrainer():
                 output = self.model(input)
                 loss = self.criterion(output, y.view(y.size(0), -1).cuda())
                 loss_test += loss.data.cpu().item()
+                printProgress(iteration, len(self.loader_test), 'test: ')
 
             print('loss of the test data: {:e} %'
                   .format(loss_test / len(self.loader_test)))
-        return self.loss_test
+        return loss_test
