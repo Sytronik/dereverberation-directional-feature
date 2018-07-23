@@ -52,7 +52,7 @@ class PreProcessor:
         self.win = None
 
     def process(self, DIR_WAVFILE:str, ID:str, IDX_START:int,
-                DIR_IV:str, FORM:str, N_CORES=int(mp.cpu_count()/2)):
+                DIR_IV:str, FORM:str, N_CORES=int(mp.cpu_count()/4)):
         if not os.path.exists(DIR_IV):
             os.makedirs(DIR_IV)
         self.DIR_IV = DIR_IV
