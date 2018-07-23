@@ -15,8 +15,3 @@ pre_processing_gpu_beta실험.py
 __pycache__/
 **.py[cod]
 **$py.class
-
-# virtualenv
-.venv/
-venv/
-ENV/
