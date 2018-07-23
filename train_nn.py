@@ -11,6 +11,7 @@ from torchvision.utils import save_image
 
 import gc
 import sys
+import copy
 
 
 # Progress Bar
@@ -46,20 +47,19 @@ class IVDataset(Dataset):
         self.YNAME = YNAME
 
         self.all_files = []
-        self.len = 0
-
+        len = 0
         for file in os.scandir(DIR):
             if file.is_file() and file.name.endswith('.npy'):
                 self.all_files.append(file.path)
-                self.len += 1
-            if self.len == N_data:
+                len += 1
+            if len == N_data:
                 break
 
         self.L_cut_x = L_cut_x
         self.L_cut_y = L_cut_y
 
         print('{} data prepared from {}.'\
-            .format(len(self.all_files), os.path.basename(DIR)))
+            .format(len, os.path.basename(DIR)))
     #     self._rand_idx = self.shuffle()
     #
     # def shuffle(self):
@@ -79,7 +79,7 @@ class IVDataset(Dataset):
             pdb.set_trace()
 
         N_freq = x.shape[0]
-        N_ch = x.shape[2]
+        N_ch = x.shape[-1]
 
         # Zero-Padding for the same length of x and y
         if x.shape[1] < y.shape[1]:
@@ -94,11 +94,12 @@ class IVDataset(Dataset):
             )
 
         # Zero-Padding for grouping of frames
+        half = int(self.L_cut_x/2)
         if self.L_cut_x > 1:
             x = np.concatenate(
-                (np.zeros((N_freq, int(self.L_cut_x/2), N_ch)),
+                (np.zeros((N_freq, half, N_ch)),
                  x,
-                 np.zeros((N_freq, int(self.L_cut_x/2-1), N_ch))
+                 np.zeros((N_freq, half-1, N_ch))
                 ),
                 axis=1
             )
@@ -109,10 +110,10 @@ class IVDataset(Dataset):
         #                     np.zeros(N_fft, int(self.L_cut_y/2-1))), axis=1)
 
         # Make groups of the frames of x and stack the groups
-        # x_stacked: (time_length) x (N_fft) x (L_cut_x) x (XYZ0 channel)
-        # y_stacked: (time_length) x (N_fft) x 1 x (XYZ0 channel)
-        length = x.shape[1]
-        half = int(self.L_cut_x/2)
+        # x_stacked: (time_length) x (N_freq) x (L_cut_x) x (XYZ0 channel)
+        # y: (time_length) x (N_freq) x 1 x (XYZ0 channel)
+        length = y.shape[1]
+
         x_stacked = np.stack([ x[:, ii-half:ii+half, :]
                                for ii in range(half, half+length)
                              ])
@@ -130,6 +131,29 @@ class IVDataset(Dataset):
         y = torch.cat([item['y'] for item in batch])
         return [x_stacked, y]
 
+    @classmethod
+    def split(cls, a, ratio):
+        if type(a) != cls:
+            raise TypeError
+        n_split = len(ratio)
+        ratio = np.array(ratio)
+        mask = (ratio == -1)
+        ratio[np.where(mask)] = 0
+        if mask.sum() > 1:
+            raise Exception('Only one element of the parameter \'ratio\'' \
+                            + 'can have the value of -1')
+        if ratio.sum() >= 1:
+            raise Exception('The sum of ratio must be 1')
+        if mask.sum() == 1:
+            ratio[np.where(mask)] = 1 - ratio.sum()
+
+        idx_data = np.cumsum(np.insert(ratio,0,0)*len(a), dtype=int)
+        result=[copy.copy(a) for ii in range(n_split)]
+        all_f_per = np.random.permutation(a.all_files)
+        for ii in range(n_split):
+            result[ii].all_files = all_f_per[idx_data[ii]:idx_data[ii+1]]
+
+        return result
 
 class MLP(nn.Module):
     def __init__(self, n_input:int, n_hidden:int, n_output:int):
@@ -137,15 +161,17 @@ class MLP(nn.Module):
 
         self.layer1 = nn.Sequential(
             nn.Linear(n_input, n_hidden),
+            nn.BatchNorm1d(n_hidden),
             nn.ReLU(True)
         )
         self.layer2 = nn.Sequential(
             nn.Linear(n_hidden, n_hidden),
+            nn.BatchNorm1d(n_hidden),
             nn.ReLU(True)
         )
         self.output = nn.Sequential(
-            nn.Linear(n_hidden, n_output),
-            # nn.ReLU(True)
+            nn.Dropout(p=0.5),
+            nn.Linear(n_hidden, n_output)
         )
 
     def forward(self, x):
@@ -156,39 +182,34 @@ class MLP(nn.Module):
 
 
 class NNTrainer():
-    N_epochs = 50
+    N_epochs = 10
     batch_size = 1
     learning_rate = 1e-3
-    L_cut_x = 3200/L_hop
-    N_data = 18000
+    N_data = 7200
 
     def __init__(self, DIR_TRAIN:str, DIR_TEST:str,
                  XNAME:str, YNAME:str,
                  N_fft:int, L_frame:int, L_hop:int):
+        self.DIR_TRAIN = DIR_TRAIN
+        self.DIR_TEST = DIR_TEST
+        self.XNAME = XNAME
+        self.YNAME = YNAME
         self.N_fft = N_fft
         self.L_frame = L_frame
         self.L_hop = L_hop
-        self.DIR_TRAIN = DIR_TRAIN
-        self.DIR_TEST = DIR_TEST
 
-        n_input = int(NNTrainer.L_cut_x*N_fft/2*4)
+        L_cut_x = int(3200/L_hop)
+        self.L_cut_x = L_cut_x
+        n_input = int(L_cut_x*N_fft/2*4)
         n_hidden = int(1600/L_hop*N_fft/2*4)
         n_output = int(N_fft/2*4)
 
-        # Training Dataset
-        data_train = IVDataset(DIR_TRAIN, XNAME, YNAME,
-                               NNTrainer.L_cut_x, N_data=NNTrainer.N_data)
-        self.loader_train = DataLoader(data_train,
-                                       batch_size=NNTrainer.batch_size,
-                                       shuffle=True,
-                                       collate_fn=IVDataset.my_collate)
-
         # Test Dataset
         data_test = IVDataset(DIR_TEST, XNAME, YNAME,
-                              NNTrainer.L_cut_x, N_data=NNTrainer.N_data)
+                              L_cut_x, N_data=NNTrainer.N_data/4)
         self.loader_test = DataLoader(data_test,
                                        batch_size=1,
-                                       shuffle=True,
+                                       shuffle=False,
                                        collate_fn=IVDataset.my_collate)
 
         # Model (Using Parallel GPU)
@@ -201,14 +222,31 @@ class NNTrainer():
                                           weight_decay=1e-5)
 
     def train(self):
+        data = IVDataset(self.DIR_TRAIN, self.XNAME, self.YNAME,
+                               self.L_cut_x, N_data=NNTrainer.N_data)
+        data_train, data_valid = IVDataset.split(data, (0.7, -1))
+        del data
+
+        loader_train =  DataLoader(data_train,
+                                   batch_size=NNTrainer.batch_size,
+                                   shuffle=True,
+                                   collate_fn=IVDataset.my_collate)
+
+        loader_valid =  DataLoader(data_valid,
+                                   batch_size=1,
+                                   shuffle=False,
+                                   collate_fn=IVDataset.my_collate)
+
         loss_train = np.zeros(NNTrainer.N_epochs)
-        loss_test = np.zeros(NNTrainer.N_epochs)
+        loss_valid = np.zeros(NNTrainer.N_epochs)
+        error_valid = np.zeros(NNTrainer.N_epochs)
         for epoch in range(NNTrainer.N_epochs):
             iteration = 0
-            printProgress(iteration, len(self.loader_train),
-                          'epoch [{}/{}]: '.format(epoch+1,
+            printProgress(iteration, len(loader_train),
+                          'epoch [{}/{}]:'.format(epoch+1,
                                                    NNTrainer.N_epochs))
-            for data in self.loader_train:
+
+            for data in loader_train:
                 iteration += 1
                 x_stacked, y = data
                 input = x_stacked.view(x_stacked.size(0), -1).cuda()
@@ -221,47 +259,65 @@ class NNTrainer():
                 self.optimizer.zero_grad()
                 loss.backward()
                 self.optimizer.step()
-                printProgress(iteration, len(self.loader_train),
-                              'epoch [{}/{}]: '.format(epoch+1,
+                printProgress(iteration, len(loader_train),
+                              'epoch [{}/{}]:'.format(epoch+1,
                                                        NNTrainer.N_epochs))
+            loss_train[epoch] /= len(loader_train)
             # ===================log========================
-            print(('epoch [{}/{}]: average training loss: {:e}, '
-                  + 'loss of the last data: {:e}')
-                  .format(epoch + 1, NNTrainer.N_epochs,
-                          loss_train[epoch]/len(self.loader_train),
-                          loss.data.item()))
+            print(('epoch [{}/{}]: loss of the last data: {:.2e}')
+                  .format(epoch + 1, NNTrainer.N_epochs, loss.data.item()))
 
-            loss_test[epoch] = self.test()
+            loss_valid[epoch], error_valid[epoch] = self.eval(loader_valid)
+            print('Validation Loss: {:.2e}'.format(loss_valid[epoch]))
+            print('Validation Error rate: {:.2e}'.format(error_valid[epoch]))
+
+            np.save('loss_epoch_{}.npy'.format(epoch),
+                    {'loss_train':loss_train, 'loss_valid':loss_valid,
+                     'error_valid':error_valid})
+            torch.save(self.model.state_dict(), './MLP_epoch_{}.pth'.format(epoch))
 
             # Early Stopping
-            if epoch > 0 and loss_test[epoch] > 0.9*loss_test[epoch-1]:
+            loss_max = loss_valid[epoch-2:epoch+1].max()
+            loss_min = loss_valid[epoch-2:epoch+1].min()
+            if epoch >= 2 and loss_max - loss_min < 0.1 * loss_valid[epoch]:
                 print('Early Stopped')
                 break
             # if epoch % 10 == 0:
             #     mat = to_mat(output.cpu().data, y.size(2))
             #     os.path.join(DIR_IV, 'MLP_out/')
             #     save_image(mat, './MLP_img/image_{}.png'.format(epoch))
-        loss_train /= len(self.loader_train)
-        np.save('loss.npy', {'loss_train':loss_train, 'loss_test':loss_test})
-        torch.save(model.state_dict(), './MLP.pth')
+        loss_test, error_test = self.eval()
+        print('\nTest Loss: {:.2e}'.format(loss_test))
+        print('Test Error rate: {:.2e}'.format(error_test))
 
-    def test(self):
-        loss_test = 0
+    def eval(self, loader=None):
+        if loader==None:
+            loader = self.loader_test
+        avg_loss = 0
+        avg_error = 0
         iteration = 0
-        printProgress(iteration, len(self.loader_test), 'test: ')
+        printProgress(iteration, len(loader), 'test:')
         with torch.no_grad():
-            for data in self.loader_test:
+            self.model.eval()
+            for data in loader:
                 iteration += 1
                 x_stacked, y = data
                 input = x_stacked.view(x_stacked.size(0), -1).cuda()
                 del x_stacked
                 # ===================forward=====================
                 output = self.model(input)
+                output = output.view(y.size)
+                y = y.cuda()
+                norm_y = (y**2).sum(-1).sum(-1).sum(-1)
                 loss = self.criterion(output, y.view(y.size(0), -1).cuda())
-                loss_test += loss.data.cpu().item()
-                printProgress(iteration, len(self.loader_test), 'test: ')
-            loss_test /= len(self.loader_test)
+                error = (((output-y)**2).sum(-1).sum(-1).sum(-1)/norm_y).sum()
+
+                avg_loss += loss.data.cpu().item()
+                avg_error += error.data.cpu().item()
+                printProgress(iteration, len(loader), 'test:')
+            avg_loss /= len(loader)
+            avg_error /= len(loader)
             # ===================log========================
-            print('loss of the test data: {:e} %'
-                  .format(loss_test))
-        return loss_test
+
+            self.model.train()
+        return avg_loss, avg_error
