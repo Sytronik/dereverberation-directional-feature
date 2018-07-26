@@ -2,17 +2,21 @@ import numpy as np
 import scipy.io as scio
 import sys
 
-if len(sys.argv) >= 2:
-    filename = sys.argv[1]
-    temp_load = np.load(filename)
-    # print variables in npy file
-    print(temp_load.item())
+doSave = False
+fnames = []
+for arg in sys.argv[1:]:
+    if arg == '--save' or arg == '-s':
+        doSave = True
+    else:
+        fnames.append(arg)
 
-    # if system argument is larger than 2
-    if len(sys.argv) == 3:
-        # if second system argument is '-c'
-        if sys.argv[2] == '-c':
-            # save npy to mat file
-            file_mat = filename.replace(".npy", "")
-            scio.savemat(file_mat, temp_load.item())
-
+for fname in fnames:
+    contents = np.load(fname)
+    if contents.size == 1:
+        contents = contents.item()
+    print(contents)
+    fname_mat = fname.replace('.npy', '')
+    if type(contents) == dict:
+        scio.savemat(fname_mat, contents, oned_as='column')
+    else:
+        scio.savemat(fname_mat, {'x':contents}, oned_as='column')
