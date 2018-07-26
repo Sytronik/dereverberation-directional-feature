@@ -1,7 +1,6 @@
-import pdb
+import pdb  # noqa: F401
 
 import numpy as np
-import scipy as sc
 import scipy.io as scio
 
 # import matplotlib.pyplot as plt
@@ -9,7 +8,6 @@ import scipy.io as scio
 import os
 from glob import glob
 import sys
-import multiprocessing as mp
 
 from pre_processing import PreProcessor as Pre
 import show_IV_image as showIV
@@ -19,9 +17,9 @@ if __name__ == '__main__':
     DIR_DATA = '../../De-Reverberation Data'
     DIR_WAVFILE = DIR_DATA + '/speech/data/lisa/data/timit/raw/TIMIT/'
     DIR_IV_DIC = {'TRAIN': DIR_DATA + '/IV/TRAIN',
-              'TEST': DIR_DATA + '/IV/TEST'}
+                  'TEST': DIR_DATA + '/IV/TEST'}
     FORM = '%04d_%02d.npy'
-    ID = '*.WAV' # The common name of wave file
+    ID = '*.WAV'  # The common name of wave file
 
     # main needs the arguments
     # python main.py FUNCTION [TRAIN(default) | TEST] [ADDITIONAL_ARG]
@@ -37,18 +35,8 @@ if __name__ == '__main__':
     DIR_IV = DIR_IV_DIC[KIND_DATA]
 
     if sys.argv[1] == 'pre_processing':
-<<<<<<< HEAD
-=======
-        # N_CORES
-        # N_CORES = mp.cpu_count()
-        # try:
-        #     N_CORES *= float(arg.split()[1])
-        # except IndexError:
-        #     N_CORES *= 0.5
-        # N_CORES = int(N_CORES)
         DIR_WAVFILE += KIND_DATA
 
->>>>>>> 1649a162b388777a816b0638da99f0480a3abc10
         # RIR Data
         RIR = scio.loadmat(os.path.join(DIR_DATA, 'RIR.mat'),
                            variable_names='RIR')['RIR']
@@ -78,9 +66,9 @@ if __name__ == '__main__':
         ))+1
 
         p = Pre(RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv)
-        p.process(DIR_WAVFILE, ID, N_START, DIR_IV, FORM)
+        p.process(DIR_WAVFILE, ID, IDX_START, DIR_IV, FORM)
 
-    else: # the functions that need metadata
+    else:  # the functions that need metadata
         metadata = np.load(os.path.join(DIR_IV, 'metadata.npy')).item()
 
         if sys.argv[1] == 'show_IV_image':
@@ -112,3 +100,11 @@ if __name__ == '__main__':
                                 metadata['L_frame'],
                                 metadata['L_hop'])
             trainer.train()
+        elif sys.argv[1] == 'test_nn':
+            trainer = NNTrainer(DIR_IV_DIC['TRAIN'], DIR_IV_DIC['TEST'],
+                                'IV_room', 'IV_free',
+                                metadata['N_fft'],
+                                metadata['L_frame'],
+                                metadata['L_hop'],
+                                DIR_DATA+'/MLP/MLP_epoch_9.pth')
+            trainer.eval(save_one=True)

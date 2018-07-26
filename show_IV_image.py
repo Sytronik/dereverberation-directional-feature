@@ -1,12 +1,7 @@
-import pdb
+import pdb  # noqa: F401
 
 import numpy as np
 import matplotlib.pyplot as plt
-
-import os
-
-from joblib import Parallel, delayed
-import multiprocessing
 
 
 # Not used
@@ -54,7 +49,7 @@ def show(*args, title=[], norm_factor=[], **kargs):
         length[i] = IVs[i].shape[1]
 
     # Initialize
-    H_CHESS = 100 # Number of cells of a column in the chess board
+    H_CHESS = 100  # Number of cells of a column in the chess board
     axis = [1, np.max(length), 1, IVs[0].shape[0]]
     needToSave = False
     for key, value in kargs.items():
@@ -136,4 +131,5 @@ def show(*args, title=[], norm_factor=[], **kargs):
         plt.ylabel('Frequency (Hz)')
     plt.tight_layout()
     plt.show()
-    if needToSave: plt.savefig(title[0].split()[0]+'.png', dpi=300)
+    if needToSave:
+        plt.savefig(title[0].split()[0]+'.png', dpi=300)

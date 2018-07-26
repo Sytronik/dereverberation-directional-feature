@@ -1,8 +1,7 @@
-import pdb
+import pdb  # noqa: F401
 
 import numpy as np
 import cupy as cp
-import scipy as sc
 import scipy.signal as scsig
 # import librosa
 
@@ -12,13 +11,10 @@ from glob import glob
 
 import soundfile as sf
 
-from joblib import Parallel, delayed
+import multiprocessing as mp
+import logging  # noqa: F401
 
 N_CUDA_DEV = 4
-
-import multiprocessing as mp
-import gc
-import logging
 
 
 class PreProcessor:
@@ -60,10 +56,11 @@ class PreProcessor:
         print('Start processing from the {}-th wave file'.format(IDX_START))
 
         # Search all wave files
-        self.all_files=[]
+        self.all_files = []
         for folder, _, _ in os.walk(DIR_WAVFILE):
             files = glob(os.path.join(folder, ID))
-            if not files: continue
+            if not files:
+                continue
             self.all_files.extend(files)
 
         # Main Process
@@ -128,7 +125,6 @@ class PreProcessor:
         cp.cuda.Device(i_dev).use()
         data = cp.array(data)
         win = cp.array(self.win)
-        RIR = cp.array(self.RIR)
         bEQspec = cp.array(self.bEQspec)
         Yenc = cp.array(self.Yenc)
         Ys = cp.array(self.Ys)
@@ -140,7 +136,7 @@ class PreProcessor:
             # RIR Filtering
             filtered \
                 = cp.array(scsig.fftconvolve(cp.asnumpy(data.reshape(1, -1)),
-                                               self.RIR[i_loc]))
+                                             self.RIR[i_loc]))
 
             # Free-field Intensity Vector Image
             IV_free = cp.zeros((int(self.N_fft/2), self.N_frame_free, 4))
@@ -178,17 +174,18 @@ class PreProcessor:
 
             # Save
             dic = {'IV_free': cp.asnumpy(IV_free),
-                    'IV_room': cp.asnumpy(IV_room),
-                    'norm_factor_free': norm_factor_free,
-                    'norm_factor_room': norm_factor_room}
+                   'IV_room': cp.asnumpy(IV_room),
+                   'norm_factor_free': norm_factor_free,
+                   'norm_factor_room': norm_factor_room}
             FNAME = FORM % (args+(i_loc,))
             np.save(os.path.join(self.DIR_IV, FNAME), dic)
 
             print(FORM % (args+(i_loc,)))
 
     def __str__(self):
-        return 'Wave Files Processed/Total: {}/{}\n'\
-                    .format(self.N_wavfile, len(self.all_files)) \
+        return 'Wave Files Processed/Total: {}/{}\n'.format(self.N_wavfile,
+                                                            len(self.all_files)
+                                                            ) \
                + 'Sample Rate: {}\n'.format(self.Fs) \
                + 'Number of source location: {}'.format(self.N_LOC)
 
@@ -203,7 +200,7 @@ class PreProcessor:
                     'N_LOC': self.N_LOC,
                     'path_wavfiles': self.all_files}
 
-        np.save(os.path.join(self.DIR_IV,'metadata.npy'), metadata)
+        np.save(os.path.join(self.DIR_IV, 'metadata.npy'), metadata)
 
     @staticmethod
     def seltriag(Ain, nrord:int, shft):
@@ -229,19 +226,19 @@ class PreProcessor:
 
     @classmethod
     def calc_intensity(cls, Asv, Wnv, Wpv, Vv):
-        Aug_1 = cls.seltriag(Asv, 1, (0, 0))
-        Aug_2 = cls.seltriag(Wpv, 1, (1, -1))*cls.seltriag(Asv, 1, (1, -1)) \
-                - cls.seltriag(Wnv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, -1))
-        Aug_3 = cls.seltriag(Wpv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, 1)) \
-                - cls.seltriag(Wnv, 1, (1, 1))*cls.seltriag(Asv, 1, (1, 1))
-        Aug_4 = cls.seltriag(Vv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, 0)) \
-                + cls.seltriag(Vv, 1, (1, 0))*cls.seltriag(Asv, 1, (1, 0))
+        aug1 = cls.seltriag(Asv, 1, (0, 0))
+        aug2 = cls.seltriag(Wpv, 1, (1, -1))*cls.seltriag(Asv, 1, (1, -1)) \
+            - cls.seltriag(Wnv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, -1))
+        aug3 = cls.seltriag(Wpv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, 1)) \
+            - cls.seltriag(Wnv, 1, (1, 1))*cls.seltriag(Asv, 1, (1, 1))
+        aug4 = cls.seltriag(Vv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, 0)) \
+            + cls.seltriag(Vv, 1, (1, 0))*cls.seltriag(Asv, 1, (1, 0))
 
-        D_x = cp.sum(Aug_1.conj()*(Aug_2+Aug_3)/2, axis=0)
-        D_y = cp.sum(Aug_1.conj()*(Aug_2-Aug_3)/2j, axis=0)
-        D_z = cp.sum(Aug_1.conj()*Aug_4, axis=0)
+        dx = cp.sum(aug1.conj()*(aug2+aug3)/2, axis=0)
+        dy = cp.sum(aug1.conj()*(aug2-aug3)/2j, axis=0)
+        dz = cp.sum(aug1.conj()*aug4, axis=0)
 
-        return 0.5*cp.real(cp.stack((D_x, D_y, D_z), axis=1))
+        return 0.5*cp.real(cp.stack((dx, dy, dz), axis=1))
 
 
 if __name__ == '__main__':
