@@ -76,6 +76,14 @@ class IVDataset(Dataset):
         except:  # noqa: E722
             pdb.set_trace()
 
+        # x[:,:,3] = np.log10(x[:,:,3] + 1)
+        # y[:,:,3] = np.log10(y[:,:,3] + 1)
+        # xy = np.concatenate([x, y], axis=1)
+        # x = (x - xy.min())/(xy.max() - xy.min())
+        # y = (y - xy.min())/(xy.max() - xy.min())
+        x[:,:,:] = np.tanh(x[:,:,:])
+        y[:,:,:] = np.tanh(y[:,:,:])
+
         N_freq = x.shape[0]
         N_ch = x.shape[-1]
 
@@ -162,13 +170,13 @@ class MLP(nn.Module):
         self.layer1 = nn.Sequential(
             nn.Linear(n_input, n_hidden, bias=False),
             nn.BatchNorm1d(n_hidden, momentum=0.1),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
         )
         self.layer2 = nn.Sequential(
-            nn.Dropout(p=0.5),
             nn.Linear(n_hidden, n_hidden,),  # bias=False),
+            nn.Dropout(p=0.5),
             # nn.BatchNorm1d(n_hidden, momentum=0.1),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
         )
         # self.layer3 = nn.Sequential(
         #     nn.Dropout(p=0.5),
@@ -179,7 +187,8 @@ class MLP(nn.Module):
         # )
         self.output = nn.Sequential(
             nn.Dropout(p=0.5),
-            nn.Linear(n_hidden, n_output)
+            nn.Linear(n_hidden, n_output),
+            nn.Tanh(),
         )
 
     def forward(self, x):
@@ -194,7 +203,7 @@ class NNTrainer():
     N_epochs = 50
     batch_size = 6
     learning_rate = 1e-3
-    N_data = 14400
+    N_data = 7200
 
     def __init__(self, DIR_TRAIN:str, DIR_TEST:str,
                  XNAME:str, YNAME:str,
@@ -207,10 +216,10 @@ class NNTrainer():
         self.L_frame = L_frame
         self.L_hop = L_hop
 
-        L_cut_x = int(2560/L_hop)
+        L_cut_x = int(3840/L_hop)
         self.L_cut_x = L_cut_x
         n_input = int(L_cut_x*N_fft/2*4)
-        n_hidden = int(3840/L_hop*N_fft/2*4)
+        n_hidden = int(3520/L_hop*N_fft/2*4)
         n_output = int(N_fft/2*4)
 
         # Test Dataset
