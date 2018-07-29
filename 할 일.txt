@@ -1,4 +1,3 @@
-NN에서 estimated free-field IV(from test data) 저장
-NN 에 BN / Dropout 적용
+Histogram of y/output 그리기
 
-npy display/npy-mat converter 작성 (병호형)
+TIMIT Data 순서 확인
