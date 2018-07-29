@@ -403,16 +403,13 @@ class NNTrainer():
             print(time.strftime('%M min %S sec',
                                 time.gmtime(time.time()-t_start)))
             # Early Stopping
-            if epoch >= 2:
-                loss_max = loss_valid[epoch-2:epoch+1].max()
-                loss_min = loss_valid[epoch-2:epoch+1].min()
+            if epoch >= 4:
+                loss_max = loss_valid[epoch-4:epoch+1].max()
+                loss_min = loss_valid[epoch-4:epoch+1].min()
                 if loss_max - loss_min < 0.01 * loss_valid[epoch]:
                     print('Early Stopped')
                     break
-            # if epoch % 10 == 0:
-            #     mat = to_mat(output.cpu().data, y.size(2))
-            #     os.path.join(DIR_IV, 'MLP_out/')
-            #     save_image(mat, './MLP_img/image_{}.png'.format(epoch))
+
         loss_test, error_test = self.eval(FNAME='MLP_result_test.npy')
         print('\nTest Loss: {:.2e}'.format(loss_test))
         print('Test Error rate: {:.2e}'.format(error_test))
@@ -445,21 +442,20 @@ class NNTrainer():
 
                 output_stacked = output.view(y_stacked.size())
 
-                y = IVDataset.unstack_y(y_stacked)
+                y_unstack = IVDataset.unstack_y(y_stacked)
                 output_unstack = IVDataset.unstack_y(output_stacked)
-                y_recon = 0.5*(torch.log((1+y)/(1-y)))
-                output_recon \
-                    = 0.5*(torch.log((1+output_unstack)/(1-output_unstack)))
+                y_np = y_unstack.cpu().numpy()
+                output_np = output_unstack.cpu().numpy()
+                y_recon = np.arctanh(y_np)
+                output_recon = np.arctanh(output_np)
                 # y_recon = (y_recon*x)
                 # output_recon = (output_recon*x)
-                y_recon = y_recon.cpu().numpy()
-                output_recon = output_recon.cpu().numpy()
 
-                # output = output.view(y.size())
                 error = (((output_recon-y_recon)**2).sum(axis=(0,-1))
-                         / (y_recon**2).sum(axis=(0,-1))).sum()
+                         / (y_recon**2).sum(axis=(0,-1))
+                         ).sum()
 
-                if FNAME != '':
+                if not FNAME:
                     np.save(FNAME, {'IV_estimated':output_recon,
                                     'IV_free':y_recon,
                                     }
@@ -469,7 +465,7 @@ class NNTrainer():
                 avg_loss += loss.data.cpu().item()
                 avg_error += error
                 printProgress(iteration, len(loader),
-                              'eval:{:.1e}'.format(loss.data.item()/y.size(0)))
+                              'eval:{:.1e}'.format(loss.data.item()/N_frame))
             avg_loss /= N_total_frame
             avg_error /= N_total_frame
             # ===================log========================
