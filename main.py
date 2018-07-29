@@ -106,5 +106,6 @@ if __name__ == '__main__':
                                 metadata['N_fft'],
                                 metadata['L_frame'],
                                 metadata['L_hop'],
-                                DIR_DATA+'/MLP/MLP_epoch_9.pth')
-            trainer.eval(save_one=True)
+                                # DIR_DATA+'/MLP/MLP_epoch_9.pth'
+                                )
+            trainer.eval(FNAME=DIR_DATA + '/MLP/MLP_result.npy')
