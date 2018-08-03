@@ -1,6 +1,7 @@
 import pdb  # noqa: F401
 
 import numpy as np
+import scipy.io as scio
 
 import torch
 from torch import nn
@@ -51,7 +52,8 @@ class IVDataset(Dataset):
         self.all_files = []
         len = 0
         for file in os.scandir(DIR):
-            if file.is_file() and file.name.endswith('.npy'):
+            if file.is_file() and file.name.endswith('.npy') and \
+                    file.name != 'metadata.npy':
                 self.all_files.append(file.path)
                 len += 1
             if len == N_data:
@@ -65,16 +67,15 @@ class IVDataset(Dataset):
                            for file in self.all_files])
 
         sum_x = np.sum([res[0] for res in result])
-        N_frame_x = np.sum([res[1] for res in result])
+        size_x = np.sum([res[1] for res in result])
         sum_y = np.sum([res[2] for res in result])
-        N_frame_y = np.sum([res[3] for res in result])
-
-        if sum_x + N_frame_x + sum_y + N_frame_y == float('-inf'):
-            raise IOError
+        size_y = np.sum([res[3] for res in result])
 
         # mean
-        self.mean_x = sum_x / N_frame_x
-        self.mean_y = sum_y / N_frame_y
+        # self.mean_x = sum_x / size_x
+        # self.mean_y = sum_y / size_y
+        self.mean_x = (sum_x+sum_y) / (size_x + size_y)
+        self.mean_y = (sum_x+sum_y) / (size_x + size_y)
 
         # Calculate Standard Deviation
         result = pool.map(IVDataset.sum_dev_files,
@@ -86,8 +87,10 @@ class IVDataset(Dataset):
         sum_dev_x = np.sum([res[0] for res in result])
         sum_dev_y = np.sum([res[1] for res in result])
 
-        self.std_x = np.sqrt(sum_dev_x / N_frame_x + 1e-5)
-        self.std_y = np.sqrt(sum_dev_y / N_frame_y + 1e-5)
+        # self.std_x = np.sqrt(sum_dev_x / size_x + 1e-5)
+        # self.std_y = np.sqrt(sum_dev_y / size_y + 1e-5)
+        self.std_x = np.sqrt((sum_dev_x + sum_dev_y)/(size_x + size_y) + 1e-5)
+        self.std_y = np.sqrt((sum_dev_x + sum_dev_y)/(size_x + size_y) + 1e-5)
 
         print('{} data prepared from {}.'.format(len, os.path.basename(DIR)))
 
@@ -99,10 +102,9 @@ class IVDataset(Dataset):
             x = data_dict[XNAME]
             y = data_dict[YNAME]
         except:  # noqa: E722
-            return float('-inf'), float('-inf'), \
-                float('-inf'), float('-inf')
+            pdb.set_trace()
 
-        return x.sum(), x.shape[1], y.sum(), y.shape[1]
+        return x.sum(), x.size, y.sum(), y.size
 
     @staticmethod
     def sum_dev_files(tup):
@@ -125,26 +127,16 @@ class IVDataset(Dataset):
         # Normalize
         x = (x - self.mean_x)/self.std_x
         y = (y - self.mean_y)/self.std_y
+
+        x = np.tanh(x)
+        y = np.tanh(y)
         # x[:,:,3] = np.log10(x[:,:,3] + 1)
         # y[:,:,3] = np.log10(y[:,:,3] + 1)
         # xy = np.concatenate([x, y], axis=1)
         # x = (x - xy.min())/(xy.max() - xy.min())
         # y = (y - xy.min())/(xy.max() - xy.min())
         # y = y / x[:,:y.shape[1],:]
-        x[:,:,:] = np.tanh(x[:,:,:])
-        y[:,:,:] = np.tanh(y[:,:,:])
-
-        # # Zero-Padding for the same length of x and y
-        # if x.shape[1] < y.shape[1]:
-        #     x = np.concatenate(
-        #         (x, np.zeros((N_freq, y.shape[1]-x.shape[1], N_ch))),
-        #         axis=1
-        #     )
-        # elif x.shape[1] > y.shape[1]:
-        #     y = np.concatenate(
-        #         (y, np.zeros((N_freq, x.shape[1]-y.shape[1], N_ch))),
-        #         axis=1
-        #     )
+        # ------------------------------------
 
         # Make groups of the frames of x and stack the groups
         # x_stacked: (time_length) x (N_freq) x (L_cut_x) x (XYZ0 channel)
@@ -255,18 +247,19 @@ class MLP(nn.Module):
             nn.ReLU(inplace=True),
         )
         self.layer2 = nn.Sequential(
+            nn.Dropout(p=0.5),
             nn.Linear(n_hidden, n_hidden),
             # nn.BatchNorm1d(n_hidden, momentum=0.1),
             nn.ReLU(inplace=True),
-            nn.Dropout(p=0.5),
         )
         self.layer3 = nn.Sequential(
+            nn.Dropout(p=0.5),
             nn.Linear(n_hidden, n_hidden),
             # nn.BatchNorm1d(n_hidden),
             nn.ReLU(inplace=True),
-            nn.Dropout(p=0.5),
         )
         self.output = nn.Sequential(
+            nn.Dropout(p=0.5),
             nn.Linear(n_hidden, n_output),
             nn.Tanh(),
         )
@@ -280,27 +273,27 @@ class MLP(nn.Module):
 
 
 class NNTrainer():
-    N_epochs = 50
+    N_epochs = 100
     batch_size = 6
     learning_rate = 1e-3
     N_data = 14400
 
     def __init__(self, DIR_TRAIN:str, DIR_TEST:str,
                  XNAME:str, YNAME:str,
-                 N_fft:int, L_frame:int, L_hop:int, F_MODEL_STATE=''):
+                 N_freq:int, L_frame:int, L_hop:int, F_MODEL_STATE=''):
         self.DIR_TRAIN = DIR_TRAIN
         self.DIR_TEST = DIR_TEST
         self.XNAME = XNAME
         self.YNAME = YNAME
-        self.N_fft = N_fft
+        self.N_freq = N_freq
         self.L_frame = L_frame
         self.L_hop = L_hop
 
         L_cut_x = 19
         IVDataset.L_cut_x = L_cut_x
-        n_input = int(L_cut_x*N_fft/2*4)
-        n_hidden = int(17*N_fft/2*4)
-        n_output = int(N_fft/2*4)
+        n_input = L_cut_x*N_freq*4
+        n_hidden = 17*N_freq*4
+        n_output = N_freq*4
 
         # Test Dataset
         data_test = IVDataset(DIR_TEST, XNAME, YNAME,
@@ -313,12 +306,14 @@ class NNTrainer():
                                       )
 
         # Model (Using Parallel GPU)
-        self.model = nn.DataParallel(MLP(n_input, n_hidden, n_output)).cuda()
+        self.model = nn.DataParallel(MLP(n_input, n_hidden, n_output),
+                                     output_device=1,
+                                     ).cuda()
         if F_MODEL_STATE != '':
             self.model.load_state_dict(torch.load(F_MODEL_STATE))
 
         # MSE Loss and Adam Optimizer
-        self.criterion = nn.MSELoss(size_average=False)
+        self.criterion = nn.MSELoss(reduction='sum')
         self.optimizer = torch.optim.Adam(self.model.parameters(),
                                           lr=NNTrainer.learning_rate,
                                           weight_decay=1e-5,
@@ -346,10 +341,10 @@ class NNTrainer():
 
         loss_train = np.zeros(NNTrainer.N_epochs)
         loss_valid = np.zeros(NNTrainer.N_epochs)
-        error_valid = np.zeros(NNTrainer.N_epochs)
+        snr_valid_dB = np.zeros(NNTrainer.N_epochs)
         N_total_frame = 0
         scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
-                                                    step_size=2, gamma=0.5)
+                                                    step_size=1, gamma=0.8)
         for epoch in range(NNTrainer.N_epochs):
             t_start = time.time()
 
@@ -366,13 +361,12 @@ class NNTrainer():
                 if epoch == 0:
                     N_total_frame += N_frame
 
-                input = x_stacked.view(N_frame, -1).cuda()
-                del x_stacked
+                input = x_stacked.view(N_frame, -1).cuda(device=0)
                 # ===================forward=====================
                 output = self.model(input)
-                y_cuda = y_stacked.view(N_frame, -1).cuda()
-                loss = self.criterion(output, y_cuda)
-                loss_train[epoch] += loss.data.cpu().item()
+                y_cuda = y_stacked.view(N_frame, -1).cuda(device=1)
+                loss = self.criterion(output, y_cuda)/N_frame
+                loss_train[epoch] += loss.data.cpu().item()*N_frame
 
                 # ===================backward====================
                 self.optimizer.zero_grad()
@@ -381,22 +375,25 @@ class NNTrainer():
                 printProgress(iteration, len(loader_train),
                               'epoch [{}/{}]:{:.1e}'
                               .format(epoch+1, NNTrainer.N_epochs,
-                                      loss.data.item()/N_frame))
+                                      loss.data.item()))
             loss_train[epoch] /= N_total_frame
             # ===================log========================
             # print(('epoch [{}/{}]: loss of the last data: {:.2e}')
             #       .format(epoch + 1, NNTrainer.N_epochs,
             #               loss.data.item()/N_frame))
 
-            loss_valid[epoch], error_valid[epoch] \
+            loss_valid[epoch], snr_valid_dB[epoch] \
                 = self.eval(loader_valid,
-                            FNAME='MLP_result_{}.npy'.format(epoch))
+                            FNAME='MLP_result_{}.mat'.format(epoch))
             print('Validation Loss: {:.2e}'.format(loss_valid[epoch]))
-            print('Validation Error rate: {:.2e}'.format(error_valid[epoch]))
+            print('Validation SNR (dB): {:.2e}'.format(snr_valid_dB[epoch]))
 
-            np.save('MLP_loss_{}.npy'.format(epoch),
-                    {'loss_train': loss_train, 'loss_valid': loss_valid,
-                     'error_valid': error_valid})
+            scio.savemat('MLP_loss_{}.mat'.format(epoch),
+                         {'loss_train': loss_train,
+                          'loss_valid': loss_valid,
+                          'snr_valid_dB': snr_valid_dB,
+                          }
+                         )
             torch.save(self.model.state_dict(),
                        './MLP_{}.pt'.format(epoch))
 
@@ -410,35 +407,38 @@ class NNTrainer():
                     print('Early Stopped')
                     break
 
-        loss_test, error_test = self.eval(FNAME='MLP_result_test.npy')
+        loss_test, snr_test_dB = self.eval(FNAME='MLP_result_test.mat')
         print('\nTest Loss: {:.2e}'.format(loss_test))
-        print('Test Error rate: {:.2e}'.format(error_test))
+        print('Test SNR (dB): {:.2e}'.format(snr_test_dB))
 
     def eval(self, loader=None, FNAME=''):
         if not loader:
             loader = self.loader_test
         avg_loss = 0.
-        avg_error = 0.
+        avg_snr = 0.
         iteration = 0
         N_total_frame = 0
+        norm_frames = []
+        norm_errors = []
+        dict_to_save = {}
         printProgress(iteration, len(loader), 'eval:')
         with torch.no_grad():
             self.model.eval()
+
             for data in loader:
                 iteration += 1
                 x_stacked, y_stacked = data
-                x_stacked = x_stacked.cuda()
-                y_stacked = y_stacked.cuda()
+
                 N_frame = x_stacked.size(0)
                 N_total_frame += N_frame
 
-                input = x_stacked.view(N_frame, -1)
-                # del x_stacked
+                input = x_stacked.view(N_frame, -1).cuda(device=0)
                 # ===================forward=====================
                 output = self.model(input)
 
+                y_stacked = y_stacked.cuda(device=1)
                 y_vec = y_stacked.view(N_frame, -1)
-                loss = self.criterion(output, y_vec)
+                loss = self.criterion(output, y_vec)/N_frame
 
                 output_stacked = output.view(y_stacked.size())
 
@@ -448,27 +448,40 @@ class NNTrainer():
                 output_np = output_unstack.cpu().numpy()
                 y_recon = np.arctanh(y_np)
                 output_recon = np.arctanh(output_np)
+                y_recon = loader.dataset.std_y*y_recon + loader.dataset.mean_y
+                output_recon \
+                    = loader.dataset.std_y*output_recon + loader.dataset.mean_y
+
                 # y_recon = (y_recon*x)
                 # output_recon = (output_recon*x)
+                norm_frames.append((y_recon**2).sum(axis=(0,-1)))
+                norm_errors.append(
+                    ((output_recon-y_recon)**2).sum(axis=(0,-1))
+                )
 
-                error = (((output_recon-y_recon)**2).sum(axis=(0,-1))
-                         / (y_recon**2).sum(axis=(0,-1))
-                         ).sum()
-
-                if not FNAME:
-                    np.save(FNAME, {'IV_estimated':output_recon,
-                                    'IV_free':y_recon,
+                if FNAME and not dict_to_save:
+                    x_np = IVDataset.unstack_x(x_stacked.numpy())
+                    x_recon = np.arctanh(x_np)
+                    x_recon = loader.dataset.std_x*x_recon + loader.dataset.mean_x
+                    dict_to_save = {'IV_free':y_recon,
+                                    'IV_room':x_recon,
+                                    'IV_estimated':output_recon,
                                     }
-                            )
-                    FNAME = ''
 
-                avg_loss += loss.data.cpu().item()
-                avg_error += error
+                avg_loss += loss.data.cpu().item()*N_frame
                 printProgress(iteration, len(loader),
-                              'eval:{:.1e}'.format(loss.data.item()/N_frame))
+                              'eval:{:.1e}'.format(loss.data.item()))
             avg_loss /= N_total_frame
-            avg_error /= N_total_frame
-            # ===================log========================
+            norm_frames = np.concatenate(norm_frames)
+            norm_errors = np.concatenate(norm_errors)
+            avg_snr = (norm_frames / norm_errors).sum()/N_total_frame
+            avg_snr_dB = 10*np.log10(avg_snr)
+            if np.isnan(avg_snr_dB):
+                pdb.set_trace()
 
+            if FNAME:
+                dict_to_save['norm_frames'] = norm_frames
+                dict_to_save['norm_errors'] = norm_errors
+                scio.savemat(FNAME, dict_to_save)
             self.model.train()
-        return avg_loss, avg_error
+        return avg_loss, avg_snr_dB
