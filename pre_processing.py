@@ -43,6 +43,7 @@ class PreProcessor:
         self.Fs = 0
         self.N_wavfile = 0
         self.N_fft = 0
+        self.N_freq = 0
         self.L_frame = 0
         self.L_hop = 0
         self.win = None
@@ -74,6 +75,10 @@ class PreProcessor:
                 data, self.Fs = sf.read(file)
                 self.L_frame = int(self.Fs*self.L_WIN_MS/1000)
                 self.N_fft = self.L_frame
+                if self.N_fft % 2 == 0:
+                    self.N_freq = int(self.N_fft / 2) + 1
+                else:
+                    self.N_freq = int(self.N_fft / 2)
                 self.L_hop = int(self.L_frame/2)
 
                 self.win = scsig.hamming(self.L_frame, sym=False)
@@ -139,44 +144,45 @@ class PreProcessor:
                                              self.RIR[i_loc]))
 
             # Free-field Intensity Vector Image
-            IV_free = cp.zeros((int(self.N_fft/2), self.N_frame_free, 4))
-            norm_factor_free = float('-inf')
+            IV_free = cp.zeros((self.N_freq, self.N_frame_free, 4))
+            # norm_factor_free = float('-inf')
             for i_frame in range(self.N_frame_free):
                 interval = i_frame*self.L_hop + np.arange(self.L_frame)
                 fft = cp.fft.fft(data[interval]*win, n=self.N_fft)
                 anm = cp.outer(Ys[i_loc].conj(), fft)
 
                 IV_free[:,i_frame,:3] \
-                    = PreProcessor.calc_intensity(anm[:,:int(self.N_fft/2)],
+                    = PreProcessor.calc_intensity(anm[:,:self.N_freq],
                                                   Wnv, Wpv, Vv)
-                IV_free[:,i_frame,3] = cp.abs(anm[0,:int(self.N_fft/2)])
+                IV_free[:,i_frame,3] = cp.abs(anm[0,:self.N_freq])**2
 
-                max_in_frame \
-                    = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
-                norm_factor_free = np.max([norm_factor_free, max_in_frame])
+                # max_in_frame \
+                #     = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
+                # norm_factor_free = np.max([norm_factor_free, max_in_frame])
 
             # Room Intensity Vector Image
-            IV_room = cp.zeros((int(self.N_fft/2), self.N_frame_room, 4))
-            norm_factor_room = float('-inf')
+            IV_room = cp.zeros((self.N_freq, self.N_frame_room, 4))
+            # norm_factor_room = float('-inf')
             for i_frame in range(self.N_frame_room):
                 interval = i_frame*self.L_hop + np.arange(self.L_frame)
                 fft = cp.fft.fft(filtered[:,interval]*win, n=self.N_fft)
                 anm = (Yenc @ fft) * bEQspec
 
                 IV_room[:,i_frame,:3] \
-                    = PreProcessor.calc_intensity(anm[:,:int(self.N_fft/2)],
+                    = PreProcessor.calc_intensity(anm[:,:self.N_freq],
                                                   Wnv, Wpv, Vv)
-                IV_room[:,i_frame,3] = cp.abs(anm[0,:int(self.N_fft/2)])
+                IV_room[:,i_frame,3] = cp.abs(anm[0,:self.N_freq])**2
 
-                max_in_frame \
-                    = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
-                norm_factor_room = np.max([norm_factor_room, max_in_frame])
+                # max_in_frame \
+                #     = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
+                # norm_factor_room = np.max([norm_factor_room, max_in_frame])
 
             # Save
             dic = {'IV_free': cp.asnumpy(IV_free),
                    'IV_room': cp.asnumpy(IV_room),
-                   'norm_factor_free': norm_factor_free,
-                   'norm_factor_room': norm_factor_room}
+                   # 'norm_factor_free': norm_factor_free,
+                   # 'norm_factor_room': norm_factor_room,
+                   }
             FNAME = FORM % (args+(i_loc,))
             np.save(os.path.join(self.DIR_IV, FNAME), dic)
 
@@ -194,7 +200,8 @@ class PreProcessor:
 
         metadata = {'N_wavfile': self.N_wavfile,
                     'Fs': self.Fs,
-                    'N_fft': self.N_fft,
+                    # 'N_fft': self.N_fft,
+                    'N_freq': self.N_freq,
                     'L_frame': self.L_frame,
                     'L_hop': self.L_hop,
                     'N_LOC': self.N_LOC,
