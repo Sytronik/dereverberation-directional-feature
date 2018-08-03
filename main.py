@@ -16,8 +16,8 @@ from train_nn import NNTrainer
 if __name__ == '__main__':
     DIR_DATA = '../../De-Reverberation Data'
     DIR_WAVFILE = DIR_DATA + '/speech/data/lisa/data/timit/raw/TIMIT/'
-    DIR_IV_DIC = {'TRAIN': DIR_DATA + '/IV/TRAIN',
-                  'TEST': DIR_DATA + '/IV/TEST'}
+    DIR_IV_dict = {'TRAIN': DIR_DATA + '/IV/TRAIN',
+                   'TEST': DIR_DATA + '/IV/TEST'}
     FORM = '%04d_%02d.npy'
     ID = '*.WAV'  # The common name of wave file
 
@@ -27,14 +27,13 @@ if __name__ == '__main__':
         print('Arguments are needed')
         exit()
 
-    # the second argument is 'TRAIN' or 'TEST'
-    if len(sys.argv) >= 3:
-        KIND_DATA = sys.argv[2].upper()
-    else:
-        KIND_DATA = 'TRAIN'
-    DIR_IV = DIR_IV_DIC[KIND_DATA]
-
     if sys.argv[1] == 'pre_processing':
+        # the second argument is 'TRAIN' or 'TEST'
+        if len(sys.argv) >= 3:
+            KIND_DATA = sys.argv[2].upper()
+        else:
+            KIND_DATA = 'TRAIN'
+        DIR_IV = DIR_IV_dict[KIND_DATA]
         DIR_WAVFILE += KIND_DATA
 
         # RIR Data
@@ -69,43 +68,56 @@ if __name__ == '__main__':
         p.process(DIR_WAVFILE, ID, IDX_START, DIR_IV, FORM)
 
     else:  # the functions that need metadata
-        metadata = np.load(os.path.join(DIR_IV, 'metadata.npy')).item()
-
+        metadata = np.load(os.path.join(DIR_IV_dict['TRAIN'],
+                                        'metadata.npy')).item()
         if sys.argv[1] == 'show_IV_image':
-            # The default file to be shown is 0001_00.npy
-            FNAME = FORM % (1, 0)
-            if len(sys.argv) >= 4:
-                FNAME = sys.argv[3]
-                if not FNAME.endswith('.npy'):
-                    FNAME += '.npy'
+            doSave = False
+            FNAME = FORM % (1, 0)  # The default file is 0001_00.npy
+            DIR_IV = ''
+            for arg in sys.argv[2:]:
+                if arg == '--save' or arg == '-S':
+                    doSave = True
+                elif arg.upper() == 'TRAIN' or arg.upper() == 'TEST':
+                    KIND_DATA = arg.upper()
+                    DIR_IV = DIR_IV_dict[KIND_DATA]
+                else:
+                    FNAME = arg
 
-            needToSave = False
-            if len(sys.argv) >= 5:
-                if sys.argv[4] == '--save' or sys.argv[4] == '-S':
-                    needToSave = True
+            if not FNAME.endswith('.npy'):
+                FNAME += '.npy'
 
-            data_dic = np.load(os.path.join(DIR_IV, FNAME)).item()
+            IV_dict = np.load(os.path.join(DIR_IV, FNAME)).item()
 
-            showIV.show(data_dic['IV_free'], data_dic['IV_room'],
-                        title=[FNAME+' (free)', FNAME+' (room)'],
-                        norm_factor=(data_dic['norm_factor_free'],
-                                     data_dic['norm_factor_room']),
-                        ylim=[0, metadata['Fs']/2],
-                        needToSave=needToSave)
+            IVnames = [key for key in IV_dict if key.startswith('IV')]
+            title = ['{} ({})'.format(FNAME.replace('.npy',''),
+                                      name.split('_')[-1],
+                                      )
+                     for name in IVnames]
+            IVs = [IV_dict[k] for k in IVnames]
+            showIV.show(IVs,
+                        title=title,
+                        ylim=[0., metadata['Fs']/2],
+                        doSave=doSave,
+                        # norm_factor=(IV_dict['norm_factor_free'],
+                        #              IV_dict['norm_factor_room']),
+                        )
 
         elif sys.argv[1] == 'train_nn':
-            trainer = NNTrainer(DIR_IV_DIC['TRAIN'], DIR_IV_DIC['TEST'],
+            trainer = NNTrainer(DIR_IV_dict['TRAIN'], DIR_IV_dict['TEST'],
                                 'IV_room', 'IV_free',
-                                metadata['N_fft'],
+                                metadata['N_freq'],
                                 metadata['L_frame'],
                                 metadata['L_hop'])
             trainer.train()
         elif sys.argv[1] == 'test_nn':
-            trainer = NNTrainer(DIR_IV_DIC['TRAIN'], DIR_IV_DIC['TEST'],
+            trainer = NNTrainer(DIR_IV_dict['TRAIN'], DIR_IV_dict['TEST'],
                                 'IV_room', 'IV_free',
-                                metadata['N_fft'],
+                                metadata['N_freq'],
                                 metadata['L_frame'],
                                 metadata['L_hop'],
-                                # DIR_DATA+'/MLP/MLP_epoch_9.pth'
+                                DIR_DATA+'/MLP_19_17x3_14400/MLP_29.pt'
                                 )
-            trainer.eval(FNAME=DIR_DATA + '/MLP/MLP_result.npy')
+            trainer.eval(
+                FNAME=os.path.join(DIR_DATA,
+                                   '/MLP_19_17x3_14400/MLP_result.mat')
+            )
