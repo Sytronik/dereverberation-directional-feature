@@ -19,4 +19,4 @@ for fname in fnames:
     if type(contents) == dict:
         scio.savemat(fname_mat, contents, oned_as='column')
     else:
-        scio.savemat(fname_mat, {'x':contents}, oned_as='column')
+        scio.savemat(fname_mat, {fname_mat:contents}, oned_as='column')
