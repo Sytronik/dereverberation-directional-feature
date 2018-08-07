@@ -1,83 +1,121 @@
-clear;
+if ~exist('IV_free')
+    clear;
+    load 'MLP_result_59.mat'
+end
 
-load '0001_00.mat'
+N_IV = 1;
 
-scaling = max(max(max(abs(IV_free(:,:,1:3)))));
-gamma = 50
-IV_free(:,:,1:3) = (IV_free(:,:,1:3) + scaling) ./ (2*scaling);
-IV_free(:,:,1:3) = 1./(1+exp(-gamma*(IV_free(:,:,1:3)-0.5)));
-IV_free(:,:,4) = 10*log10(IV_free(:,:,4)+1e-3);
-[N_freq, x_free] = size(IV_free(:,:,1));
-y = [0 8000];
-x_free = [1 x_free];
-scaling = max(max(max(abs(IV_room(:,:,1:3)))));
-IV_room(:,:,1:3) = (IV_room(:,:,1:3) + scaling) ./ (2*scaling);
-IV_room(:,:,1:3) = 1./(1+exp(-gamma*(IV_room(:,:,1:3)-0.5)));
-IV_room(:,:,4) = 10*log10(IV_room(:,:,4)+1e-3);
-[~, x_room] = size(IV_room(:,:,1));
-x_room = [1 x_room];
-x = max([x_free x_room]);
+IVs{N_IV} = IV_free;
+titles{N_IV} = 'Free-field';
+
+if exist('IV_room')
+    N_IV = N_IV+1;
+    IVs{N_IV} = IV_room;
+    titles{N_IV} = 'Reverberant';
+end
+
+if exist('IV_estimated')
+    N_IV = N_IV+1;
+    IVs{N_IV} = IV_estimated;
+    titles{N_IV} = 'Estimated Free-field';
+end
+    
+%% Constants
+gamma = 50;
+scaling_max = 0;
+x_max = 0;
+for ii = 1:N_IV
+    scaling{ii} = max(max(max(abs(IVs{ii}(:,:,1:3)))));
+    if scaling{ii} > scaling_max
+        scaling_max = scaling{ii};
+    end
+    
+    [N_freq, temp] = size(IVs{ii}(:,:,1));
+    x_axis{ii} = [1 temp];
+    if temp > x_max
+        x_max = temp;
+    end
+    
+end
+x_lim = [1 x_max];
+y_axis = [0 8000];
+
+%% Normalize
+for ii = 1:N_IV
+    % ---RGB---
+    % The same scaling factor
+    scaling{ii}=scaling_max;
+
+    % scaling
+    IVs{ii}(:,:,1:3) = (IVs{ii}(:,:,1:3) + scaling{ii}) ./ (2*scaling{ii});
+    
+    % contrast enhancment
+    IVs{ii}(:,:,1:3) = 1./(1+exp(-gamma*(IVs{ii}(:,:,1:3)-0.5)));
+%     IVs{ii}(:,:,1:3) = (IVs{ii}(:,:,1:3)-0.5)/2./max(max(max(abs(IVs{ii}(:,:,1:3)-0.5))))+0.5;
+
+    % ---alpha---
+    % clip negative values
+    IVs{ii}(:,:,4) = (IVs{ii}(:,:,4)>0).*IVs{ii}(:,:,4);
+    
+    % dB scale
+    IVs{ii}(:,:,4) = 10*log10(IVs{ii}(:,:,4)+1e-3);
+end
+
+%% Colormap of alpha
+c_max = -inf;
+c_min = inf;
+for ii = 1:N_IV
+    temp = max(max(IVs{ii}(:,:,4)));
+    if temp > c_max
+        c_max = temp;
+    end
+    
+    temp = min(min(IVs{ii}(:,:,4)));
+    if temp < c_min
+        c_min = temp;
+    end
+    
+end
+c_lim = [c_min c_max];
 
 %% Plot
 figure(1);clf;
-ax=subplot(2,2,1);
-image(x_free, y, IV_free(:,:,1:3));
-ax.YDir = 'normal';
-xlim([1 x]);
-xlabel('frame index');
-ylabel('frequency (Hz)');
-title('Free-field Intensity Vector')
+for ii = 1:N_IV
+    ax=subplot(2, N_IV, ii);
+    image(x_axis{ii}, y_axis, IVs{ii}(:,:,1:3));
+    ax.YDir = 'normal';
+    xlim(x_lim);
+    xlabel('frame index');
+    ylabel('frequency (Hz)');
+%     title([titles{ii} ' Intensity Vector $\tilde\mathbf{I}(\tau,f)$'], 'Interpreter', 'latex')
+    title([titles{ii} ' Intensity Vector $\hat\mathbf{I}(\tau,f)$'], 'Interpreter', 'latex')
 
-% hf4 = figure(4);clf;
-ax=subplot(2,2,3);
-image(x_free, y, IV_free(:,:,4),'CDataMapping','scaled');
-ax.YDir = 'normal';
-xlim([1 x]);
-xlabel('frame index');
-ylabel('frequency (Hz)');
-colorbar
-title('Free-field |a_{00}|^2 (dB)')
+    ax=subplot(2, N_IV, N_IV + ii);
+    image(x_axis{ii}, y_axis, IVs{ii}(:,:,4),'CDataMapping','scaled');
+    ax.YDir = 'normal';
+    xlim(x_lim);
+    ax.CLim=c_lim;
+    xlabel('frame index');
+    ylabel('frequency (Hz)');
+    colorbar
+    title([titles{ii} ' $|a_{00}(\tau,f)|^2$ (dB)'], 'Interpreter', 'latex')
+end
 
-% hf2 = figure(2);clf;
-ax=subplot(2,2,2);
-image(x_room, y, IV_room(:,:,1:3));
-ax.YDir = 'normal';
-xlim([1 x]);
-xlabel('frame index');
-ylabel('frequency (Hz)');
-title('Room Intensity Vector')
-
-% hf3 = figure(3);clf;
-ax=subplot(2,2,4);
-image(x_room, y, IV_room(:,:,4), 'CDataMapping','scaled');
-ax.YDir = 'normal';
-xlim([1 x]);
-xlabel('frame index');
-ylabel('frequency (Hz)');
-colorbar
-title('Room |a_{00}|^2 (dB)')
-
-n=3;
+n=2;
 figure(2);clf;
-ax=subplot(2,1,1);
-board = repmat((checkerboard(n, floor(N_freq/2/n), floor(x/2/n))>0.5)*0.3+0.7, [1 1 3]);
-image([1 x], y, board);
-hold on;
-image(x_free, y, IV_free(:,:,1:3), 'AlphaData', IV_free(:,:,4),'AlphaDataMapping','scaled');
-ax.YDir = 'normal';
-xlim([1 x]);
-xlabel('frame index');
-ylabel('frequency (Hz)');
-title('Free-field Intensity Vector + |a_{00}|^2');
-hold off;
-
-ax=subplot(2,1,2);
-image([1 x], y, board);
-hold on;
-image(x_room, y, IV_room(:,:,1:3), 'AlphaData', IV_room(:,:,4),'AlphaDataMapping','scaled');
-ax.YDir = 'normal';
-xlim([1 x]);
-xlabel('frame index');
-ylabel('frequency (Hz)');
-title('Room Intensity Vector + |a_{00}|^2')
-hold off;
+for ii = 1:N_IV
+    ax=subplot(N_IV,1,ii);
+    board = repmat((checkerboard(n, ceil(N_freq/2/n), ceil(x_max/2/n))>0.5)*0.2+0.8, [1 1 3]);
+    board = board(1:N_freq, 1:x_max, :);
+    image(x_lim, y_axis, board);
+    hold on;
+    image(x_axis{ii}, y_axis, IVs{ii}(:,:,1:3), ...
+          'AlphaData', IVs{ii}(:,:,4), 'AlphaDataMapping', 'scaled');
+    ax.YDir = 'normal';
+    xlim(x_lim);
+    xlabel('frame index');
+    ylabel('frequency (Hz)');
+    title([titles{ii} ' $\hat\mathbf{I}(\tau,f)$ \& $|a_{00}(\tau,f)|^2$ (dB)'], 'Interpreter', 'latex');
+    hold off;
+end
+clear;
