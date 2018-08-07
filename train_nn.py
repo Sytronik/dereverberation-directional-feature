@@ -66,16 +66,16 @@ class IVDataset(Dataset):
                           [(file, XNAME, YNAME)
                            for file in self.all_files])
 
-        sum_x = np.sum([res[0] for res in result])
-        size_x = np.sum([res[1] for res in result])
-        sum_y = np.sum([res[2] for res in result])
-        size_y = np.sum([res[3] for res in result])
+        sum_x = np.sum([res[0] for res in result], axis=0)[np.newaxis,:,:,:]
+        N_frame_x = np.sum([res[1] for res in result])
+        sum_y = np.sum([res[2] for res in result], axis=0)[:,np.newaxis,:]
+        N_frame_y = np.sum([res[3] for res in result])
 
         # mean
-        # self.mean_x = sum_x / size_x
-        # self.mean_y = sum_y / size_y
-        self.mean_x = (sum_x+sum_y) / (size_x + size_y)
-        self.mean_y = (sum_x+sum_y) / (size_x + size_y)
+        self.mean_x = sum_x / N_frame_x
+        self.mean_y = sum_y / N_frame_y
+        # self.mean_x = (sum_x+sum_y) / (N_frame_x + N_frame_y)
+        # self.mean_y = (sum_x+sum_y) / (N_frame_x + N_frame_y)
 
         # Calculate Standard Deviation
         result = pool.map(IVDataset.sum_dev_files,
@@ -84,18 +84,22 @@ class IVDataset(Dataset):
 
         pool.close()
 
-        sum_dev_x = np.sum([res[0] for res in result])
-        sum_dev_y = np.sum([res[1] for res in result])
+        sum_dev_x = np.sum([res[0] for res in result],
+                           axis=0
+                           )[np.newaxis,:,:,:]
+        sum_dev_y = np.sum([res[1] for res in result], axis=0)[:,np.newaxis,:]
 
-        # self.std_x = np.sqrt(sum_dev_x / size_x + 1e-5)
-        # self.std_y = np.sqrt(sum_dev_y / size_y + 1e-5)
-        self.std_x = np.sqrt((sum_dev_x + sum_dev_y)/(size_x + size_y) + 1e-5)
-        self.std_y = np.sqrt((sum_dev_x + sum_dev_y)/(size_x + size_y) + 1e-5)
+        self.std_x = np.sqrt(sum_dev_x / N_frame_x + 1e-5)
+        self.std_y = np.sqrt(sum_dev_y / N_frame_y + 1e-5)
+        # self.std_x = np.sqrt((sum_dev_x + sum_dev_y)/(N_frame_x + N_frame_y)
+        #                      + 1e-5)
+        # self.std_y = np.sqrt((sum_dev_x + sum_dev_y)/(N_frame_x + N_frame_y)
+        #                      + 1e-5)
 
         print('{} data prepared from {}.'.format(len, os.path.basename(DIR)))
 
-    @staticmethod
-    def sum_files(tup):
+    @classmethod
+    def sum_files(cls, tup):
         file, XNAME, YNAME = tup
         try:
             data_dict = np.load(file).item()
@@ -104,16 +108,22 @@ class IVDataset(Dataset):
         except:  # noqa: E722
             pdb.set_trace()
 
-        return x.sum(), x.size, y.sum(), y.size
+        x_stacked = cls.stack_x(x, L_trunc=y.shape[1])
+        return (x_stacked.sum(axis=0), x_stacked.shape[0],
+                y.sum(axis=1), y.shape[1],
+                )
 
-    @staticmethod
-    def sum_dev_files(tup):
+    @classmethod
+    def sum_dev_files(cls, tup):
         file, XNAME, YNAME, mean_x, mean_y = tup
         data_dict = np.load(file).item()
         x = data_dict[XNAME]
         y = data_dict[YNAME]
 
-        return ((x - mean_x)**2).sum(), ((y - mean_y)**2).sum()
+        x_stacked = cls.stack_x(x, L_trunc=y.shape[1])
+        return (((x_stacked - mean_x)**2).sum(axis=0),
+                ((y - mean_y)**2).sum(axis=1),
+                )
 
     def __len__(self):
         return len(self.all_files)
@@ -124,24 +134,14 @@ class IVDataset(Dataset):
         x = data_dict[self.XNAME]
         y = data_dict[self.YNAME]
 
-        # Normalize
-        x = (x - self.mean_x)/self.std_x
-        y = (y - self.mean_y)/self.std_y
-
-        x = np.tanh(x)
-        y = np.tanh(y)
-        # x[:,:,3] = np.log10(x[:,:,3] + 1)
-        # y[:,:,3] = np.log10(y[:,:,3] + 1)
-        # xy = np.concatenate([x, y], axis=1)
-        # x = (x - xy.min())/(xy.max() - xy.min())
-        # y = (y - xy.min())/(xy.max() - xy.min())
-        # y = y / x[:,:y.shape[1],:]
-        # ------------------------------------
-
         # Make groups of the frames of x and stack the groups
         # x_stacked: (time_length) x (N_freq) x (L_cut_x) x (XYZ0 channel)
         # y: (time_length) x (N_freq) x 1 x (XYZ0 channel)
+        # Normalize
+        # x = (x - self.mean_x)/self.std_x
+        y = (y - self.mean_y)/self.std_y
         x_stacked = IVDataset.stack_x(x, L_trunc=y.shape[1])
+        x_stacked = (x_stacked - self.mean_x)/self.std_x
         y_stacked = IVDataset.stack_y(y)
 
         x_stacked = torch.tensor(x_stacked, dtype=torch.float)
@@ -261,7 +261,7 @@ class MLP(nn.Module):
         self.output = nn.Sequential(
             nn.Dropout(p=0.5),
             nn.Linear(n_hidden, n_output),
-            nn.Tanh(),
+            # nn.Tanh(),
         )
 
     def forward(self, x):
@@ -276,7 +276,7 @@ class NNTrainer():
     N_epochs = 100
     batch_size = 6
     learning_rate = 1e-3
-    N_data = 14400
+    N_data = 7200
 
     def __init__(self, DIR_TRAIN:str, DIR_TEST:str,
                  XNAME:str, YNAME:str,
@@ -342,6 +342,7 @@ class NNTrainer():
         loss_train = np.zeros(NNTrainer.N_epochs)
         loss_valid = np.zeros(NNTrainer.N_epochs)
         snr_valid_dB = np.zeros(NNTrainer.N_epochs)
+
         N_total_frame = 0
         scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                     step_size=1, gamma=0.8)
@@ -403,7 +404,7 @@ class NNTrainer():
             if epoch >= 4:
                 loss_max = loss_valid[epoch-4:epoch+1].max()
                 loss_min = loss_valid[epoch-4:epoch+1].min()
-                if loss_max - loss_min < 0.01 * loss_valid[epoch]:
+                if loss_max - loss_min < 0.01 * loss_max:
                     print('Early Stopped')
                     break
 
@@ -418,8 +419,8 @@ class NNTrainer():
         avg_snr = 0.
         iteration = 0
         N_total_frame = 0
-        norm_frames = []
-        norm_errors = []
+        norm_frames = [None]*len(loader)
+        norm_errors = [None]*len(loader)
         dict_to_save = {}
         printProgress(iteration, len(loader), 'eval:')
         with torch.no_grad():
@@ -446,23 +447,28 @@ class NNTrainer():
                 output_unstack = IVDataset.unstack_y(output_stacked)
                 y_np = y_unstack.cpu().numpy()
                 output_np = output_unstack.cpu().numpy()
-                y_recon = np.arctanh(y_np)
-                output_recon = np.arctanh(output_np)
-                y_recon = loader.dataset.std_y*y_recon + loader.dataset.mean_y
+
+                # y_recon = np.arctanh(y_np)
+                # output_recon = np.arctanh(output_np)
+                y_recon = loader.dataset.std_y*y_np + loader.dataset.mean_y
                 output_recon \
-                    = loader.dataset.std_y*output_recon + loader.dataset.mean_y
+                    = loader.dataset.std_y*output_np + loader.dataset.mean_y
 
                 # y_recon = (y_recon*x)
                 # output_recon = (output_recon*x)
-                norm_frames.append((y_recon**2).sum(axis=(0,-1)))
-                norm_errors.append(
-                    ((output_recon-y_recon)**2).sum(axis=(0,-1))
-                )
+                norm_frames[iteration-1] = (y_recon**2).sum(axis=(0,-1))
+                norm_errors[iteration-1] \
+                    = ((output_recon-y_recon)**2).sum(axis=(0,-1))
 
                 if FNAME and not dict_to_save:
-                    x_np = IVDataset.unstack_x(x_stacked.numpy())
-                    x_recon = np.arctanh(x_np)
-                    x_recon = loader.dataset.std_x*x_recon + loader.dataset.mean_x
+                    x_np = IVDataset.unstack_x(
+                        loader.dataset.std_x*x_stacked.numpy()
+                        + loader.dataset.mean_x
+                    )
+                    # x_recon = np.arctanh(x_np)
+                    # x_recon = loader.dataset.std_x*x_np \
+                    #     + loader.dataset.mean_x
+                    x_recon = x_np
                     dict_to_save = {'IV_free':y_recon,
                                     'IV_room':x_recon,
                                     'IV_estimated':output_recon,
