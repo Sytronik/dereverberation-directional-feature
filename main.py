@@ -115,9 +115,11 @@ if __name__ == '__main__':
                                 metadata['N_freq'],
                                 metadata['L_frame'],
                                 metadata['L_hop'],
-                                DIR_DATA+'/MLP_19_17x3_14400/MLP_29.pt'
+                                F_MODEL_STATE='MLP_26.pt'
                                 )
-            trainer.eval(
-                FNAME=os.path.join(DIR_DATA,
-                                   '/MLP_19_17x3_14400/MLP_result.mat')
+
+            loss_test, snr_test_dB = trainer.eval(
+                FNAME='MLP_result_26_test.mat'
             )
+            print('\nTest Loss: {:.2e}'.format(loss_test),end='\t')
+            print('Test SNR (dB): {:.2e}'.format(snr_test_dB))
