@@ -100,22 +100,29 @@ for ii = 1:N_IV
     colorbar
     title([titles{ii} ' $|a_{00}(\tau,f)|^2$ (dB)'], 'Interpreter', 'latex')
 end
+fig = gcf;
+fname = ['MLP_pReLU_result_26_test_' num2str(N_IV)];
+set(fig,'renderer','painter');
+set(fig,'Position',[50 50 1800 800]);
+print('-dpng' , '-r300' , fname)
+saveas(fig,fname,'fig')
 
-n=2;
-figure(2);clf;
-for ii = 1:N_IV
-    ax=subplot(N_IV,1,ii);
-    board = repmat((checkerboard(n, ceil(N_freq/2/n), ceil(x_max/2/n))>0.5)*0.2+0.8, [1 1 3]);
-    board = board(1:N_freq, 1:x_max, :);
-    image(x_lim, y_axis, board);
-    hold on;
-    image(x_axis{ii}, y_axis, IVs{ii}(:,:,1:3), ...
-          'AlphaData', IVs{ii}(:,:,4), 'AlphaDataMapping', 'scaled');
-    ax.YDir = 'normal';
-    xlim(x_lim);
-    xlabel('frame index');
-    ylabel('frequency (Hz)');
-    title([titles{ii} ' $\hat\mathbf{I}(\tau,f)$ \& $|a_{00}(\tau,f)|^2$ (dB)'], 'Interpreter', 'latex');
-    hold off;
-end
+% n=2;
+% figure(2);clf;
+% for ii = 1:N_IV
+%     ax=subplot(N_IV,1,ii);
+%     board = repmat((checkerboard(n, ceil(N_freq/2/n), ceil(x_max/2/n))>0.5)*0.2+0.8, [1 1 3]);
+%     board = board(1:N_freq, 1:x_max, :);
+%     image(x_lim, y_axis, board);
+%     hold on;
+%     image(x_axis{ii}, y_axis, IVs{ii}(:,:,1:3), ...
+%           'AlphaData', IVs{ii}(:,:,4), 'AlphaDataMapping', 'scaled');
+%     ax.YDir = 'normal';
+%     xlim(x_lim);
+%     xlabel('frame index');
+%     ylabel('frequency (Hz)');
+%     title([titles{ii} ' $\hat\mathbf{I}(\tau,f)$ \& $|a_{00}(\tau,f)|^2$ (dB)'], 'Interpreter', 'latex');
+%     hold off;
+% end
 clear;
+close all;
