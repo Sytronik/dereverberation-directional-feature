@@ -8,6 +8,7 @@ from torch import nn
 from torch.utils.data import Dataset, DataLoader
 
 import os
+from glob import glob
 import gc
 import sys
 import copy
@@ -44,59 +45,70 @@ class IVDataset(Dataset):
     L_cut_x = 1
     L_cut_y = 1
 
-    def __init__(self, DIR:str, XNAME:str, YNAME:str, N_data=-1):
+    def __init__(self, DIR:str, XNAME:str, YNAME:str,
+                 N_data=-1, normalize=True):
         self.DIR = DIR
         self.XNAME = XNAME
         self.YNAME = YNAME
+        self.normalize = normalize
 
-        self.all_files = []
-        len = 0
-        for file in os.scandir(DIR):
-            if file.is_file() and file.name.endswith('.npy') and \
-                    file.name != 'metadata.npy':
-                self.all_files.append(file.path)
-                len += 1
-            if len == N_data:
-                break
+        # for file in os.scandir(DIR):
+        self.all_files = glob(os.path.join(DIR,'*.npy'))
+        if N_data != -1:
+            self.all_files = self.all_files[:N_data]
+        for file in self.all_files[:]:
+            if file.endswith('metadata.npy'):
+                self.all_files.remove(file)
 
-        # Calculate summation & no. total frame (parallel)
-        N_CORES = mp.cpu_count()
-        pool = mp.Pool(N_CORES)
-        result = pool.map(IVDataset.sum_files,
-                          [(file, XNAME, YNAME)
-                           for file in self.all_files])
+        # Calculate summation & no. of total frames (parallel)
+        if normalize:
+            N_CORES = mp.cpu_count()
+            pool = mp.Pool(N_CORES)
+            result = pool.map(IVDataset.sum_files,
+                              [(file, XNAME, YNAME)
+                               for file in self.all_files])
 
-        sum_x = np.sum([res[0] for res in result], axis=0)[np.newaxis,:,:,:]
-        N_frame_x = np.sum([res[1] for res in result])
-        sum_y = np.sum([res[2] for res in result], axis=0)[:,np.newaxis,:]
-        N_frame_y = np.sum([res[3] for res in result])
-
-        # mean
-        self.mean_x = sum_x / N_frame_x
-        self.mean_y = sum_y / N_frame_y
-        # self.mean_x = (sum_x+sum_y) / (N_frame_x + N_frame_y)
-        # self.mean_y = (sum_x+sum_y) / (N_frame_x + N_frame_y)
-
-        # Calculate Standard Deviation
-        result = pool.map(IVDataset.sum_dev_files,
-                          [(file, XNAME, YNAME, self.mean_x, self.mean_y)
-                           for file in self.all_files])
-
-        pool.close()
-
-        sum_dev_x = np.sum([res[0] for res in result],
-                           axis=0
+            sum_x = np.sum([res[0] for res in result], axis=0
                            )[np.newaxis,:,:,:]
-        sum_dev_y = np.sum([res[1] for res in result], axis=0)[:,np.newaxis,:]
+            N_frame_x = np.sum([res[1] for res in result])
+            sum_y = np.sum([res[2] for res in result], axis=0
+                           )[:,np.newaxis,:]
+            N_frame_y = np.sum([res[3] for res in result])
 
-        self.std_x = np.sqrt(sum_dev_x / N_frame_x + 1e-5)
-        self.std_y = np.sqrt(sum_dev_y / N_frame_y + 1e-5)
-        # self.std_x = np.sqrt((sum_dev_x + sum_dev_y)/(N_frame_x + N_frame_y)
-        #                      + 1e-5)
-        # self.std_y = np.sqrt((sum_dev_x + sum_dev_y)/(N_frame_x + N_frame_y)
-        #                      + 1e-5)
+            # mean
+            self.mean_x = sum_x / N_frame_x
+            self.mean_y = sum_y / N_frame_y
+            # self.mean_x = (sum_x+sum_y) / (N_frame_x + N_frame_y)
+            # self.mean_y = (sum_x+sum_y) / (N_frame_x + N_frame_y)
 
-        print('{} data prepared from {}.'.format(len, os.path.basename(DIR)))
+            # Calculate Standard Deviation
+            result = pool.map(IVDataset.sum_dev_files,
+                              [(file, XNAME, YNAME, self.mean_x, self.mean_y)
+                               for file in self.all_files])
+
+            pool.close()
+
+            sum_dev_x = np.sum([res[0] for res in result], axis=0
+                               )[np.newaxis,:,:,:]
+            sum_dev_y = np.sum([res[1] for res in result], axis=0
+                               )[:,np.newaxis,:]
+
+            self.std_x = np.sqrt(sum_dev_x / N_frame_x + 1e-5)
+            self.std_y = np.sqrt(sum_dev_y / N_frame_y + 1e-5)
+            # self.std_x = np.sqrt((sum_dev_x + sum_dev_y)
+            #                      /(N_frame_x + N_frame_y)
+            #                      + 1e-5)
+            # self.std_y = np.sqrt((sum_dev_x + sum_dev_y)
+            #                      /(N_frame_x + N_frame_y)
+            #                      + 1e-5)
+        else:
+            self.mean_x = 0.
+            self.mean_y = 0.
+            self.std_x = 1.
+            self.std_y = 1.
+
+        print('{} data prepared from {}.'.format(len(self),
+                                                 os.path.basename(DIR)))
 
     @classmethod
     def sum_files(cls, tup):
@@ -109,6 +121,7 @@ class IVDataset(Dataset):
             pdb.set_trace()
 
         x_stacked = cls.stack_x(x, L_trunc=y.shape[1])
+
         return (x_stacked.sum(axis=0), x_stacked.shape[0],
                 y.sum(axis=1), y.shape[1],
                 )
@@ -121,9 +134,17 @@ class IVDataset(Dataset):
         y = data_dict[YNAME]
 
         x_stacked = cls.stack_x(x, L_trunc=y.shape[1])
+
         return (((x_stacked - mean_x)**2).sum(axis=0),
                 ((y - mean_y)**2).sum(axis=1),
                 )
+
+    def do_normalize(self, mean_x, mean_y, std_x, std_y):
+        self.normalize = True
+        self.mean_x = mean_x
+        self.mean_y = mean_y
+        self.std_x = std_x
+        self.std_y = std_y
 
     def __len__(self):
         return len(self.all_files)
@@ -134,18 +155,15 @@ class IVDataset(Dataset):
         x = data_dict[self.XNAME]
         y = data_dict[self.YNAME]
 
-        # Make groups of the frames of x and stack the groups
-        # x_stacked: (time_length) x (N_freq) x (L_cut_x) x (XYZ0 channel)
-        # y: (time_length) x (N_freq) x 1 x (XYZ0 channel)
-        # Normalize
-        # x = (x - self.mean_x)/self.std_x
-        y = (y - self.mean_y)/self.std_y
+        # Stack & Normalize
         x_stacked = IVDataset.stack_x(x, L_trunc=y.shape[1])
-        x_stacked = (x_stacked - self.mean_x)/self.std_x
+        if self.normalize:
+            x_stacked = (x_stacked - self.mean_x)/self.std_x
+            y = (y - self.mean_y)/self.std_y
         y_stacked = IVDataset.stack_y(y)
 
-        x_stacked = torch.tensor(x_stacked, dtype=torch.float)
-        y_stacked = torch.tensor(y_stacked, dtype=torch.float)
+        x_stacked = torch.from_numpy(x_stacked).float()
+        y_stacked = torch.from_numpy(y_stacked).float()
         sample = {'x_stacked': x_stacked, 'y_stacked': y_stacked}
 
         return sample
@@ -244,19 +262,22 @@ class MLP(nn.Module):
         self.layer1 = nn.Sequential(
             nn.Linear(n_input, n_hidden, bias=False),
             nn.BatchNorm1d(n_hidden, momentum=0.1),
-            nn.ReLU(inplace=True),
+            # nn.ReLU(inplace=True),
+            nn.PReLU(),
         )
         self.layer2 = nn.Sequential(
             nn.Dropout(p=0.5),
             nn.Linear(n_hidden, n_hidden),
             # nn.BatchNorm1d(n_hidden, momentum=0.1),
-            nn.ReLU(inplace=True),
+            # nn.ReLU(inplace=True),
+            nn.PReLU(),
         )
         self.layer3 = nn.Sequential(
             nn.Dropout(p=0.5),
             nn.Linear(n_hidden, n_hidden),
             # nn.BatchNorm1d(n_hidden),
-            nn.ReLU(inplace=True),
+            # nn.ReLU(inplace=True),
+            nn.PReLU(),
         )
         self.output = nn.Sequential(
             nn.Dropout(p=0.5),
@@ -296,8 +317,16 @@ class NNTrainer():
         n_output = N_freq*4
 
         # Test Dataset
+        data = IVDataset(self.DIR_TRAIN, self.XNAME, self.YNAME,
+                         N_data=NNTrainer.N_data)
+
         data_test = IVDataset(DIR_TEST, XNAME, YNAME,
-                              N_data=NNTrainer.N_data/4)
+                              N_data=int(NNTrainer.N_data/4),
+                              normalize=False
+                              )
+        data_test.do_normalize(data.mean_x, data.mean_y,
+                               data.std_x, data.std_y)
+
         self.loader_test = DataLoader(data_test,
                                       batch_size=1,
                                       shuffle=False,
@@ -309,21 +338,18 @@ class NNTrainer():
         self.model = nn.DataParallel(MLP(n_input, n_hidden, n_output),
                                      output_device=1,
                                      ).cuda()
-        if F_MODEL_STATE != '':
+        if F_MODEL_STATE:
             self.model.load_state_dict(torch.load(F_MODEL_STATE))
 
         # MSE Loss and Adam Optimizer
         self.criterion = nn.MSELoss(reduction='sum')
         self.optimizer = torch.optim.Adam(self.model.parameters(),
                                           lr=NNTrainer.learning_rate,
-                                          weight_decay=1e-5,
+                                          weight_decay=0,
                                           )
 
     def train(self):
-        data = IVDataset(self.DIR_TRAIN, self.XNAME, self.YNAME,
-                         N_data=NNTrainer.N_data)
-        data_train, data_valid = IVDataset.split(data, (0.7, -1))
-        del data
+        data_train, data_valid = IVDataset.split(self.data, (0.7, -1))
 
         loader_train = DataLoader(data_train,
                                   batch_size=NNTrainer.batch_size,
@@ -331,7 +357,6 @@ class NNTrainer():
                                   collate_fn=IVDataset.my_collate,
                                   num_workers=mp.cpu_count(),
                                   )
-
         loader_valid = DataLoader(data_valid,
                                   batch_size=1,
                                   shuffle=False,
@@ -386,7 +411,7 @@ class NNTrainer():
             loss_valid[epoch], snr_valid_dB[epoch] \
                 = self.eval(loader_valid,
                             FNAME='MLP_result_{}.mat'.format(epoch))
-            print('Validation Loss: {:.2e}'.format(loss_valid[epoch]))
+            print('Validation Loss: {:.2e}'.format(loss_valid[epoch]),end='\t')
             print('Validation SNR (dB): {:.2e}'.format(snr_valid_dB[epoch]))
 
             scio.savemat('MLP_loss_{}.mat'.format(epoch),
