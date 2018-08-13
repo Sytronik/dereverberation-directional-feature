@@ -1,10 +1,10 @@
 % final_epoch = 60
 loss_struct{1} = load('MLP_ReLU_loss_99.mat');
-loss_struct{2} = load('MLP_pReLU_loss_39.mat');
+% loss_struct{2} = load('MLP_pReLU_loss_39.mat');
 % load(['MLP_result_' num2str(final_epoch) '.mat'])
 % clear 'IV_free' 'IV_room' 'IV_estimated'
 
-epochs = 1:40
+epochs = 1:100
 % if sum(loss_train==0)>0
 %     epochs = 1:min(find(loss_train==0))-1;
 % else
@@ -43,7 +43,7 @@ ylabel('SNR (dB)');
 legend('ReLU (validation set)', 'pReLU(validation set)','Location','southeast');
 
 fig = gcf;
-fname = 'loss_comp_ReLU_pReLU';
+fname = 'MLP_ReLU_loss_99';
 set(fig,'renderer','painter');
 set(fig,'Position',[50 50 1000 700]);
 print('-dpng' , '-r300' , fname)

@@ -90,8 +90,8 @@ class HyperParameters(NamedTuple):
     n_hidden = 0
     n_output = 0
 
-    def for_MLP() -> Tuple:
-        return (n_input, n_hidden, n_output)
+    def for_MLP(self) -> Tuple:
+        return (self.n_input, self.n_hidden, self.n_output)
 
     # scheduler step_size, gamma
     # Adam weight_decay

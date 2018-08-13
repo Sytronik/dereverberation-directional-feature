@@ -32,7 +32,7 @@ class SFTData(NamedTuple):
 
 
 class PreProcessor:
-    def __init__(self, RIR, Yenc, sftdata:SFTData, L_WIN_MS=20.):
+    def __init__(self, RIR, Ys, sftdata:SFTData, L_WIN_MS=20.):
         # Bug Fix
         np.fft.restore_all()
         # From Parameters
@@ -243,7 +243,7 @@ class PreProcessor:
     def calc_intensity(cls, Asv:NDARRAY,
                        Wnv:NDARRAY, Wpv:NDARRAY, Vv:NDARRAY) -> NDARRAY:
         xp = cp.get_array_module(Asv)
-        
+
         aug1 = cls.seltriag(Asv, 1, (0, 0))
         aug2 = cls.seltriag(Wpv, 1, (1, -1))*cls.seltriag(Asv, 1, (1, -1)) \
             - cls.seltriag(Wnv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, -1))
