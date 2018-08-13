@@ -300,7 +300,7 @@ class NNTrainer():
 
                 avg_loss += loss.data.cpu().item()*N_frame
                 printProgress(iteration, len(loader),
-                              f"{'eval':^9}: {loss.data.item():.1e}")
+                              f"{'eval':<9}: {loss.data.item():.1e}")
 
             avg_loss /= N_total_frame
             norm_frames = np.concatenate(norm_frames)

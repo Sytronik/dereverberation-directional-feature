@@ -8,13 +8,13 @@ file = sys.argv[1]
 if not file.endswith('.pt'):
     file += '.pt'
 
-a = torch.load(file, map_location=torch.device('cpu'))
+state_dict = torch.load(file, map_location=torch.device('cpu'))
 
-a_np = {}
+dict_np = {key.replace('.', '_'):value.numpy()
+           for key, value in state_dict.items()}
 
-for key, value in a.items():
-    key = key.replace('.', '_')
-    a_np[key] = value.numpy()
-    print('{}\t\t: ndarray of shape {}'.format(key, a_np[key].shape))
+length = max([len(k) for k in dict_np.keys()])
+for key, value in dict_np:
+    print(f'{key:<{length}}: ndarray of shape {value.shape}')
 
-scio.savemat(file.replace('.pt', '.mat'), a_np)
+scio.savemat(file.replace('.pt', '.mat'), dict_np)
