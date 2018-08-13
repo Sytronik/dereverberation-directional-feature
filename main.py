@@ -37,7 +37,7 @@ if __name__ == '__main__':
 
         # RIR Data
         transfer_dict = scio.loadmat(os.path.join(DIR_DATA, 'transfer.mat'),
-                           variable_names=('RIR', 'Ys'))
+                                     variable_names=('RIR', 'Ys'))
         RIR = transfer_dict['RIR'].transpose((2, 0, 1))
         Ys_original = transfer_dict['Ys']
         Ys = np.zeros((Ys_original.size, Ys_original[0].size), dtype=complex)
@@ -46,9 +46,9 @@ if __name__ == '__main__':
 
         # SFT Data
         sft_dict = scio.loadmat(os.path.join(DIR_DATA, 'sft_data.mat'),
-                               variable_names=('bEQspec', 'Yenc',
-                                               'Wnv', 'Wpv', 'Vv'),
-                               squeeze_me=True)
+                                variable_names=('bEQspec', 'Yenc',
+                                                'Wnv', 'Wpv', 'Vv'),
+                                squeeze_me=True)
 
         bEQspec = sft_dict['bEQspec'].T
         Yenc = sft_dict['Yenc'].T

@@ -32,7 +32,7 @@ class SFTData(NamedTuple):
 
 
 class PreProcessor:
-    def __init__(self, RIR, Yenc, sftdata:SFTData, L_WIN_MS=20.):
+    def __init__(self, RIR, Ys, sftdata:SFTData, L_WIN_MS=20.):
         # Bug Fix
         np.fft.restore_all()
         # From Parameters
