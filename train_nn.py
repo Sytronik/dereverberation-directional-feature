@@ -188,9 +188,9 @@ class NNTrainer():
                 if epoch == 0:
                     N_total_frame += N_frame
 
-                input = x_stacked.view(N_frame, -1).cuda(device=0)
+                _input = x_stacked.view(N_frame, -1).cuda(device=0)
                 # ===================forward=====================
-                output = self.model(input)
+                output = self.model(_input)
                 y_cuda = y_stacked.view(N_frame, -1).cuda(device=1)
                 loss = self.criterion(output, y_cuda)/N_frame
                 loss_train[epoch] += loss.data.cpu().item()*N_frame
@@ -239,8 +239,8 @@ class NNTrainer():
     def eval(self, loader:DataLoader=None, FNAME='') -> Tuple[float, float]:
         if not loader:
             loader = self.loader_test
-        avg_loss = 0.
-        avg_snr = 0.
+        avg_loss:float = 0
+        avg_snr:float = 0
         iteration = 0
         N_total_frame = 0
         norm_frames = [None]*len(loader)

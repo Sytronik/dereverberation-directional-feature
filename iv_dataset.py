@@ -32,17 +32,17 @@ class IVDataset(Dataset):
         self.all_files = glob(os.path.join(DIR,'*.npy'))
         if N_data != -1:
             self.all_files = self.all_files[:N_data]
-        for file in self.all_files[:]:
-            if file.endswith('metadata.npy'):
-                self.all_files.remove(file)
+        for fname in self.all_files[:]:
+            if fname.endswith('metadata.npy'):
+                self.all_files.remove(fname)
 
         # Calculate summation & no. of total frames (parallel)
         if normalize:
             N_CORES = mp.cpu_count()
             pool = mp.Pool(N_CORES)
             result = pool.map(IVDataset.sum_files,
-                              [(file, XNAME, YNAME)
-                               for file in self.all_files])
+                              [(fname, XNAME, YNAME)
+                               for fname in self.all_files])
 
             sum_x = np.sum([res[0] for res in result], axis=0
                            )[np.newaxis,:,:,:]
@@ -59,8 +59,8 @@ class IVDataset(Dataset):
 
             # Calculate Standard Deviation
             result = pool.map(IVDataset.sum_dev_files,
-                              [(file, XNAME, YNAME, self.mean_x, self.mean_y)
-                               for file in self.all_files])
+                              [(fname, XNAME, YNAME, self.mean_x, self.mean_y)
+                               for fname in self.all_files])
 
             pool.close()
 
@@ -78,18 +78,18 @@ class IVDataset(Dataset):
             #                      /(N_frame_x + N_frame_y)
             #                      + 1e-5)
         else:
-            self.mean_x = 0.
-            self.mean_y = 0.
-            self.std_x = 1.
-            self.std_y = 1.
+            self.mean_x:float = 0
+            self.mean_y:float = 0
+            self.std_x:float = 1
+            self.std_y:float = 1
 
         print(f'{len(self)} data prepared from {os.path.basename(DIR)}.')
 
     @classmethod
     def sum_files(cls, tup:Tuple[str, str, str]) -> Tuple[Any, int, Any, int]:
-        file, XNAME, YNAME = tup
+        fname, XNAME, YNAME = tup
         try:
-            data_dict = np.load(file).item()
+            data_dict = np.load(fname).item()
             x = data_dict[XNAME]
             y = data_dict[YNAME]
         except:  # noqa: E722
@@ -104,8 +104,8 @@ class IVDataset(Dataset):
     @classmethod
     def sum_dev_files(cls,
                       tup:Tuple[str, str, str, Any, Any]) -> Tuple[Any, Any]:
-        file, XNAME, YNAME, mean_x, mean_y = tup
-        data_dict = np.load(file).item()
+        fname, XNAME, YNAME, mean_x, mean_y = tup
+        data_dict = np.load(fname).item()
         x = data_dict[XNAME]
         y = data_dict[YNAME]
 

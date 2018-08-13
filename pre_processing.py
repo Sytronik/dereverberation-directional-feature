@@ -17,15 +17,15 @@ import multiprocessing as mp
 import logging  # noqa: F401
 
 N_CUDA_DEV = 4
-NDARRAY = TypeVar('NDARRAY', np.ndarray, cp.ndarray)
+NDArray = TypeVar('NDArray', np.ndarray, cp.ndarray)
 
 
 class SFTData(NamedTuple):
-    bEQspec:NDARRAY
-    Yenc:NDARRAY
-    Wnv:NDARRAY
-    Wpv:NDARRAY
-    Vv:NDARRAY
+    bEQspec:NDArray
+    Yenc:NDArray
+    Wnv:NDArray
+    Wpv:NDArray
+    Vv:NDArray
 
     def get_triags(self):
         return (self.Wnv, self.Wpv, self.Vv)
@@ -75,14 +75,14 @@ class PreProcessor:
             self.all_files.extend(files)
 
         # Main Process
-        for file in self.all_files:
+        for fname in self.all_files:
             if self.N_wavfile < IDX_START-1:
                 self.N_wavfile += 1
                 continue
 
             # File Open (& Resample)
             if self.Fs == 0:
-                data, self.Fs = sf.read(file)
+                data, self.Fs = sf.read(fname)
                 self.L_frame = self.Fs*self.L_WIN_MS//1000
                 self.N_fft = self.L_frame
                 if self.N_fft % 2 == 0:
@@ -94,9 +94,9 @@ class PreProcessor:
                 self.win = scsig.hamming(self.L_frame, sym=False)
                 self.print_save_info()
             else:
-                data, _ = sf.read(file)
+                data, _ = sf.read(fname)
 
-            print(file)
+            print(fname)
 
             # Data length
             L_data_free = data.shape[0]
@@ -217,7 +217,7 @@ class PreProcessor:
         np.save(os.path.join(self.DIR_IV, 'metadata.npy'), metadata)
 
     @staticmethod
-    def seltriag(Ain:NDARRAY, nrord:int, shft:Tuple[int, int]) -> NDARRAY:
+    def seltriag(Ain:NDArray, nrord:int, shft:Tuple[int, int]) -> NDArray:
         xp = cp.get_array_module(Ain)
         if Ain.ndim == 1:
             N_freq = 1
@@ -240,10 +240,10 @@ class PreProcessor:
         return Aout
 
     @classmethod
-    def calc_intensity(cls, Asv:NDARRAY,
-                       Wnv:NDARRAY, Wpv:NDARRAY, Vv:NDARRAY) -> NDARRAY:
+    def calc_intensity(cls, Asv:NDArray,
+                       Wnv:NDArray, Wpv:NDArray, Vv:NDArray) -> NDArray:
         xp = cp.get_array_module(Asv)
-        
+
         aug1 = cls.seltriag(Asv, 1, (0, 0))
         aug2 = cls.seltriag(Wpv, 1, (1, -1))*cls.seltriag(Asv, 1, (1, -1)) \
             - cls.seltriag(Wnv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, -1))
