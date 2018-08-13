@@ -36,10 +36,10 @@ if __name__ == '__main__':
         DIR_WAVFILE += KIND_DATA
 
         # RIR Data
-        transfer_mat = scio.loadmat(os.path.join(DIR_DATA, 'transfer.mat'),
+        transfer_dict = scio.loadmat(os.path.join(DIR_DATA, 'transfer.mat'),
                            variable_names=('RIR', 'Ys'))
-        RIR = transfer_mat['RIR'].transpose((2, 0, 1))
-        Ys_original = transfer_mat['Ys']
+        RIR = transfer_dict['RIR'].transpose((2, 0, 1))
+        Ys_original = transfer_dict['Ys']
         Ys = np.zeros((Ys_original.size, Ys_original[0].size), dtype=complex)
         for ii in range(Ys_original.size):
             Ys[ii] = Ys_original[ii]

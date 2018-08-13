@@ -18,7 +18,7 @@ import logging  # noqa: F401
 
 N_CUDA_DEV = 4
 NDARRAY = TypeVar('NDARRAY', np.ndarray, cp.ndarray)
-T = TypeVar('T')
+
 
 class SFTData(NamedTuple):
     bEQspec:NDARRAY
@@ -240,7 +240,10 @@ class PreProcessor:
         return Aout
 
     @classmethod
-    def calc_intensity(cls, Asv, Wnv, Wpv, Vv) -> cp.ndarray:
+    def calc_intensity(cls, Asv:NDARRAY,
+                       Wnv:NDARRAY, Wpv:NDARRAY, Vv:NDARRAY) -> NDARRAY:
+        xp = cp.get_array_module(Asv)
+        
         aug1 = cls.seltriag(Asv, 1, (0, 0))
         aug2 = cls.seltriag(Wpv, 1, (1, -1))*cls.seltriag(Asv, 1, (1, -1)) \
             - cls.seltriag(Wnv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, -1))
@@ -249,11 +252,11 @@ class PreProcessor:
         aug4 = cls.seltriag(Vv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, 0)) \
             + cls.seltriag(Vv, 1, (1, 0))*cls.seltriag(Asv, 1, (1, 0))
 
-        dx = cp.sum(aug1.conj()*(aug2+aug3)/2, axis=0)
-        dy = cp.sum(aug1.conj()*(aug2-aug3)/2j, axis=0)
-        dz = cp.sum(aug1.conj()*aug4, axis=0)
+        dx = xp.sum(aug1.conj()*(aug2+aug3)/2, axis=0)
+        dy = xp.sum(aug1.conj()*(aug2-aug3)/2j, axis=0)
+        dz = xp.sum(aug1.conj()*aug4, axis=0)
 
-        return 0.5*cp.real(cp.stack((dx, dy, dz), axis=1))
+        return 0.5*xp.real(xp.stack((dx, dy, dz), axis=1))
 
 
 if __name__ == '__main__':

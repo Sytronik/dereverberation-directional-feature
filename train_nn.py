@@ -5,31 +5,26 @@ import scipy.io as scio
 
 import torch
 from torch import nn
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 
-from typing import Tuple, Any
-
-import os
-from glob import glob
 import gc
 import sys
-import copy
 import time
 import multiprocessing as mp
 
+from typing import NamedTuple, Tuple
 
-TensorArray = Union[torch.Tensor, np.ndarray]
+from iv_dataset import IVDataset
 
 
 # Progress Bar
 def printProgress(iteration:int, total:int,
                   prefix='', suffix='',
                   decimals=1, barLength=57):
-    formatStr = "{0:." + str(decimals) + "f}"
-    percent = formatStr.format(100 * iteration / total)
+    percent = f'{100 * iteration / total:.{decimals}f}'
     filledLength = barLength * iteration // total
     bar = '#' * filledLength + '-' * (barLength - filledLength)
-    sys.stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percent, '%', suffix))
+    sys.stdout.write(f'\r{prefix} |{bar}| {percent}% {suffix}')
     if iteration == total:
         sys.stdout.write('\n')
     sys.stdout.flush()
@@ -44,220 +39,6 @@ def print_cuda_tensors():
                 print(type(obj), obj.size(), obj.device)
         finally:
             pass
-
-
-class IVDataset(Dataset):
-    L_cut_x = 1
-    L_cut_y = 1
-
-    def __init__(self, DIR:str, XNAME:str, YNAME:str,
-                 N_data=-1, normalize=True):
-        self.DIR = DIR
-        self.XNAME = XNAME
-        self.YNAME = YNAME
-        self.normalize = normalize
-
-        # for file in os.scandir(DIR):
-        self.all_files = glob(os.path.join(DIR,'*.npy'))
-        if N_data != -1:
-            self.all_files = self.all_files[:N_data]
-        for file in self.all_files[:]:
-            if file.endswith('metadata.npy'):
-                self.all_files.remove(file)
-
-        # Calculate summation & no. of total frames (parallel)
-        if normalize:
-            N_CORES = mp.cpu_count()
-            pool = mp.Pool(N_CORES)
-            result = pool.map(IVDataset.sum_files,
-                              [(file, XNAME, YNAME)
-                               for file in self.all_files])
-
-            sum_x = np.sum([res[0] for res in result], axis=0
-                           )[np.newaxis,:,:,:]
-            N_frame_x = np.sum([res[1] for res in result])
-            sum_y = np.sum([res[2] for res in result], axis=0
-                           )[:,np.newaxis,:]
-            N_frame_y = np.sum([res[3] for res in result])
-
-            # mean
-            self.mean_x = sum_x / N_frame_x
-            self.mean_y = sum_y / N_frame_y
-            # self.mean_x = (sum_x+sum_y) / (N_frame_x + N_frame_y)
-            # self.mean_y = (sum_x+sum_y) / (N_frame_x + N_frame_y)
-
-            # Calculate Standard Deviation
-            result = pool.map(IVDataset.sum_dev_files,
-                              [(file, XNAME, YNAME, self.mean_x, self.mean_y)
-                               for file in self.all_files])
-
-            pool.close()
-
-            sum_dev_x = np.sum([res[0] for res in result], axis=0
-                               )[np.newaxis,:,:,:]
-            sum_dev_y = np.sum([res[1] for res in result], axis=0
-                               )[:,np.newaxis,:]
-
-            self.std_x = np.sqrt(sum_dev_x / N_frame_x + 1e-5)
-            self.std_y = np.sqrt(sum_dev_y / N_frame_y + 1e-5)
-            # self.std_x = np.sqrt((sum_dev_x + sum_dev_y)
-            #                      /(N_frame_x + N_frame_y)
-            #                      + 1e-5)
-            # self.std_y = np.sqrt((sum_dev_x + sum_dev_y)
-            #                      /(N_frame_x + N_frame_y)
-            #                      + 1e-5)
-        else:
-            self.mean_x = 0.
-            self.mean_y = 0.
-            self.std_x = 1.
-            self.std_y = 1.
-
-        print(f'{len(self)} data prepared from {os.path.basename(DIR)}.')
-
-    @classmethod
-    def sum_files(cls, tup:Tuple[str, str, str]) -> Tuple[Any, int, Any, int]:
-        file, XNAME, YNAME = tup
-        try:
-            data_dict = np.load(file).item()
-            x = data_dict[XNAME]
-            y = data_dict[YNAME]
-        except:  # noqa: E722
-            pdb.set_trace()
-
-        x_stacked = cls.stack_x(x, L_trunc=y.shape[1])
-
-        return (x_stacked.sum(axis=0), x_stacked.shape[0],
-                y.sum(axis=1), y.shape[1],
-                )
-
-    @classmethod
-    def sum_dev_files(cls,
-                      tup:Tuple[str, str, str, Any, Any]) -> Tuple[Any, Any]:
-        file, XNAME, YNAME, mean_x, mean_y = tup
-        data_dict = np.load(file).item()
-        x = data_dict[XNAME]
-        y = data_dict[YNAME]
-
-        x_stacked = cls.stack_x(x, L_trunc=y.shape[1])
-
-        return (((x_stacked - mean_x)**2).sum(axis=0),
-                ((y - mean_y)**2).sum(axis=1),
-                )
-
-    def do_normalize(self, mean_x, mean_y, std_x, std_y):
-        self.normalize = True
-        self.mean_x = mean_x
-        self.mean_y = mean_y
-        self.std_x = std_x
-        self.std_y = std_y
-
-    def __len__(self):
-        return len(self.all_files)
-
-    def __getitem__(self, idx:int):
-        # File Open
-        data_dict = np.load(self.all_files[idx]).item()
-        x = data_dict[self.XNAME]
-        y = data_dict[self.YNAME]
-
-        # Stack & Normalize
-        x_stacked = IVDataset.stack_x(x, L_trunc=y.shape[1])
-        if self.normalize:
-            x_stacked = (x_stacked - self.mean_x)/self.std_x
-            y = (y - self.mean_y)/self.std_y
-        y_stacked = IVDataset.stack_y(y)
-
-        x_stacked = torch.from_numpy(x_stacked).float()
-        y_stacked = torch.from_numpy(y_stacked).float()
-        sample = {'x_stacked': x_stacked, 'y_stacked': y_stacked}
-
-        return sample
-
-    # Make groups of the frames of x and stack the groups
-    # x_stacked: (time_length) x (N_freq) x (L_cut_x) x (XYZ0 channel)
-    @classmethod
-    def stack_x(cls, x:np.ndarray, L_trunc=0) -> np.ndarray:
-        if x.ndim != 3:
-            raise Exception('Dimension Mismatch')
-        if cls.L_cut_x == 1:
-            return x
-
-        L0, L1, L2 = x.shape
-
-        half = cls.L_cut_x//2
-
-        x = np.concatenate((np.zeros((L0, half, L2)),
-                            x,
-                            np.zeros((L0, half, L2))),
-                           axis=1)
-
-        if L_trunc != 0:
-            L1 = L_trunc
-
-        return np.stack([x[:, ii - half:ii + half + 1, :]
-                         for ii in range(half, half + L1)
-                         ])
-
-    @classmethod
-    def stack_y(cls, y:np.ndarray) -> np.ndarray:
-        if y.ndim != 3:
-            raise Exception('Dimension Mismatch')
-
-        return y.transpose((1, 0, 2))[:,:,np.newaxis,:]
-
-    @classmethod
-    def unstack_x(cls, x:TensorArray) -> TensorArray:
-        if type(x) == torch.Tensor:
-            if x.dim() != 4 or x.size(2) <= cls.L_cut_x//2:
-                raise Exception('Dimension/Size Mismatch')
-            x = x[:,:,cls.L_cut_x//2,:].squeeze()
-            return x.transpose(1, 0)
-        else:
-            if x.ndim != 4 or x.shape[2] <= cls.L_cut_x//2:
-                raise Exception('Dimension/Size Mismatch')
-            x = x[:,:,cls.L_cut_x//2,:].squeeze()
-            return x.transpose((1, 0, 2))
-
-    @classmethod
-    def unstack_y(cls, y:TensorArray) -> TensorArray:
-        if type(y) == torch.Tensor:
-            if y.dim() != 4 or y.size(2) != 1:
-                raise Exception('Dimension/Size Mismatch')
-            return y.squeeze().transpose(1, 0)
-        else:
-            if y.ndim != 4 or y.shape[2] != 1:
-                raise Exception('Dimension/Size Mismatch')
-            return y.squeeze().transpose((1, 0, 2))
-
-    @staticmethod
-    def my_collate(batch):
-        x_stacked = torch.cat([item['x_stacked'] for item in batch])
-        y_stacked = torch.cat([item['y_stacked'] for item in batch])
-        return [x_stacked, y_stacked]
-
-    @classmethod
-    def split(cls, a, ratio:Tuple):
-        if type(a) != cls:
-            raise TypeError
-        n_split = len(ratio)
-        ratio = np.array(ratio)
-        mask = (ratio == -1)
-        ratio[np.where(mask)] = 0
-        if mask.sum() > 1:
-            raise Exception("Only one element of the parameter 'ratio' "
-                            "can have the value of -1")
-        if ratio.sum() >= 1:
-            raise Exception('The sum of ratio must be 1')
-        if mask.sum() == 1:
-            ratio[np.where(mask)] = 1 - ratio.sum()
-
-        idx_data = np.cumsum(np.insert(ratio, 0, 0) * len(a), dtype=int)
-        result = [copy.copy(a) for ii in range(n_split)]
-        all_f_per = np.random.permutation(a.all_files)
-        for ii in range(n_split):
-            result[ii].all_files = all_f_per[idx_data[ii]:idx_data[ii + 1]]
-
-        return result
 
 
 class MLP(nn.Module):
@@ -298,13 +79,29 @@ class MLP(nn.Module):
         return x
 
 
-class NNTrainer():
+class HyperParameters(NamedTuple):
     N_epochs = 100
     batch_size = 6
     learning_rate = 1e-3
     N_data = 7200
     L_cut_x = 19
 
+    n_input = 0
+    n_hidden = 0
+    n_output = 0
+
+    def for_MLP() -> Tuple:
+        return (n_input, n_hidden, n_output)
+
+    # scheduler step_size, gamma
+    # Adam weight_decay
+    # Dropout p
+
+
+hparams = HyperParameters()
+
+
+class NNTrainer():
     def __init__(self, DIR_TRAIN:str, DIR_TEST:str,
                  XNAME:str, YNAME:str,
                  N_freq:int, L_frame:int, L_hop:int, F_MODEL_STATE=''):
@@ -316,17 +113,17 @@ class NNTrainer():
         self.L_frame = L_frame
         self.L_hop = L_hop
 
-        IVDataset.L_cut_x = NNTrainer.L_cut_x
-        n_input = NNTrainer.L_cut_x*N_freq*4
-        n_hidden = 17*N_freq*4
-        n_output = N_freq*4
+        IVDataset.L_cut_x = hparams.L_cut_x
+        hparams.n_input = hparams.L_cut_x*N_freq*4
+        hparams.n_hidden = 17*N_freq*4
+        hparams.n_output = N_freq*4
 
         # Dataset
         data = IVDataset(self.DIR_TRAIN, self.XNAME, self.YNAME,
-                         N_data=NNTrainer.N_data)
+                         N_data=hparams.N_data)
 
         data_test = IVDataset(DIR_TEST, XNAME, YNAME,
-                              N_data=NNTrainer.N_data//4,
+                              N_data=hparams.N_data//4,
                               normalize=False
                               )
         data_test.do_normalize(data.mean_x, data.mean_y,
@@ -340,7 +137,7 @@ class NNTrainer():
                                       )
 
         # Model (Using Parallel GPU)
-        self.model = nn.DataParallel(MLP(n_input, n_hidden, n_output),
+        self.model = nn.DataParallel(MLP(*hparams.for_MLP()),
                                      output_device=1,
                                      ).cuda()
         if F_MODEL_STATE:
@@ -349,7 +146,7 @@ class NNTrainer():
         # MSE Loss and Adam Optimizer
         self.criterion = nn.MSELoss(reduction='sum')
         self.optimizer = torch.optim.Adam(self.model.parameters(),
-                                          lr=NNTrainer.learning_rate,
+                                          lr=hparams.learning_rate,
                                           weight_decay=0,
                                           )
 
@@ -357,7 +154,7 @@ class NNTrainer():
         data_train, data_valid = IVDataset.split(self.data, (0.7, -1))
 
         loader_train = DataLoader(data_train,
-                                  batch_size=NNTrainer.batch_size,
+                                  batch_size=hparams.batch_size,
                                   shuffle=True,
                                   collate_fn=IVDataset.my_collate,
                                   num_workers=mp.cpu_count(),
@@ -369,14 +166,14 @@ class NNTrainer():
                                   num_workers=mp.cpu_count(),
                                   )
 
-        loss_train = np.zeros(NNTrainer.N_epochs)
-        loss_valid = np.zeros(NNTrainer.N_epochs)
-        snr_valid_dB = np.zeros(NNTrainer.N_epochs)
+        loss_train = np.zeros(hparams.N_epochs)
+        loss_valid = np.zeros(hparams.N_epochs)
+        snr_valid_dB = np.zeros(hparams.N_epochs)
 
         N_total_frame = 0
         scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                     step_size=1, gamma=0.8)
-        for epoch in range(NNTrainer.N_epochs):
+        for epoch in range(hparams.N_epochs):
             t_start = time.time()
 
             iteration = 0
@@ -407,7 +204,7 @@ class NNTrainer():
             loss_train[epoch] /= N_total_frame
             # ===================log========================
             # print(('epoch [{}/{}]: loss of the last data: {:.2e}')
-            #       .format(epoch + 1, NNTrainer.N_epochs,
+            #       .format(epoch + 1, hparams.N_epochs,
             #               loss.data.item()/N_frame))
 
             loss_valid[epoch], snr_valid_dB[epoch] \
@@ -439,7 +236,7 @@ class NNTrainer():
         print(f'\nTest Loss: {loss_test:.2e}', end='\t')
         print(f'Test SNR (dB): {snr_test_dB:.2e}')
 
-    def eval(self, loader:DataLoader=None, FNAME=''):
+    def eval(self, loader:DataLoader=None, FNAME='') -> Tuple[float, float]:
         if not loader:
             loader = self.loader_test
         avg_loss = 0.
