@@ -7,6 +7,8 @@ import torch
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 
+from typing import Tuple, Any
+
 import os
 from glob import glob
 import gc
@@ -16,13 +18,16 @@ import time
 import multiprocessing as mp
 
 
+TensorArray = Union[torch.Tensor, np.ndarray]
+
+
 # Progress Bar
-def printProgress(iteration, total,
+def printProgress(iteration:int, total:int,
                   prefix='', suffix='',
                   decimals=1, barLength=57):
     formatStr = "{0:." + str(decimals) + "f}"
-    percent = formatStr.format(100 * (iteration / float(total)))
-    filledLength = int(round(barLength * iteration / float(total)))
+    percent = formatStr.format(100 * iteration / total)
+    filledLength = barLength * iteration // total
     bar = '#' * filledLength + '-' * (barLength - filledLength)
     sys.stdout.write('\r%s |%s| %s%s %s' % (prefix, bar, percent, '%', suffix))
     if iteration == total:
@@ -107,11 +112,10 @@ class IVDataset(Dataset):
             self.std_x = 1.
             self.std_y = 1.
 
-        print('{} data prepared from {}.'.format(len(self),
-                                                 os.path.basename(DIR)))
+        print(f'{len(self)} data prepared from {os.path.basename(DIR)}.')
 
     @classmethod
-    def sum_files(cls, tup):
+    def sum_files(cls, tup:Tuple[str, str, str]) -> Tuple[Any, int, Any, int]:
         file, XNAME, YNAME = tup
         try:
             data_dict = np.load(file).item()
@@ -127,7 +131,8 @@ class IVDataset(Dataset):
                 )
 
     @classmethod
-    def sum_dev_files(cls, tup):
+    def sum_dev_files(cls,
+                      tup:Tuple[str, str, str, Any, Any]) -> Tuple[Any, Any]:
         file, XNAME, YNAME, mean_x, mean_y = tup
         data_dict = np.load(file).item()
         x = data_dict[XNAME]
@@ -149,7 +154,7 @@ class IVDataset(Dataset):
     def __len__(self):
         return len(self.all_files)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx:int):
         # File Open
         data_dict = np.load(self.all_files[idx]).item()
         x = data_dict[self.XNAME]
@@ -171,7 +176,7 @@ class IVDataset(Dataset):
     # Make groups of the frames of x and stack the groups
     # x_stacked: (time_length) x (N_freq) x (L_cut_x) x (XYZ0 channel)
     @classmethod
-    def stack_x(cls, x, L_trunc=0):
+    def stack_x(cls, x:np.ndarray, L_trunc=0) -> np.ndarray:
         if x.ndim != 3:
             raise Exception('Dimension Mismatch')
         if cls.L_cut_x == 1:
@@ -179,7 +184,7 @@ class IVDataset(Dataset):
 
         L0, L1, L2 = x.shape
 
-        half = int(cls.L_cut_x/2)
+        half = cls.L_cut_x//2
 
         x = np.concatenate((np.zeros((L0, half, L2)),
                             x,
@@ -194,27 +199,27 @@ class IVDataset(Dataset):
                          ])
 
     @classmethod
-    def stack_y(cls, y):
+    def stack_y(cls, y:np.ndarray) -> np.ndarray:
         if y.ndim != 3:
             raise Exception('Dimension Mismatch')
 
         return y.transpose((1, 0, 2))[:,:,np.newaxis,:]
 
     @classmethod
-    def unstack_x(cls, x):
+    def unstack_x(cls, x:TensorArray) -> TensorArray:
         if type(x) == torch.Tensor:
-            if x.dim() != 4 or x.size(2) <= int(cls.L_cut_x/2):
+            if x.dim() != 4 or x.size(2) <= cls.L_cut_x//2:
                 raise Exception('Dimension/Size Mismatch')
-            x = x[:,:,int(cls.L_cut_x/2),:].squeeze()
+            x = x[:,:,cls.L_cut_x//2,:].squeeze()
             return x.transpose(1, 0)
         else:
-            if x.ndim != 4 or x.shape[2] <= int(cls.L_cut_x/2):
+            if x.ndim != 4 or x.shape[2] <= cls.L_cut_x//2:
                 raise Exception('Dimension/Size Mismatch')
-            x = x[:,:,int(cls.L_cut_x/2),:].squeeze()
+            x = x[:,:,cls.L_cut_x//2,:].squeeze()
             return x.transpose((1, 0, 2))
 
     @classmethod
-    def unstack_y(cls, y):
+    def unstack_y(cls, y:TensorArray) -> TensorArray:
         if type(y) == torch.Tensor:
             if y.dim() != 4 or y.size(2) != 1:
                 raise Exception('Dimension/Size Mismatch')
@@ -231,7 +236,7 @@ class IVDataset(Dataset):
         return [x_stacked, y_stacked]
 
     @classmethod
-    def split(cls, a, ratio):
+    def split(cls, a, ratio:Tuple):
         if type(a) != cls:
             raise TypeError
         n_split = len(ratio)
@@ -239,8 +244,8 @@ class IVDataset(Dataset):
         mask = (ratio == -1)
         ratio[np.where(mask)] = 0
         if mask.sum() > 1:
-            raise Exception('Only one element of the parameter \'ratio\'' +
-                            'can have the value of -1')
+            raise Exception("Only one element of the parameter 'ratio' "
+                            "can have the value of -1")
         if ratio.sum() >= 1:
             raise Exception('The sum of ratio must be 1')
         if mask.sum() == 1:
@@ -298,6 +303,7 @@ class NNTrainer():
     batch_size = 6
     learning_rate = 1e-3
     N_data = 7200
+    L_cut_x = 19
 
     def __init__(self, DIR_TRAIN:str, DIR_TEST:str,
                  XNAME:str, YNAME:str,
@@ -310,18 +316,17 @@ class NNTrainer():
         self.L_frame = L_frame
         self.L_hop = L_hop
 
-        L_cut_x = 19
-        IVDataset.L_cut_x = L_cut_x
-        n_input = L_cut_x*N_freq*4
+        IVDataset.L_cut_x = NNTrainer.L_cut_x
+        n_input = NNTrainer.L_cut_x*N_freq*4
         n_hidden = 17*N_freq*4
         n_output = N_freq*4
 
-        # Test Dataset
+        # Dataset
         data = IVDataset(self.DIR_TRAIN, self.XNAME, self.YNAME,
                          N_data=NNTrainer.N_data)
 
         data_test = IVDataset(DIR_TEST, XNAME, YNAME,
-                              N_data=int(NNTrainer.N_data/4),
+                              N_data=NNTrainer.N_data//4,
                               normalize=False
                               )
         data_test.do_normalize(data.mean_x, data.mean_y,
@@ -375,8 +380,7 @@ class NNTrainer():
             t_start = time.time()
 
             iteration = 0
-            printProgress(iteration, len(loader_train),
-                          'epoch [{}/{}]:'.format(epoch+1, NNTrainer.N_epochs))
+            printProgress(iteration, len(loader_train), f'epoch {epoch+1:3d}:')
             scheduler.step()
             N_frame = 0
             for data in loader_train:
@@ -399,9 +403,7 @@ class NNTrainer():
                 loss.backward()
                 self.optimizer.step()
                 printProgress(iteration, len(loader_train),
-                              'epoch [{}/{}]:{:.1e}'
-                              .format(epoch+1, NNTrainer.N_epochs,
-                                      loss.data.item()))
+                              f'epoch {epoch+1:3d}: {loss.data.item():.1e}')
             loss_train[epoch] /= N_total_frame
             # ===================log========================
             # print(('epoch [{}/{}]: loss of the last data: {:.2e}')
@@ -410,18 +412,18 @@ class NNTrainer():
 
             loss_valid[epoch], snr_valid_dB[epoch] \
                 = self.eval(loader_valid,
-                            FNAME='MLP_result_{}.mat'.format(epoch))
-            print('Validation Loss: {:.2e}'.format(loss_valid[epoch]),end='\t')
-            print('Validation SNR (dB): {:.2e}'.format(snr_valid_dB[epoch]))
+                            FNAME=f'MLP_result_{epoch}.mat')
+            print(f'Validation Loss: {loss_valid[epoch]:.2e}', end='\t')
+            print(f'Validation SNR (dB): {snr_valid_dB[epoch]:.2e}')
 
-            scio.savemat('MLP_loss_{}.mat'.format(epoch),
+            scio.savemat(f'MLP_loss_{epoch}.mat',
                          {'loss_train': loss_train,
                           'loss_valid': loss_valid,
                           'snr_valid_dB': snr_valid_dB,
                           }
                          )
             torch.save(self.model.state_dict(),
-                       './MLP_{}.pt'.format(epoch))
+                       f'./MLP_{epoch}.pt')
 
             print(time.strftime('%M min %S sec',
                                 time.gmtime(time.time()-t_start)))
@@ -434,10 +436,10 @@ class NNTrainer():
                     break
 
         loss_test, snr_test_dB = self.eval(FNAME='MLP_result_test.mat')
-        print('\nTest Loss: {:.2e}'.format(loss_test))
-        print('Test SNR (dB): {:.2e}'.format(snr_test_dB))
+        print(f'\nTest Loss: {loss_test:.2e}', end='\t')
+        print(f'Test SNR (dB): {snr_test_dB:.2e}')
 
-    def eval(self, loader=None, FNAME=''):
+    def eval(self, loader:DataLoader=None, FNAME=''):
         if not loader:
             loader = self.loader_test
         avg_loss = 0.
@@ -501,7 +503,8 @@ class NNTrainer():
 
                 avg_loss += loss.data.cpu().item()*N_frame
                 printProgress(iteration, len(loader),
-                              'eval:{:.1e}'.format(loss.data.item()))
+                              f"{'eval':^9}: {loss.data.item():.1e}")
+
             avg_loss /= N_total_frame
             norm_frames = np.concatenate(norm_frames)
             norm_errors = np.concatenate(norm_errors)

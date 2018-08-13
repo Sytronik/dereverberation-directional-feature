@@ -9,27 +9,37 @@ import os
 import time
 from glob import glob
 
+from typing import Tuple, NamedTuple, TypeVar
+
 import soundfile as sf
 
 import multiprocessing as mp
 import logging  # noqa: F401
 
 N_CUDA_DEV = 4
+NDARRAY = TypeVar('NDARRAY', np.ndarray, cp.ndarray)
+T = TypeVar('T')
+
+class SFTData(NamedTuple):
+    bEQspec:NDARRAY
+    Yenc:NDARRAY
+    Wnv:NDARRAY
+    Wpv:NDARRAY
+    Vv:NDARRAY
+
+    def get_triags(self):
+        return (self.Wnv, self.Wpv, self.Vv)
 
 
 class PreProcessor:
-    def __init__(self, RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv, L_WIN_MS=20.):
+    def __init__(self, RIR, Yenc, sftdata:SFTData, L_WIN_MS=20.):
         # Bug Fix
         np.fft.restore_all()
         # From Parameters
         self.RIR = RIR
         self.N_LOC, self.N_MIC, self.L_RIR = RIR.shape
-        self.bEQspec = bEQspec
-        self.Yenc = Yenc
         self.Ys = Ys
-        self.Wnv = Wnv
-        self.Wpv = Wpv
-        self.Vv = Vv
+        self.sftdata = sftdata
 
         self.L_WIN_MS = L_WIN_MS
 
@@ -49,12 +59,12 @@ class PreProcessor:
         self.win = None
 
     def process(self, DIR_WAVFILE:str, ID:str, IDX_START:int,
-                DIR_IV:str, FORM:str, N_CORES=int(mp.cpu_count()/4)):
+                DIR_IV:str, FORM:str, N_CORES=mp.cpu_count()//4):
         if not os.path.exists(DIR_IV):
             os.makedirs(DIR_IV)
         self.DIR_IV = DIR_IV
 
-        print('Start processing from the {}-th wave file'.format(IDX_START))
+        print(f'Start processing from the {IDX_START}-th wave file')
 
         # Search all wave files
         self.all_files = []
@@ -73,13 +83,13 @@ class PreProcessor:
             # File Open (& Resample)
             if self.Fs == 0:
                 data, self.Fs = sf.read(file)
-                self.L_frame = int(self.Fs*self.L_WIN_MS/1000)
+                self.L_frame = self.Fs*self.L_WIN_MS//1000
                 self.N_fft = self.L_frame
                 if self.N_fft % 2 == 0:
-                    self.N_freq = int(self.N_fft / 2) + 1
+                    self.N_freq = self.N_fft//2 + 1
                 else:
-                    self.N_freq = int(self.N_fft / 2)
-                self.L_hop = int(self.L_frame/2)
+                    self.N_freq = self.N_fft//2
+                self.L_hop = self.L_frame//2
 
                 self.win = scsig.hamming(self.L_frame, sym=False)
                 self.print_save_info()
@@ -90,10 +100,10 @@ class PreProcessor:
 
             # Data length
             L_data_free = data.shape[0]
-            self.N_frame_free = int(np.floor(L_data_free/self.L_hop)-1)
+            self.N_frame_free = L_data_free//self.L_hop - 1
 
             L_data_room = L_data_free+self.L_RIR-1
-            self.N_frame_room = int(np.floor(L_data_room/self.L_hop)-1)
+            self.N_frame_room = L_data_room//self.L_hop - 1
 
             t_start = time.time()
 
@@ -104,8 +114,8 @@ class PreProcessor:
                 pool.apply_async(self.save_IV,
                                  (i_proc % N_CUDA_DEV,
                                   data,
-                                  range(i_proc*int(self.N_LOC/N_CORES),
-                                        (i_proc+1)*int(self.N_LOC/N_CORES)),
+                                  range(i_proc*(self.N_LOC//N_CORES),
+                                        (i_proc+1)*(self.N_LOC//N_CORES)),
                                   FORM, self.N_wavfile+1))
             pool.close()
             pool.join()
@@ -118,7 +128,7 @@ class PreProcessor:
             #                        (i_dev+1)*int(self.N_LOC/N_CUDA_DEV)),
             #                  FORM, self.N_wavfile+1)
 
-            print('%.3f sec' % (time.time()-t_start))
+            print(f'{time.time()-t_start:.3f} sec')
             self.N_wavfile += 1
             self.print_save_info()
 
@@ -130,12 +140,8 @@ class PreProcessor:
         cp.cuda.Device(i_dev).use()
         data = cp.array(data)
         win = cp.array(self.win)
-        bEQspec = cp.array(self.bEQspec)
-        Yenc = cp.array(self.Yenc)
         Ys = cp.array(self.Ys)
-        Wnv = cp.array(self.Wnv)
-        Wpv = cp.array(self.Wpv)
-        Vv = cp.array(self.Vv)
+        sftdata = SFTData(*[cp.array(item) for item in self.sftdata])
 
         for i_loc in range_loc:
             # RIR Filtering
@@ -153,7 +159,7 @@ class PreProcessor:
 
                 IV_free[:,i_frame,:3] \
                     = PreProcessor.calc_intensity(anm[:,:self.N_freq],
-                                                  Wnv, Wpv, Vv)
+                                                  *sftdata.get_triags())
                 IV_free[:,i_frame,3] = cp.abs(anm[0,:self.N_freq])**2
 
                 # max_in_frame \
@@ -166,11 +172,11 @@ class PreProcessor:
             for i_frame in range(self.N_frame_room):
                 interval = i_frame*self.L_hop + np.arange(self.L_frame)
                 fft = cp.fft.fft(filtered[:,interval]*win, n=self.N_fft)
-                anm = (Yenc @ fft) * bEQspec
+                anm = (sftdata.Yenc @ fft) * sftdata.bEQspec
 
                 IV_room[:,i_frame,:3] \
                     = PreProcessor.calc_intensity(anm[:,:self.N_freq],
-                                                  Wnv, Wpv, Vv)
+                                                  *sftdata.get_triags())
                 IV_room[:,i_frame,3] = cp.abs(anm[0,:self.N_freq])**2
 
                 # max_in_frame \
@@ -183,17 +189,17 @@ class PreProcessor:
                    # 'norm_factor_free': norm_factor_free,
                    # 'norm_factor_room': norm_factor_room,
                    }
-            FNAME = FORM % (args+(i_loc,))
+            FNAME = FORM % (*args, i_loc)
             np.save(os.path.join(self.DIR_IV, FNAME), dic)
 
-            print(FORM % (args+(i_loc,)))
+            print(FORM % (*args, i_loc))
 
     def __str__(self):
-        return 'Wave Files Processed/Total: {}/{}\n'.format(self.N_wavfile,
-                                                            len(self.all_files)
-                                                            ) \
-               + 'Sample Rate: {}\n'.format(self.Fs) \
-               + 'Number of source location: {}'.format(self.N_LOC)
+        return ('Wave Files Processed/Total: '
+                f'{self.N_wavfile}/{len(self.all_files)}\n'
+                f'Sample Rate: {self.Fs}\n'
+                f'Number of source location: {self.N_LOC}\n'
+                )
 
     def print_save_info(self):
         print(self)
@@ -205,21 +211,23 @@ class PreProcessor:
                     'L_frame': self.L_frame,
                     'L_hop': self.L_hop,
                     'N_LOC': self.N_LOC,
-                    'path_wavfiles': self.all_files}
+                    'path_wavfiles': self.all_files,
+                    }
 
         np.save(os.path.join(self.DIR_IV, 'metadata.npy'), metadata)
 
     @staticmethod
-    def seltriag(Ain, nrord:int, shft):
+    def seltriag(Ain:NDARRAY, nrord:int, shft:Tuple[int, int]) -> NDARRAY:
+        xp = cp.get_array_module(Ain)
         if Ain.ndim == 1:
-            Nfreq = 1
+            N_freq = 1
         else:
-            Nfreq = Ain.shape[1]
+            N_freq = Ain.shape[1]
         N = int(np.ceil(np.sqrt(Ain.shape[0]))-1)
         idx = 0
         len_new = (N-nrord+1)**2
 
-        Aout = cp.zeros((len_new, Nfreq), dtype=Ain.dtype)
+        Aout = xp.zeros((len_new, N_freq), dtype=Ain.dtype)
         for ii in range(N-nrord+1):
             for jj in range(-ii, ii+1):
                 n = shft[0] + ii
@@ -232,7 +240,7 @@ class PreProcessor:
         return Aout
 
     @classmethod
-    def calc_intensity(cls, Asv, Wnv, Wpv, Vv):
+    def calc_intensity(cls, Asv, Wnv, Wpv, Vv) -> cp.ndarray:
         aug1 = cls.seltriag(Asv, 1, (0, 0))
         aug2 = cls.seltriag(Wpv, 1, (1, -1))*cls.seltriag(Asv, 1, (1, -1)) \
             - cls.seltriag(Wnv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, -1))

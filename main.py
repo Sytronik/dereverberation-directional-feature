@@ -3,14 +3,13 @@ import pdb  # noqa: F401
 import numpy as np
 import scipy.io as scio
 
-# import matplotlib.pyplot as plt
-
 import os
 from glob import glob
 import sys
 
 from pre_processing import PreProcessor as Pre
-import show_IV_image as showIV
+from pre_processing import SFTData
+# import show_IV_image as showIV
 from train_nn import NNTrainer
 
 if __name__ == '__main__':
@@ -37,72 +36,72 @@ if __name__ == '__main__':
         DIR_WAVFILE += KIND_DATA
 
         # RIR Data
-        RIR = scio.loadmat(os.path.join(DIR_DATA, 'RIR.mat'),
-                           variable_names='RIR')['RIR']
-        RIR = RIR.transpose((2, 0, 1))  # 72 x 32 x 48k
-
-        # SFT Data
-        sph_mat = scio.loadmat(os.path.join(DIR_DATA, 'sph_data.mat'),
-                               variable_names=['bEQspec', 'Yenc', 'Ys',
-                                               'Wnv', 'Wpv', 'Vv'],
-                               squeeze_me=True)
-
-        bEQspec = sph_mat['bEQspec'].T
-        Yenc = sph_mat['Yenc'].T
-
-        Ys_original = sph_mat['Ys']
+        transfer_mat = scio.loadmat(os.path.join(DIR_DATA, 'transfer.mat'),
+                           variable_names=('RIR', 'Ys'))
+        RIR = transfer_mat['RIR'].transpose((2, 0, 1))
+        Ys_original = transfer_mat['Ys']
         Ys = np.zeros((Ys_original.size, Ys_original[0].size), dtype=complex)
         for ii in range(Ys_original.size):
             Ys[ii] = Ys_original[ii]
 
-        Wnv = sph_mat['Wnv'].astype(complex)
-        Wpv = sph_mat['Wpv'].astype(complex)
-        Vv = sph_mat['Vv'].astype(complex)
+        # SFT Data
+        sft_dict = scio.loadmat(os.path.join(DIR_DATA, 'sft_data.mat'),
+                               variable_names=('bEQspec', 'Yenc',
+                                               'Wnv', 'Wpv', 'Vv'),
+                               squeeze_me=True)
+
+        bEQspec = sft_dict['bEQspec'].T
+        Yenc = sft_dict['Yenc'].T
+        Wnv = sft_dict['Wnv'].astype(complex)
+        Wpv = sft_dict['Wpv'].astype(complex)
+        Vv = sft_dict['Vv'].astype(complex)
+
+        sftdata = SFTData(bEQspec, Yenc, Wnv, Wpv, Vv)
 
         # The index of the first wave file that have to be processed
         IDX_START = len(glob(
-            os.path.join(DIR_IV, '*_%02d.npy' % (RIR.shape[0]-1))
+            os.path.join(DIR_IV, f'*_{RIR.shape[0]-1:02d}.npy')
         ))+1
 
-        p = Pre(RIR, bEQspec, Yenc, Ys, Wnv, Wpv, Vv)
+        p = Pre(RIR, Ys, sftdata)
         p.process(DIR_WAVFILE, ID, IDX_START, DIR_IV, FORM)
 
     else:  # the functions that need metadata
         metadata = np.load(os.path.join(DIR_IV_dict['TRAIN'],
                                         'metadata.npy')).item()
-        if sys.argv[1] == 'show_IV_image':
-            doSave = False
-            FNAME = FORM % (1, 0)  # The default file is 0001_00.npy
-            DIR_IV = ''
-            for arg in sys.argv[2:]:
-                if arg == '--save' or arg == '-S':
-                    doSave = True
-                elif arg.upper() == 'TRAIN' or arg.upper() == 'TEST':
-                    KIND_DATA = arg.upper()
-                    DIR_IV = DIR_IV_dict[KIND_DATA]
-                else:
-                    FNAME = arg
+        # if sys.argv[1] == 'show_IV_image':
+        #     doSave = False
+        #     FNAME = FORM % (1, 0)  # The default file is 0001_00.npy
+        #     DIR_IV = ''
+        #     for arg in sys.argv[2:]:
+        #         if arg == '--save' or arg == '-S':
+        #             doSave = True
+        #         elif arg.upper() == 'TRAIN' or arg.upper() == 'TEST':
+        #             KIND_DATA = arg.upper()
+        #             DIR_IV = DIR_IV_dict[KIND_DATA]
+        #         else:
+        #             FNAME = arg
+        #
+        #     if not FNAME.endswith('.npy'):
+        #         FNAME += '.npy'
+        #
+        #     IV_dict = np.load(os.path.join(DIR_IV, FNAME)).item()
+        #
+        #     IVnames = [key for key in IV_dict if key.startswith('IV')]
+        #     title = ['{} ({})'.format(FNAME.replace('.npy',''),
+        #                               name.split('_')[-1],
+        #                               )
+        #              for name in IVnames]
+        #     IVs = [IV_dict[k] for k in IVnames]
+        #     showIV.show(IVs,
+        #                 title=title,
+        #                 ylim=[0., metadata['Fs']/2],
+        #                 doSave=doSave,
+        #                 # norm_factor=(IV_dict['norm_factor_free'],
+        #                 #              IV_dict['norm_factor_room']),
+        #                 )
 
-            if not FNAME.endswith('.npy'):
-                FNAME += '.npy'
-
-            IV_dict = np.load(os.path.join(DIR_IV, FNAME)).item()
-
-            IVnames = [key for key in IV_dict if key.startswith('IV')]
-            title = ['{} ({})'.format(FNAME.replace('.npy',''),
-                                      name.split('_')[-1],
-                                      )
-                     for name in IVnames]
-            IVs = [IV_dict[k] for k in IVnames]
-            showIV.show(IVs,
-                        title=title,
-                        ylim=[0., metadata['Fs']/2],
-                        doSave=doSave,
-                        # norm_factor=(IV_dict['norm_factor_free'],
-                        #              IV_dict['norm_factor_room']),
-                        )
-
-        elif sys.argv[1] == 'train_nn':
+        if sys.argv[1] == 'train_nn':
             trainer = NNTrainer(DIR_IV_dict['TRAIN'], DIR_IV_dict['TEST'],
                                 'IV_room', 'IV_free',
                                 metadata['N_freq'],
@@ -121,5 +120,5 @@ if __name__ == '__main__':
             loss_test, snr_test_dB = trainer.eval(
                 FNAME='MLP_result_26_test.mat'
             )
-            print('\nTest Loss: {:.2e}'.format(loss_test),end='\t')
-            print('Test SNR (dB): {:.2e}'.format(snr_test_dB))
+            print(f'\nTest Loss: {loss_test:.2e}', end='\t')
+            print(f'Test SNR (dB): {snr_test_dB:.2e}')
