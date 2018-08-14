@@ -16,7 +16,6 @@ for fname in fnames:
         contents = contents.item()
     print(contents)
     fname_mat = fname.replace('.npy', '')
-    if type(contents) == dict:
-        scio.savemat(fname_mat, contents, oned_as='column')
-    else:
-        scio.savemat(fname_mat, {fname_mat:contents}, oned_as='column')
+    dict_to_save = contents \
+        if type(contents) == dict else {fname_mat: contents}
+    scio.savemat(fname_mat, dict_to_save, oned_as='column')

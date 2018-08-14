@@ -37,7 +37,8 @@ if __name__ == '__main__':
 
         # RIR Data
         transfer_dict = scio.loadmat(os.path.join(DIR_DATA, 'transfer.mat'),
-                                     variable_names=('RIR', 'Ys'))
+                                     variable_names=('RIR', 'Ys'),
+                                     squeeze_me=True)
         RIR = transfer_dict['RIR'].transpose((2, 0, 1))
         Ys_original = transfer_dict['Ys']
         Ys = np.zeros((Ys_original.size, Ys_original[0].size), dtype=complex)
@@ -59,9 +60,8 @@ if __name__ == '__main__':
         sftdata = SFTData(bEQspec, Yenc, Wnv, Wpv, Vv)
 
         # The index of the first wave file that have to be processed
-        IDX_START = len(glob(
-            os.path.join(DIR_IV, f'*_{RIR.shape[0]-1:02d}.npy')
-        ))+1
+        IDX_START \
+            = len(glob(os.path.join(DIR_IV, f'*_{RIR.shape[0]-1:02d}.npy')))+1
 
         p = Pre(RIR, Ys, sftdata)
         p.process(DIR_WAVFILE, ID, IDX_START, DIR_IV, FORM)

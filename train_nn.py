@@ -18,7 +18,7 @@ from iv_dataset import IVDataset
 
 
 # Progress Bar
-def printProgress(iteration:int, total:int,
+def printProgress(iteration: int, total: int,
                   prefix='', suffix='',
                   decimals=1, barLength=57):
     percent = f'{100 * iteration / total:.{decimals}f}'
@@ -42,7 +42,7 @@ def print_cuda_tensors():
 
 
 class MLP(nn.Module):
-    def __init__(self, n_input:int, n_hidden:int, n_output:int):
+    def __init__(self, n_input: int, n_hidden: int, n_output: int):
         super(MLP, self).__init__()
 
         self.layer1 = nn.Sequential(
@@ -102,9 +102,9 @@ hparams = HyperParameters()
 
 
 class NNTrainer():
-    def __init__(self, DIR_TRAIN:str, DIR_TEST:str,
-                 XNAME:str, YNAME:str,
-                 N_freq:int, L_frame:int, L_hop:int, F_MODEL_STATE=''):
+    def __init__(self, DIR_TRAIN: str, DIR_TEST: str,
+                 XNAME: str, YNAME: str,
+                 N_freq: int, L_frame: int, L_hop: int, F_MODEL_STATE=''):
         self.DIR_TRAIN = DIR_TRAIN
         self.DIR_TEST = DIR_TEST
         self.XNAME = XNAME
@@ -236,11 +236,11 @@ class NNTrainer():
         print(f'\nTest Loss: {loss_test:.2e}', end='\t')
         print(f'Test SNR (dB): {snr_test_dB:.2e}')
 
-    def eval(self, loader:DataLoader=None, FNAME='') -> Tuple[float, float]:
+    def eval(self, loader: DataLoader=None, FNAME='') -> Tuple[float, float]:
         if not loader:
             loader = self.loader_test
-        avg_loss:float = 0
-        avg_snr:float = 0
+        avg_loss: float = 0
+        avg_snr: float = 0
         iteration = 0
         N_total_frame = 0
         norm_frames = [None]*len(loader)
@@ -257,14 +257,15 @@ class NNTrainer():
                 N_frame = x_stacked.size(0)
                 N_total_frame += N_frame
 
-                input = x_stacked.view(N_frame, -1).cuda(device=0)
+                _input = x_stacked.view(N_frame, -1).cuda(device=0)
                 # ===================forward=====================
-                output = self.model(input)
+                output = self.model(_input)
 
                 y_stacked = y_stacked.cuda(device=1)
                 y_vec = y_stacked.view(N_frame, -1)
                 loss = self.criterion(output, y_vec)/N_frame
-
+                # =============================================================
+                # Reconstruct & Performance Measure
                 output_stacked = output.view(y_stacked.size())
 
                 y_unstack = IVDataset.unstack_y(y_stacked)
@@ -280,10 +281,11 @@ class NNTrainer():
 
                 # y_recon = (y_recon*x)
                 # output_recon = (output_recon*x)
-                norm_frames[iteration-1] = (y_recon**2).sum(axis=(0,-1))
+                norm_frames[iteration-1] = (y_recon**2).sum(axis=(0, -1))
                 norm_errors[iteration-1] \
-                    = ((output_recon-y_recon)**2).sum(axis=(0,-1))
+                    = ((output_recon-y_recon)**2).sum(axis=(0, -1))
 
+                # Save IV Result
                 if FNAME and not dict_to_save:
                     x_np = IVDataset.unstack_x(
                         loader.dataset.std_x*x_stacked.numpy()
@@ -293,14 +295,14 @@ class NNTrainer():
                     # x_recon = loader.dataset.std_x*x_np \
                     #     + loader.dataset.mean_x
                     x_recon = x_np
-                    dict_to_save = {'IV_free':y_recon,
-                                    'IV_room':x_recon,
-                                    'IV_estimated':output_recon,
+                    dict_to_save = {'IV_free': y_recon,
+                                    'IV_room': x_recon,
+                                    'IV_estimated': output_recon,
                                     }
 
                 avg_loss += loss.data.cpu().item()*N_frame
                 printProgress(iteration, len(loader),
-                              f"{'eval':<9}: {loss.data.item():.1e}")
+                              f'{"eval":<9}: {loss.data.item():.1e}')
 
             avg_loss /= N_total_frame
             norm_frames = np.concatenate(norm_frames)

@@ -3,7 +3,6 @@ import pdb  # noqa: F401
 import numpy as np
 import cupy as cp
 import scipy.signal as scsig
-# import librosa
 
 import os
 import time
@@ -21,18 +20,18 @@ NDArray = TypeVar('NDArray', np.ndarray, cp.ndarray)
 
 
 class SFTData(NamedTuple):
-    bEQspec:NDArray
-    Yenc:NDArray
-    Wnv:NDArray
-    Wpv:NDArray
-    Vv:NDArray
+    bEQspec: NDArray
+    Yenc: NDArray
+    Wnv: NDArray
+    Wpv: NDArray
+    Vv: NDArray
 
     def get_triags(self):
         return (self.Wnv, self.Wpv, self.Vv)
 
 
 class PreProcessor:
-    def __init__(self, RIR, Ys, sftdata:SFTData, L_WIN_MS=20.):
+    def __init__(self, RIR, Ys, sftdata: SFTData, L_WIN_MS=20.):
         # Bug Fix
         np.fft.restore_all()
         # From Parameters
@@ -58,8 +57,8 @@ class PreProcessor:
         self.L_hop = 0
         self.win = None
 
-    def process(self, DIR_WAVFILE:str, ID:str, IDX_START:int,
-                DIR_IV:str, FORM:str, N_CORES=mp.cpu_count()//4):
+    def process(self, DIR_WAVFILE: str, ID: str, IDX_START: int,
+                DIR_IV: str, FORM: str, N_CORES=mp.cpu_count()//4):
         if not os.path.exists(DIR_IV):
             os.makedirs(DIR_IV)
         self.DIR_IV = DIR_IV
@@ -114,8 +113,8 @@ class PreProcessor:
                 pool.apply_async(self.save_IV,
                                  (i_proc % N_CUDA_DEV,
                                   data,
-                                  range(i_proc*(self.N_LOC//N_CORES),
-                                        (i_proc+1)*(self.N_LOC//N_CORES)),
+                                  range(i_proc * (self.N_LOC//N_CORES),
+                                        (i_proc+1) * (self.N_LOC//N_CORES)),
                                   FORM, self.N_wavfile+1))
             pool.close()
             pool.join()
@@ -128,14 +127,14 @@ class PreProcessor:
             #                        (i_dev+1)*int(self.N_LOC/N_CUDA_DEV)),
             #                  FORM, self.N_wavfile+1)
 
-            print(f'{time.time()-t_start:.3f} sec')
+            print(f'{time.time() - t_start:.3f} sec')
             self.N_wavfile += 1
             self.print_save_info()
 
         print('Done.')
         self.print_save_info()
 
-    def save_IV(self, i_dev:int, data, range_loc:iter, FORM:str, *args):
+    def save_IV(self, i_dev: int, data, range_loc: iter, FORM: str, *args):
         # CUDA Ready
         cp.cuda.Device(i_dev).use()
         data = cp.array(data)
@@ -157,10 +156,10 @@ class PreProcessor:
                 fft = cp.fft.fft(data[interval]*win, n=self.N_fft)
                 anm = cp.outer(Ys[i_loc].conj(), fft)
 
-                IV_free[:,i_frame,:3] \
-                    = PreProcessor.calc_intensity(anm[:,:self.N_freq],
+                IV_free[:, i_frame, :3] \
+                    = PreProcessor.calc_intensity(anm[:, :self.N_freq],
                                                   *sftdata.get_triags())
-                IV_free[:,i_frame,3] = cp.abs(anm[0,:self.N_freq])**2
+                IV_free[:, i_frame, 3] = cp.abs(anm[0, :self.N_freq])**2
 
                 # max_in_frame \
                 #     = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
@@ -171,13 +170,13 @@ class PreProcessor:
             # norm_factor_room = float('-inf')
             for i_frame in range(self.N_frame_room):
                 interval = i_frame*self.L_hop + np.arange(self.L_frame)
-                fft = cp.fft.fft(filtered[:,interval]*win, n=self.N_fft)
+                fft = cp.fft.fft(filtered[:, interval]*win, n=self.N_fft)
                 anm = (sftdata.Yenc @ fft) * sftdata.bEQspec
 
-                IV_room[:,i_frame,:3] \
-                    = PreProcessor.calc_intensity(anm[:,:self.N_freq],
+                IV_room[:, i_frame, :3] \
+                    = PreProcessor.calc_intensity(anm[:, :self.N_freq],
                                                   *sftdata.get_triags())
-                IV_room[:,i_frame,3] = cp.abs(anm[0,:self.N_freq])**2
+                IV_room[:, i_frame, 3] = cp.abs(anm[0, :self.N_freq])**2
 
                 # max_in_frame \
                 #     = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
@@ -217,12 +216,9 @@ class PreProcessor:
         np.save(os.path.join(self.DIR_IV, 'metadata.npy'), metadata)
 
     @staticmethod
-    def seltriag(Ain:NDArray, nrord:int, shft:Tuple[int, int]) -> NDArray:
+    def seltriag(Ain: NDArray, nrord: int, shft: Tuple[int, int]) -> NDArray:
         xp = cp.get_array_module(Ain)
-        if Ain.ndim == 1:
-            N_freq = 1
-        else:
-            N_freq = Ain.shape[1]
+        N_freq = 1 if Ain.ndim == 1 else Ain.shape[1]
         N = int(np.ceil(np.sqrt(Ain.shape[0]))-1)
         idx = 0
         len_new = (N-nrord+1)**2
@@ -240,8 +236,8 @@ class PreProcessor:
         return Aout
 
     @classmethod
-    def calc_intensity(cls, Asv:NDArray,
-                       Wnv:NDArray, Wpv:NDArray, Vv:NDArray) -> NDArray:
+    def calc_intensity(cls, Asv: NDArray,
+                       Wnv: NDArray, Wpv: NDArray, Vv: NDArray) -> NDArray:
         xp = cp.get_array_module(Asv)
 
         aug1 = cls.seltriag(Asv, 1, (0, 0))
@@ -252,9 +248,9 @@ class PreProcessor:
         aug4 = cls.seltriag(Vv, 1, (0, 0))*cls.seltriag(Asv, 1, (-1, 0)) \
             + cls.seltriag(Vv, 1, (1, 0))*cls.seltriag(Asv, 1, (1, 0))
 
-        dx = xp.sum(aug1.conj()*(aug2+aug3)/2, axis=0)
-        dy = xp.sum(aug1.conj()*(aug2-aug3)/2j, axis=0)
-        dz = xp.sum(aug1.conj()*aug4, axis=0)
+        dx = (aug1.conj()*(aug2+aug3)/2).sum(axis=0)
+        dy = (aug1.conj()*(aug2-aug3)/2j).sum(axis=0)
+        dz = (aug1.conj()*aug4).sum(axis=0)
 
         return 0.5*xp.real(xp.stack((dx, dy, dz), axis=1))
 

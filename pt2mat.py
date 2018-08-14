@@ -10,7 +10,7 @@ if not file.endswith('.pt'):
 
 state_dict = torch.load(file, map_location=torch.device('cpu'))
 
-dict_np = {key.replace('.', '_'):value.numpy()
+dict_np = {key.replace('.', '_'): value.numpy()
            for key, value in state_dict.items()}
 
 length = max([len(k) for k in dict_np.keys()])
