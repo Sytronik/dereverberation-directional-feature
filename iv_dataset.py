@@ -35,8 +35,8 @@ class IVDataset(Dataset):
             if fname.endswith('metadata.npy'):
                 self.all_files.remove(fname)
 
-        # Calculate summation & no. of total frames (parallel)
         if normalize:
+            # Calculate summation & no. of total frames (parallel)
             N_CORES = mp.cpu_count()
             pool = mp.Pool(N_CORES)
             result = pool.map(IVDataset.sum_files,
@@ -68,6 +68,7 @@ class IVDataset(Dataset):
             sum_dev_y = np.sum([res[1] for res in result], axis=0
                                )[:, np.newaxis, :]
 
+            # stdev
             self.std_x = np.sqrt(sum_dev_x / N_frame_x + 1e-5)
             self.std_y = np.sqrt(sum_dev_y / N_frame_y + 1e-5)
             # self.std_x = np.sqrt((sum_dev_x + sum_dev_y)
