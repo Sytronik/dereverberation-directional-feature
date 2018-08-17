@@ -17,10 +17,11 @@ from typing import NamedTuple, Tuple
 from iv_dataset import IVDataset
 
 
-# Progress Bar
-def printProgress(iteration: int, total: int,
-                  prefix='', suffix='',
+def printProgress(iteration: int, total: int, prefix='', suffix='',
                   decimals=1, barLength=57):
+    """
+    Print Progress Bar
+    """
     percent = f'{100 * iteration / total:.{decimals}f}'
     filledLength = barLength * iteration // total
     bar = '#' * filledLength + '-' * (barLength - filledLength)
@@ -42,6 +43,9 @@ def print_cuda_tensors():
 
 
 class MLP(nn.Module):
+    """
+    Multi-layer Perceptron
+    """
     def __init__(self, n_input: int, n_hidden: int, n_output: int):
         super(MLP, self).__init__()
 
@@ -80,6 +84,9 @@ class MLP(nn.Module):
 
 
 class HyperParameters(NamedTuple):
+    """
+    Hyper Parameters of NN
+    """
     N_epochs = 100
     batch_size = 6
     learning_rate = 1e-3
@@ -98,6 +105,7 @@ class HyperParameters(NamedTuple):
     # Dropout p
 
 
+# Global Variables
 hparams = HyperParameters()
 
 
@@ -237,12 +245,16 @@ class NNTrainer():
         print(f'Test SNR (dB): {snr_test_dB:.2e}')
 
     def eval(self, loader: DataLoader=None, FNAME='') -> Tuple[float, float]:
+        """
+        Evaluate the performance of the model.
+        loader: DataLoader to use.
+        FNAME: filename of the result. If None, don't save the result.
+        """
         if not loader:
             loader = self.loader_test
-        avg_loss: float = 0
-        avg_snr: float = 0
+        avg_loss = 0.
+        avg_snr = 0.
         iteration = 0
-        N_total_frame = 0
         norm_frames = [None]*len(loader)
         norm_errors = [None]*len(loader)
         dict_to_save = {}
@@ -255,10 +267,9 @@ class NNTrainer():
                 x_stacked, y_stacked = data
 
                 N_frame = x_stacked.size(0)
-                N_total_frame += N_frame
 
                 _input = x_stacked.view(N_frame, -1).cuda(device=0)
-                # ===================forward=====================
+                # =========================forward=============================
                 output = self.model(_input)
 
                 y_stacked = y_stacked.cuda(device=1)
@@ -304,10 +315,10 @@ class NNTrainer():
                 printProgress(iteration, len(loader),
                               f'{"eval":<9}: {loss.data.item():.1e}')
 
-            avg_loss /= N_total_frame
             norm_frames = np.concatenate(norm_frames)
             norm_errors = np.concatenate(norm_errors)
-            avg_snr = (norm_frames / norm_errors).sum()/N_total_frame
+            avg_loss /= norm_frames.shape[0]
+            avg_snr = (norm_frames / norm_errors).mean()
             avg_snr_dB = 10*np.log10(avg_snr)
             if np.isnan(avg_snr_dB):
                 pdb.set_trace()

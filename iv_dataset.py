@@ -9,7 +9,7 @@ from typing import Tuple, Any, Union
 
 import os
 from glob import glob
-import copy
+from copy import copy
 import multiprocessing as mp
 
 
@@ -25,15 +25,15 @@ class IVDataset(Dataset):
         self.DIR = DIR
         self.XNAME = XNAME
         self.YNAME = YNAME
-        self.normalize = normalize
+        self._normalize = normalize
 
         # for file in os.scandir(DIR):
-        self.all_files = glob(os.path.join(DIR, '*.npy'))
+        self._all_files = glob(os.path.join(DIR, '*.npy'))
         if N_data != -1:
-            self.all_files = self.all_files[:N_data]
-        for fname in self.all_files[:]:
+            self._all_files = self._all_files[:N_data]
+        for fname in self._all_files[:]:
             if fname.endswith('metadata.npy'):
-                self.all_files.remove(fname)
+                self._all_files.remove(fname)
 
         if normalize:
             # Calculate summation & no. of total frames (parallel)
@@ -41,7 +41,7 @@ class IVDataset(Dataset):
             pool = mp.Pool(N_CORES)
             result = pool.map(IVDataset.sum_files,
                               [(fname, XNAME, YNAME)
-                               for fname in self.all_files])
+                               for fname in self._all_files])
 
             sum_x = np.sum([res[0] for res in result], axis=0
                            )[np.newaxis, :, :, :]
@@ -59,7 +59,7 @@ class IVDataset(Dataset):
             # Calculate Standard Deviation
             result = pool.map(IVDataset.sum_dev_files,
                               [(fname, XNAME, YNAME, self.mean_x, self.mean_y)
-                               for fname in self.all_files])
+                               for fname in self._all_files])
 
             pool.close()
 
@@ -116,24 +116,24 @@ class IVDataset(Dataset):
                 )
 
     def do_normalize(self, mean_x, mean_y, std_x, std_y):
-        self.normalize = True
+        self._normalize = True
         self.mean_x = mean_x
         self.mean_y = mean_y
         self.std_x = std_x
         self.std_y = std_y
 
     def __len__(self):
-        return len(self.all_files)
+        return len(self._all_files)
 
     def __getitem__(self, idx: int):
         # File Open
-        data_dict = np.load(self.all_files[idx]).item()
+        data_dict = np.load(self._all_files[idx]).item()
         x = data_dict[self.XNAME]
         y = data_dict[self.YNAME]
 
         # Stack & Normalize
         x_stacked = IVDataset.stack_x(x, L_trunc=y.shape[1])
-        if self.normalize:
+        if self._normalize:
             x_stacked = (x_stacked - self.mean_x)/self.std_x
             y = (y - self.mean_y)/self.std_y
         y_stacked = IVDataset.stack_y(y)
@@ -144,10 +144,12 @@ class IVDataset(Dataset):
 
         return sample
 
-    # Make groups of the frames of x and stack the groups
-    # x_stacked: (time_length) x (N_freq) x (L_cut_x) x (XYZ0 channel)
     @classmethod
     def stack_x(cls, x: np.ndarray, L_trunc=0) -> np.ndarray:
+        """
+        Make groups of the frames of x and stack the groups
+        x_stacked: (time_length) x (N_freq) x (L_cut_x) x (XYZ0 channel)
+        """
         if x.ndim != 3:
             raise Exception('Dimension Mismatch')
         if cls.L_cut_x == 1:
@@ -169,9 +171,11 @@ class IVDataset(Dataset):
                          for ii in range(half, half + L1)
                          ])
 
-    # y_stacked: (time_length) x (N_freq) x (1) x (XYZ0 channel)
     @classmethod
     def stack_y(cls, y: np.ndarray) -> np.ndarray:
+        """
+        y_stacked: (time_length) x (N_freq) x (1) x (XYZ0 channel)
+        """
         if y.ndim != 3:
             raise Exception('Dimension Mismatch')
 
@@ -208,9 +212,14 @@ class IVDataset(Dataset):
         y_stacked = torch.cat([item['y_stacked'] for item in batch])
         return [x_stacked, y_stacked]
 
-    # Split datasets. ratio can have one element whose value is -1
     @classmethod
-    def split(cls, a, ratio: Tuple):
+    def split(cls, a, ratio: Tuple) -> Tuple:
+        """
+        Split datasets.
+        The sum of elements of ratio must be 1,
+        and only one element can have the value of -1 which means that
+        it's automaticall set to the value so that the sum of the elements is 1
+        """
         if type(a) != cls:
             raise TypeError
         n_split = len(ratio)
@@ -221,14 +230,14 @@ class IVDataset(Dataset):
             raise Exception("Only one element of the parameter 'ratio' "
                             "can have the value of -1")
         if ratio.sum() >= 1:
-            raise Exception('The sum of ratio must be 1')
+            raise Exception('The sum of elements of ratio must be 1')
         if mask.sum() == 1:
             ratio[np.where(mask)] = 1 - ratio.sum()
 
         idx_data = np.cumsum(np.insert(ratio, 0, 0) * len(a), dtype=int)
-        result = [copy.copy(a) for ii in range(n_split)]
-        all_f_per = np.random.permutation(a.all_files)
+        result = [copy(a) for ii in range(n_split)]
+        all_f_per = np.random.permutation(a._all_files)
         for ii in range(n_split):
-            result[ii].all_files = all_f_per[idx_data[ii]:idx_data[ii + 1]]
+            result[ii]._all_files = all_f_per[idx_data[ii]:idx_data[ii + 1]]
 
         return result

@@ -20,6 +20,9 @@ NDArray = TypeVar('NDArray', np.ndarray, cp.ndarray)
 
 
 class SFTData(NamedTuple):
+    """
+    Constant Matrices/Vectors for Spherical Fourier Analysis
+    """
     bEQspec: NDArray
     Yenc: NDArray
     Wnv: NDArray
@@ -31,12 +34,12 @@ class SFTData(NamedTuple):
 
 
 class PreProcessor:
-    def __init__(self, RIR, Ys, sftdata: SFTData, L_WIN_MS=20.):
+    def __init__(self, RIRs, Ys, sftdata: SFTData, L_WIN_MS=20.):
         # Bug Fix
         np.fft.restore_all()
         # From Parameters
-        self.RIR = RIR
-        self.N_LOC, self.N_MIC, self.L_RIR = RIR.shape
+        self.RIRs = RIRs
+        self.N_LOC, self.N_MIC, self.L_RIR = RIRs.shape
         self.Ys = Ys
         self.sftdata = sftdata
 
@@ -57,13 +60,13 @@ class PreProcessor:
         self.L_hop = 0
         self.win = None
 
-    def process(self, DIR_WAVFILE: str, ID: str, IDX_START: int,
+    def process(self, DIR_WAVFILE: str, ID: str, idx_start: int,
                 DIR_IV: str, FORM: str, N_CORES=mp.cpu_count()//4):
         if not os.path.exists(DIR_IV):
             os.makedirs(DIR_IV)
         self.DIR_IV = DIR_IV
 
-        print(f'Start processing from the {IDX_START}-th wave file')
+        print(f'Start processing from the {idx_start}-th wave file')
 
         # Search all wave files
         self.all_files = []
@@ -75,7 +78,7 @@ class PreProcessor:
 
         # Main Process
         for fname in self.all_files:
-            if self.N_wavfile < IDX_START-1:
+            if self.N_wavfile < idx_start-1:
                 self.N_wavfile += 1
                 continue
 
@@ -135,6 +138,16 @@ class PreProcessor:
         self.print_save_info()
 
     def save_IV(self, i_dev: int, data, range_loc: iter, FORM: str, *args):
+        """
+        Save IV files.
+
+        i_dev: GPU Device No.
+        range_loc: RIR Index Range(S/M Location Index Range)
+        FORM: format of filename
+        args: format string arguments
+
+        return: None
+        """
         # CUDA Ready
         cp.cuda.Device(i_dev).use()
         data = cp.array(data)
@@ -146,45 +159,45 @@ class PreProcessor:
             # RIR Filtering
             filtered \
                 = cp.array(scsig.fftconvolve(cp.asnumpy(data.reshape(1, -1)),
-                                             self.RIR[i_loc]))
+                                             self.RIRs[i_loc]))
 
             # Free-field Intensity Vector Image
-            IV_free = cp.zeros((self.N_freq, self.N_frame_free, 4))
+            iv_free = cp.zeros((self.N_freq, self.N_frame_free, 4))
             # norm_factor_free = float('-inf')
             for i_frame in range(self.N_frame_free):
                 interval = i_frame*self.L_hop + np.arange(self.L_frame)
                 fft = cp.fft.fft(data[interval]*win, n=self.N_fft)
                 anm = cp.outer(Ys[i_loc].conj(), fft)
 
-                IV_free[:, i_frame, :3] \
+                iv_free[:, i_frame, :3] \
                     = PreProcessor.calc_intensity(anm[:, :self.N_freq],
                                                   *sftdata.get_triags())
-                IV_free[:, i_frame, 3] = cp.abs(anm[0, :self.N_freq])**2
+                iv_free[:, i_frame, 3] = cp.abs(anm[0, :self.N_freq])**2
 
                 # max_in_frame \
                 #     = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
                 # norm_factor_free = np.max([norm_factor_free, max_in_frame])
 
             # Room Intensity Vector Image
-            IV_room = cp.zeros((self.N_freq, self.N_frame_room, 4))
+            iv_room = cp.zeros((self.N_freq, self.N_frame_room, 4))
             # norm_factor_room = float('-inf')
             for i_frame in range(self.N_frame_room):
                 interval = i_frame*self.L_hop + np.arange(self.L_frame)
                 fft = cp.fft.fft(filtered[:, interval]*win, n=self.N_fft)
                 anm = (sftdata.Yenc @ fft) * sftdata.bEQspec
 
-                IV_room[:, i_frame, :3] \
+                iv_room[:, i_frame, :3] \
                     = PreProcessor.calc_intensity(anm[:, :self.N_freq],
                                                   *sftdata.get_triags())
-                IV_room[:, i_frame, 3] = cp.abs(anm[0, :self.N_freq])**2
+                iv_room[:, i_frame, 3] = cp.abs(anm[0, :self.N_freq])**2
 
                 # max_in_frame \
                 #     = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
                 # norm_factor_room = np.max([norm_factor_room, max_in_frame])
 
             # Save
-            dic = {'IV_free': cp.asnumpy(IV_free),
-                   'IV_room': cp.asnumpy(IV_room),
+            dic = {'IV_free': cp.asnumpy(iv_free),
+                   'IV_room': cp.asnumpy(iv_room),
                    # 'norm_factor_free': norm_factor_free,
                    # 'norm_factor_room': norm_factor_room,
                    }
@@ -201,6 +214,9 @@ class PreProcessor:
                 )
 
     def print_save_info(self):
+        """
+        Print __str__ and save metadata.
+        """
         print(self)
 
         metadata = {'N_wavfile': self.N_wavfile,
@@ -238,6 +254,9 @@ class PreProcessor:
     @classmethod
     def calc_intensity(cls, Asv: NDArray,
                        Wnv: NDArray, Wpv: NDArray, Vv: NDArray) -> NDArray:
+        """
+        Asv(anm) -> IV
+        """
         xp = cp.get_array_module(Asv)
 
         aug1 = cls.seltriag(Asv, 1, (0, 0))
