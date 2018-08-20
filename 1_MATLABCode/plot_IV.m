@@ -21,15 +21,9 @@ if exist('IV_estimated')
 end
     
 %% Constants
-gamma = 50;
-scaling_max = 0;
+gamma = 7;
 x_max = 0;
 for ii = 1:N_IV
-    scaling{ii} = max(max(max(abs(IVs{ii}(:,:,1:3)))));
-    if scaling{ii} > scaling_max
-        scaling_max = scaling{ii};
-    end
-    
     [N_freq, temp] = size(IVs{ii}(:,:,1));
     x_axis{ii} = [1 temp];
     if temp > x_max
@@ -43,22 +37,37 @@ y_axis = [0 8000];
 %% Normalize
 for ii = 1:N_IV
     % ---RGB---
-    % The same scaling factor
-    scaling{ii}=scaling_max;
-
-    % scaling
-    IVs{ii}(:,:,1:3) = (IVs{ii}(:,:,1:3) + scaling{ii}) ./ (2*scaling{ii});
+    % spherical coordinate
+    [azi, elv, r] = cart2sph(IVs{ii}(:,:,1), IVs{ii}(:,:,2), IVs{ii}(:,:,3));
+    azi = (azi<0).*(2*pi+azi) + (azi>=0).*azi;  % 0~2pi
+    elv = pi/2 - elv;  % Standard
+    
+    % normalize
+    azi = azi / (2*pi);
+    elv = elv / pi;
+    r = r/max(r(:));
+    
+    % HSV->RGB
+    hsv = zeros(size(IVs{ii}(:,:,1:3)));
+    hsv(:,:,1) = azi;
+    hsv(:,:,2) = elv;
+    hsv(:,:,3) = r;
+    IVs{ii}(:,:,1:3) = hsv2rgb(hsv);
     
     % contrast enhancment
-    IVs{ii}(:,:,1:3) = 1./(1+exp(-gamma*(IVs{ii}(:,:,1:3)-0.5)));
+    IVs{ii}(:,:,1:3) = IVs{ii}(:,:,1:3).^(1/gamma);
+%     IVs{ii}(:,:,1:3) = 1./(1+exp(-gamma*(IVs{ii}(:,:,1:3)-0.5)));
 %     IVs{ii}(:,:,1:3) = (IVs{ii}(:,:,1:3)-0.5)/2./max(max(max(abs(IVs{ii}(:,:,1:3)-0.5))))+0.5;
 
     % ---alpha---
     % clip negative values
     IVs{ii}(:,:,4) = (IVs{ii}(:,:,4)>0).*IVs{ii}(:,:,4);
     
+    % normalize
+    IVs{ii}(:,:,4) = IVs{ii}(:,:,4) / max(max(IVs{ii}(:,:,4)));
+    
     % dB scale
-    IVs{ii}(:,:,4) = 10*log10(IVs{ii}(:,:,4)+1e-3);
+    IVs{ii}(:,:,4) = 10*log10(IVs{ii}(:,:,4)+1e-4);
 end
 
 %% Colormap of alpha
@@ -79,50 +88,61 @@ end
 c_lim = [c_min c_max];
 
 %% Plot
-figure(1);clf;
+close all;
+figure('DefaultAxesFontSize',14, 'Position',[50 40 1600 950]);
+fig = gcf;
+set(fig,'renderer','painter');
 for ii = 1:N_IV
-    ax=subplot(2, N_IV, ii);
+    ax=subplot(N_IV, 2, 2*ii-1);
     image(x_axis{ii}, y_axis, IVs{ii}(:,:,1:3));
     ax.YDir = 'normal';
     xlim(x_lim);
     xlabel('frame index');
     ylabel('frequency (Hz)');
 %     title([titles{ii} ' Intensity Vector $\tilde\mathbf{I}(\tau,f)$'], 'Interpreter', 'latex')
-    title([titles{ii} ' Intensity Vector $\hat\mathbf{I}(\tau,f)$'], 'Interpreter', 'latex')
-
-    ax=subplot(2, N_IV, N_IV + ii);
+    title([titles{ii} ' Intensity Vector $\mathbf{I}(\tau,f)$ (HSV)'], 'Interpreter', 'latex')
+    c = colorbar('east');
+    drawnow;
+    c.Location = 'eastoutside';
+    c.Visible = 0;
+    
+    ax=subplot(N_IV, 2, 2*ii);
     image(x_axis{ii}, y_axis, IVs{ii}(:,:,4),'CDataMapping','scaled');
     ax.YDir = 'normal';
     xlim(x_lim);
     ax.CLim=c_lim;
     xlabel('frame index');
     ylabel('frequency (Hz)');
-    colorbar
     title([titles{ii} ' $|a_{00}(\tau,f)|^2$ (dB)'], 'Interpreter', 'latex')
+    c = colorbar('east');
+    drawnow;
+    c.Location = 'eastoutside';
 end
-fig = gcf;
-fname = ['MLP_pReLU_result_26_test_' num2str(N_IV)];
-set(fig,'renderer','painter');
-set(fig,'Position',[50 50 1800 800]);
-print('-dpng' , '-r300' , fname)
+fname = ['MLP_pReLU_result_26_HSV_' num2str(N_IV)];
+print('-dpng' , '-r600' , fname)
 saveas(fig,fname,'fig')
 
-% n=2;
-% figure(2);clf;
-% for ii = 1:N_IV
-%     ax=subplot(N_IV,1,ii);
-%     board = repmat((checkerboard(n, ceil(N_freq/2/n), ceil(x_max/2/n))>0.5)*0.2+0.8, [1 1 3]);
-%     board = board(1:N_freq, 1:x_max, :);
-%     image(x_lim, y_axis, board);
-%     hold on;
-%     image(x_axis{ii}, y_axis, IVs{ii}(:,:,1:3), ...
-%           'AlphaData', IVs{ii}(:,:,4), 'AlphaDataMapping', 'scaled');
-%     ax.YDir = 'normal';
-%     xlim(x_lim);
-%     xlabel('frame index');
-%     ylabel('frequency (Hz)');
-%     title([titles{ii} ' $\hat\mathbf{I}(\tau,f)$ \& $|a_{00}(\tau,f)|^2$ (dB)'], 'Interpreter', 'latex');
-%     hold off;
-% end
-clear;
-close all;
+n=2;
+figure('DefaultAxesFontSize',14, 'Position',[50 40 800 950]);
+for ii = 1:N_IV
+    ax=subplot(N_IV,1,ii);
+    board = repmat((checkerboard(n, ceil(N_freq/2/n), ceil(x_max/2/n))>0.5)*0.2+0.8, [1 1 3]);
+    board = board(1:N_freq, 1:x_max, :);
+    image(x_lim, y_axis, board);
+    hold on;
+    image(x_axis{ii}, y_axis, IVs{ii}(:,:,1:3), ...
+          'AlphaData', IVs{ii}(:,:,4), 'AlphaDataMapping', 'scaled');
+    ax.YDir = 'normal';
+    xlim(x_lim);
+    xlabel('frame index');
+    ylabel('frequency (Hz)');
+    title([titles{ii} ' $\mathbf{I}(\tau,f)$ (HSV) \& $|a_{00}(\tau,f)|^2$ (dB)'], 'Interpreter', 'latex');
+    hold off;
+end
+fig = gcf;
+set(fig,'renderer','painter');
+fname = ['MLP_pReLU_result_26_HSVa_' num2str(N_IV)];
+print('-dpng' , '-r600' , fname)
+saveas(fig,fname,'fig')
+% clear;
+% close all;
