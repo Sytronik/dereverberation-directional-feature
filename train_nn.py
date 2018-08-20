@@ -31,8 +31,10 @@ def printProgress(iteration: int, total: int, prefix='', suffix='',
     sys.stdout.flush()
 
 
-# Print All CUDA Tensors
 def print_cuda_tensors():
+    """
+    Print All CUDA Tensors
+    """
     for obj in gc.get_objects():
         try:
             if torch.is_tensor(obj) \
@@ -93,26 +95,26 @@ class HyperParameters(NamedTuple):
     N_data = 7200
     L_cut_x = 19
 
-    n_input = 0
-    n_hidden = 0
-    n_output = 0
-
-    def for_MLP(self) -> Tuple:
-        return (self.n_input, self.n_hidden, self.n_output)
+    n_input: int
+    n_hidden: int
+    n_output: int
 
     # scheduler step_size, gamma
     # Adam weight_decay
     # Dropout p
 
+    def for_MLP(self) -> Tuple:
+        return (self.n_input, self.n_hidden, self.n_output)
+
 
 # Global Variables
-hparams = HyperParameters()
+hparams: HyperParameters
 
 
 class NNTrainer():
     def __init__(self, DIR_TRAIN: str, DIR_TEST: str,
                  XNAME: str, YNAME: str,
-                 N_freq: int, L_frame: int, L_hop: int, F_MODEL_STATE=''):
+                 N_freq: int, L_frame: int, L_hop: int, f_model_state=''):
         self.DIR_TRAIN = DIR_TRAIN
         self.DIR_TEST = DIR_TEST
         self.XNAME = XNAME
@@ -121,21 +123,23 @@ class NNTrainer():
         self.L_frame = L_frame
         self.L_hop = L_hop
 
-        IVDataset.L_cut_x = hparams.L_cut_x
-        hparams.n_input = hparams.L_cut_x*N_freq*4
-        hparams.n_hidden = 17*N_freq*4
-        hparams.n_output = N_freq*4
+        global hparams
+        IVDataset.L_cut_x = HyperParameters.L_cut_x
+        hparams = HyperParameters(n_input=IVDataset.L_cut_x*N_freq*4,
+                                  n_hidden=17*N_freq*4,
+                                  n_output=N_freq*4,
+                                  )
 
         # Dataset
-        data = IVDataset(self.DIR_TRAIN, self.XNAME, self.YNAME,
-                         N_data=hparams.N_data)
+        self.data = IVDataset(self.DIR_TRAIN, self.XNAME, self.YNAME,
+                              N_data=hparams.N_data)
 
         data_test = IVDataset(DIR_TEST, XNAME, YNAME,
                               N_data=hparams.N_data//4,
                               normalize=False
                               )
-        data_test.do_normalize(data.mean_x, data.mean_y,
-                               data.std_x, data.std_y)
+        data_test.do_normalize(self.data.mean_x, self.data.mean_y,
+                               self.data.std_x, self.data.std_y)
 
         self.loader_test = DataLoader(data_test,
                                       batch_size=1,
@@ -148,8 +152,8 @@ class NNTrainer():
         self.model = nn.DataParallel(MLP(*hparams.for_MLP()),
                                      output_device=1,
                                      ).cuda()
-        if F_MODEL_STATE:
-            self.model.load_state_dict(torch.load(F_MODEL_STATE))
+        if f_model_state:
+            self.model.load_state_dict(torch.load(f_model_state))
 
         # MSE Loss and Adam Optimizer
         self.criterion = nn.MSELoss(reduction='sum')

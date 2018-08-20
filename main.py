@@ -114,7 +114,7 @@ if __name__ == '__main__':
                                 metadata['N_freq'],
                                 metadata['L_frame'],
                                 metadata['L_hop'],
-                                F_MODEL_STATE='MLP_26.pt'
+                                f_model_state='MLP_26.pt'
                                 )
 
             loss_test, snr_test_dB = trainer.eval(
