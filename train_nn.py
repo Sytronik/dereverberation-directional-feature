@@ -55,21 +55,21 @@ class MLP(nn.Module):
             nn.Linear(n_input, n_hidden, bias=False),
             nn.BatchNorm1d(n_hidden, momentum=0.1),
             # nn.ReLU(inplace=True),
-            nn.PReLU(),
+            nn.PReLU(num_parameters=1, init=0.25),
         )
         self.layer2 = nn.Sequential(
             nn.Dropout(p=0.5),
             nn.Linear(n_hidden, n_hidden),
             # nn.BatchNorm1d(n_hidden, momentum=0.1),
             # nn.ReLU(inplace=True),
-            nn.PReLU(),
+            nn.PReLU(num_parameters=1, init=0.25),
         )
         self.layer3 = nn.Sequential(
             nn.Dropout(p=0.5),
             nn.Linear(n_hidden, n_hidden),
             # nn.BatchNorm1d(n_hidden),
-            # nn.ReLU(inplace=True),
-            nn.PReLU(),
+            nn.ReLU(inplace=True),
+            # nn.PReLU(num_parameters=1, init=0.25),
         )
         self.output = nn.Sequential(
             nn.Dropout(p=0.5),
