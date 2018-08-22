@@ -7,8 +7,9 @@ import scipy.signal as scsig
 import os
 import time
 from glob import glob
+import deepdish as dd
 
-from typing import Tuple, NamedTuple, TypeVar
+from typing import Tuple, NamedTuple, TypeVar, List
 
 import soundfile as sf
 
@@ -66,6 +67,15 @@ class PreProcessor:
             os.makedirs(DIR_IV)
         self.DIR_IV = DIR_IV
 
+        if self.N_LOC < mp.cpu_count():
+            N_CORES = self.N_LOC
+        n_loc_per_core = int(np.ceil(self.N_LOC//N_CORES))
+
+        max_n_pool = 1
+        while max_n_pool*int(np.ceil(n_loc_per_core*N_CORES/N_CUDA_DEV)) < 30:
+            max_n_pool += 1
+        max_n_pool -= 1
+
         print(f'Start processing from the {idx_start}-th wave file')
 
         # Search all wave files
@@ -77,15 +87,20 @@ class PreProcessor:
             self.all_files.extend(files)
 
         # Main Process
+        pools: List[mp.pool.Pool] = []
+        t_start: int
         for fname in self.all_files:
             if self.N_wavfile < idx_start-1:
                 self.N_wavfile += 1
                 continue
 
+            if (self.N_wavfile - idx_start) % max_n_pool == max_n_pool-1:
+                t_start = time.time()
+
             # File Open (& Resample)
             if self.Fs == 0:
                 data, self.Fs = sf.read(fname)
-                self.L_frame = self.Fs*self.L_WIN_MS//1000
+                self.L_frame = int(self.Fs*self.L_WIN_MS//1000)
                 self.N_fft = self.L_frame
                 if self.N_fft % 2 == 0:
                     self.N_freq = self.N_fft//2 + 1
@@ -98,7 +113,7 @@ class PreProcessor:
             else:
                 data, _ = sf.read(fname)
 
-            print(fname)
+            # print(fname)
 
             # Data length
             L_data_free = data.shape[0]
@@ -107,37 +122,53 @@ class PreProcessor:
             L_data_room = L_data_free+self.L_RIR-1
             self.N_frame_room = L_data_room//self.L_hop - 1
 
-            t_start = time.time()
-
-            # logger = mp.log_to_stderr()  #debugging subprocess
-            # logger.setLevel(mp.SUBDEBUG) #debugging subprocess
-            pool = mp.Pool(N_CORES)
+            # logger = mp.log_to_stderr()  # debugging subprocess
+            # logger.setLevel(mp.SUBDEBUG)  # debugging subprocess
+            pools.append(mp.Pool(N_CORES))
             for i_proc in range(N_CORES):
-                pool.apply_async(self.save_IV,
-                                 (i_proc % N_CUDA_DEV,
-                                  data,
-                                  range(i_proc * (self.N_LOC//N_CORES),
-                                        (i_proc+1) * (self.N_LOC//N_CORES)),
-                                  FORM, self.N_wavfile+1))
-            pool.close()
-            pool.join()
+                if (i_proc + 1) * n_loc_per_core <= self.N_LOC:
+                    range_loc = range(i_proc * n_loc_per_core,
+                                      (i_proc+1) * n_loc_per_core)
+                elif i_proc * n_loc_per_core < self.N_LOC:
+                    range_loc = range(i_proc * n_loc_per_core, self.N_LOC)
+                else:
+                    break
+                pools[-1].apply_async(self.save_IV,
+                                      (i_proc % N_CUDA_DEV,
+                                       data,
+                                       range_loc,
+                                       FORM, self.N_wavfile+1))
+            pools[-1].close()
 
-            # Non-parallel
-            # for i_dev in range(N_CUDA_DEV):
-            #     self.save_IV(i_dev,
+            # # Non-parallel
+            # for i_proc in range(N_CORES):
+            #     if (i_proc + 1) * n_loc_per_core <= self.N_LOC:
+            #         range_loc = range(i_proc * n_loc_per_core,
+            #                           (i_proc+1) * n_loc_per_core)
+            #     elif i_proc * n_loc_per_core < self.N_LOC:
+            #         range_loc = range(i_proc * n_loc_per_core, self.N_LOC)
+            #     else:
+            #         break
+            #     self.save_IV(i_proc % N_CUDA_DEV,
             #                  data,
-            #                  range(i_dev*int(self.N_LOC/N_CUDA_DEV),
-            #                        (i_dev+1)*int(self.N_LOC/N_CUDA_DEV)),
+            #                  range_loc,
             #                  FORM, self.N_wavfile+1)
 
-            print(f'{time.time() - t_start:.3f} sec')
-            self.N_wavfile += 1
-            self.print_save_info()
+            if (self.N_wavfile - idx_start) % max_n_pool == max_n_pool-2:
+                for pool in pools:
+                    pool.join()
+                print(f'{time.time() - t_start:.3f} sec')
+                pools = []
+                self.N_wavfile += 1
+                self.print_save_info()
+            else:
+                self.N_wavfile += 1
 
         print('Done.')
         self.print_save_info()
 
-    def save_IV(self, i_dev: int, data, range_loc: iter, FORM: str, *args):
+    def save_IV(self, i_dev: int, data: NDArray, range_loc: iter,
+                FORM: str, *args):
         """
         Save IV files.
 
@@ -202,7 +233,7 @@ class PreProcessor:
                    # 'norm_factor_room': norm_factor_room,
                    }
             FNAME = FORM % (*args, i_loc)
-            np.save(os.path.join(self.DIR_IV, FNAME), dic)
+            dd.io.save(os.path.join(self.DIR_IV, FNAME), dic, compression=None)
 
             print(FORM % (*args, i_loc))
 
@@ -229,7 +260,7 @@ class PreProcessor:
                     'path_wavfiles': self.all_files,
                     }
 
-        np.save(os.path.join(self.DIR_IV, 'metadata.npy'), metadata)
+        dd.io.save(os.path.join(self.DIR_IV, 'metadata.h5'), metadata)
 
     @staticmethod
     def seltriag(Ain: NDArray, nrord: int, shft: Tuple[int, int]) -> NDArray:
