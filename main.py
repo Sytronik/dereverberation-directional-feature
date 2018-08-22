@@ -1,7 +1,8 @@
 import pdb  # noqa: F401
 
-import numpy as np
+# import numpy as np
 import scipy.io as scio
+import deepdish as dd
 
 import os
 from glob import glob
@@ -17,7 +18,7 @@ if __name__ == '__main__':
     DIR_WAVFILE = DIR_DATA + '/speech/data/lisa/data/timit/raw/TIMIT/'
     DIR_IV_dict = {'TRAIN': DIR_DATA + '/IV/TRAIN',
                    'TEST': DIR_DATA + '/IV/TEST'}
-    FORM = '%04d_%02d.npy'
+    FORM = '%04d_%02d.h5'
     ID = '*.WAV'  # The common name of wave file
 
     # main needs the arguments
@@ -36,14 +37,14 @@ if __name__ == '__main__':
         DIR_WAVFILE += KIND_DATA
 
         # RIR Data
-        transfer_dict = scio.loadmat(os.path.join(DIR_DATA, 'transfer.mat'),
-                                     variable_names=('RIR', 'Ys'),
+        transfer_dict = scio.loadmat(os.path.join(DIR_DATA, 'RIR_Ys.mat'),
                                      squeeze_me=True)
-        RIRs = transfer_dict['RIR'].transpose((2, 0, 1))
-        Ys_original = transfer_dict['Ys']
-        Ys = np.zeros((Ys_original.size, Ys_original[0].size), dtype=complex)
-        for ii in range(Ys_original.size):
-            Ys[ii] = Ys_original[ii]
+        RIRs = transfer_dict['RIR_'+KIND_DATA].transpose((2, 0, 1))
+        Ys = transfer_dict['Ys_'+KIND_DATA].T
+        # Ys_original = transfer_dict['Ys']
+        # Ys = np.zeros((Ys_original.size, Ys_original[0].size), dtype=complex)
+        # for ii in range(Ys_original.size):
+        #     Ys[ii] = Ys_original[ii]
 
         # SFT Data
         sft_dict = scio.loadmat(os.path.join(DIR_DATA, 'sft_data.mat'),
@@ -61,15 +62,38 @@ if __name__ == '__main__':
 
         # The index of the first wave file that have to be processed
         idx_start \
-            = len(glob(os.path.join(DIR_IV, f'*_{RIRs.shape[0]-1:02d}.npy')))+1
+            = len(glob(os.path.join(DIR_IV, f'*_{RIRs.shape[0]-1:02d}.h5')))+1
 
         p = Pre(RIRs, Ys, sftdata)
         p.process(DIR_WAVFILE, ID, idx_start, DIR_IV, FORM)
 
     else:  # the functions that need metadata
-        metadata = np.load(os.path.join(DIR_IV_dict['TRAIN'],
-                                        'metadata.npy')).item()
-        # if sys.argv[1] == 'show_IV_image':
+        metadata \
+            = dd.io.load(os.path.join(DIR_IV_dict['TRAIN'], 'metadata.h5'))
+
+        if sys.argv[1] == 'train_nn':
+            trainer = NNTrainer(DIR_IV_dict['TRAIN'], DIR_IV_dict['TEST'],
+                                'IV_room', 'IV_free',
+                                metadata['N_freq'],
+                                metadata['L_frame'],
+                                metadata['L_hop'])
+            trainer.train()
+        elif sys.argv[1] == 'test_nn':
+            trainer = NNTrainer(DIR_IV_dict['TRAIN'], DIR_IV_dict['TEST'],
+                                'IV_room', 'IV_free',
+                                metadata['N_freq'],
+                                metadata['L_frame'],
+                                metadata['L_hop'],
+                                f_model_state='MLP_26.pt'
+                                )
+
+            loss_test, snr_test_dB = trainer.eval(
+                FNAME='MLP_result_26_test.mat'
+            )
+            print(f'\nTest Loss: {loss_test:.2e}', end='\t')
+            print(f'Test SNR (dB): {snr_test_dB:.2e}')
+
+        # elif sys.argv[1] == 'show_IV_image':
         #     doSave = False
         #     FNAME = FORM % (1, 0)  # The default file is 0001_00.npy
         #     DIR_IV = ''
@@ -100,25 +124,3 @@ if __name__ == '__main__':
         #                 # norm_factor=(IV_dict['norm_factor_free'],
         #                 #              IV_dict['norm_factor_room']),
         #                 )
-
-        if sys.argv[1] == 'train_nn':
-            trainer = NNTrainer(DIR_IV_dict['TRAIN'], DIR_IV_dict['TEST'],
-                                'IV_room', 'IV_free',
-                                metadata['N_freq'],
-                                metadata['L_frame'],
-                                metadata['L_hop'])
-            trainer.train()
-        elif sys.argv[1] == 'test_nn':
-            trainer = NNTrainer(DIR_IV_dict['TRAIN'], DIR_IV_dict['TEST'],
-                                'IV_room', 'IV_free',
-                                metadata['N_freq'],
-                                metadata['L_frame'],
-                                metadata['L_hop'],
-                                f_model_state='MLP_26.pt'
-                                )
-
-            loss_test, snr_test_dB = trainer.eval(
-                FNAME='MLP_result_26_test.mat'
-            )
-            print(f'\nTest Loss: {loss_test:.2e}', end='\t')
-            print(f'Test SNR (dB): {snr_test_dB:.2e}')
