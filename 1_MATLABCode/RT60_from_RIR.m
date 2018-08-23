@@ -1,34 +1,27 @@
 Fs = 16000;
 
 [N_mic, L_RIR, N_loc] = size(RIR);
+cum_reverse = cumsum(RIR(:,end:-1:1,:).^2, 2);
+cum_dB = 10*log10(cum_reverse(:,end:-1:1,:));
+thr_start = cum_dB(:,1,:) - 5;
+thr_end = thr_start - 20;
 
-L_win = 0.02 * Fs;
-L_hop = L_win/2;
-win = hamming(L_win).';
-energy = zeros(N_mic, floor((L_RIR)/L_hop), N_loc);
-for ii = 1:floor((L_RIR-L_win+1)/L_hop)+1
-    energy(:,ii,:) = sum(RIR(:,((ii-1)*L_hop+1):(ii-1)*L_hop+L_win,:).^2 .* repmat(win, [N_mic 1 N_loc]), 2);
-end
+idx_start = zeros(N_mic, N_loc);
+idx_end = zeros(N_mic, N_loc);
 
-[egy_direct, idx_direct] = max(energy,[],2);
-idx_direct = squeeze(idx_direct);
-idx_60 = zeros(N_mic, N_loc);
-for i_loc = 1:N_loc
-	[i_mic, n] = find(20*log10(energy(:,:,i_loc)./egy_direct(:,:,i_loc))<=-60);
-    
-    for ii = 1:length(i_mic)
-        if idx_60(i_mic(ii), i_loc)==0
-            if n(ii) > idx_direct(i_mic(ii), i_loc)
-                idx_60(i_mic(ii), i_loc) = n(ii);
-            end
-        end
+for i_mic = 1:N_mic
+    for i_loc = 1:N_loc
+        idx_start(i_mic, i_loc) = find(cum_dB(i_mic, :, i_loc)<thr_start(i_mic, :, i_loc), 1);
+        idx_end(i_mic, i_loc) = find(cum_dB(i_mic, :, i_loc)<thr_end(i_mic, :, i_loc), 1);
     end
 end
-RT60 = (idx_60 - idx_direct)*L_hop/Fs;
-RT60_mean = mean(RT60, 1);
-% RT60_max = max(RT60, [], 1);
+
+RT20 = (idx_end - idx_start) ./ Fs;
+RT60 = RT20*3;
+RT60_mean = mean(RT60);
 
 figure(1); clf;
+% stem(RT60.');
 stem(RT60_mean);
 xlabel('Source Position Index');
 ylabel('RT60 (sec)');
@@ -44,6 +37,6 @@ grid;
 
 fig = gcf;
 set(fig,'renderer','painter');
-fname = 'RT60_72Azi';
-print('-dpng' , '-r300' , fname)
-saveas(fig,fname,'fig')
+% fname = 'RT60_72Azi';
+% print('-dpng' , '-r300' , fname)
+% saveas(fig,fname,'fig')
