@@ -20,6 +20,17 @@ N_CUDA_DEV = 4
 NDArray = TypeVar('NDArray', np.ndarray, cp.ndarray)
 
 
+def search_all_files(DIR_WAVFILE: str, ID: str) -> List[str]:
+    result = []
+    for folder, _, _ in os.walk(DIR_WAVFILE):
+        files = glob(os.path.join(folder, ID))
+        if not files:
+            continue
+        result += files
+
+    return result
+
+
 class SFTData(NamedTuple):
     """
     Constant Matrices/Vectors for Spherical Fourier Analysis
@@ -79,12 +90,7 @@ class PreProcessor:
         print(f'Start processing from the {idx_start}-th wave file')
 
         # Search all wave files
-        self.all_files = []
-        for folder, _, _ in os.walk(DIR_WAVFILE):
-            files = glob(os.path.join(folder, ID))
-            if not files:
-                continue
-            self.all_files.extend(files)
+        self.all_files = search_all_files(DIR_WAVFILE, ID)
 
         # Main Process
         pools: List[mp.pool.Pool] = []
@@ -116,11 +122,8 @@ class PreProcessor:
             # print(fname)
 
             # Data length
-            L_data_free = data.shape[0]
-            self.N_frame_free = L_data_free//self.L_hop - 1
-
-            L_data_room = L_data_free+self.L_RIR-1
-            self.N_frame_room = L_data_room//self.L_hop - 1
+            self.N_frame_free = data.shape[0]//self.L_hop - 1
+            self.N_frame_room = (data.shape[0]+self.L_RIR-1)//self.L_hop - 1
 
             # logger = mp.log_to_stderr()  # debugging subprocess
             # logger.setLevel(mp.SUBDEBUG)  # debugging subprocess
@@ -140,7 +143,7 @@ class PreProcessor:
                                        FORM, self.N_wavfile+1))
             pools[-1].close()
 
-            # # Non-parallel
+            # Non-parallel
             # for i_proc in range(N_CORES):
             #     if (i_proc + 1) * n_loc_per_core <= self.N_LOC:
             #         range_loc = range(i_proc * n_loc_per_core,
