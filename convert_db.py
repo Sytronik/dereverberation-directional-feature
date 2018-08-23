@@ -1,23 +1,32 @@
 """
+<<Usage>>
 python convert_db.py [--no-duplicate]
-    <--mat | --h5 | --npy>
-        <directory path 1 | file path 1>
-        <directory path 2 | file path 2>
-    ...
-    <--mat | --h5 | --npy>
-        <directory path 1 | file path 1>
-        <directory path 2 | file path 2>
-    ...
+    {
+        {--mat | --h5 | --npy}
+        {
+            {directory path 1 | file path 1}
+            {directory path 2 | file path 2}
+            ...
+        }
+    }
+    {
+        {--mat | --h5 | --npy}
+        {
+            {directory path 1 | file path 1}
+            {directory path 2 | file path 2}
+            ...
+        }
+    }
     ...
 
 * "--no-duplicate option" is applied to all files.
+* Avaiable types of original file: .mat, .h5, .npy, .pt
 """
-
-import pdb  # noqa: F401
 
 import numpy as np
 import scipy.io as scio
 import deepdish.io as ddio
+import torch
 
 import sys
 import os
@@ -26,12 +35,35 @@ from glob import glob
 import multiprocessing as mp
 
 
-def static_vars(**kwargs):
-    def decorate(func):
-        for k in kwargs:
-            setattr(func, k, kwargs[k])
-        return func
-    return decorate
+def main():
+    argv = sys.argv
+    for arg in sys.argv[1:]:
+        if arg == '--no-duplicate':
+            convert.duplicate = False
+            argv.remove(arg)
+
+    for arg in argv:
+        if arg.startswith('-'):
+            convert.to = '.' + arg.replace('-', '')
+            if convert.to not in OPEN.keys():
+                raise 'Choose a right file type(--mat, --h5, --npy).'
+        elif os.path.isdir(arg):
+            if not convert.to:
+                raise 'Choose a file type.'
+            pool = mp.Pool(mp.cpu_count())
+            for folder, _, _ in os.walk(arg):
+                files = glob(os.path.join(folder, '*.*'))
+                files = [f for f in files if is_db(f)]
+                if files:
+                    pool.map_async(convert, files)
+            pool.close()
+            pool.join()
+        elif os.path.isfile(arg):
+            if not convert.to:
+                raise 'Choose a file type.'
+            convert(arg)
+        else:
+            raise 'File or directory does not exist.'
 
 
 def open_mat(fname: str):
@@ -46,6 +78,19 @@ def open_npy(fname: str):
     contents = np.load(fname)
     if contents.size == 1:
         contents = contents.item()
+    return contents
+
+
+def open_pt(fname: str):
+    contents = torch.load(fname, map_location=torch.device('cpu'))
+
+    contents = {key.replace('.', '_'): value.numpy()
+                for key, value in contents.items()}
+
+    length = max([len(k) for k in contents.keys()])
+    for key, value in contents:
+        print(f'{key:<{length}}: ndarray of shape {value.shape}')
+
     return contents
 
 
@@ -70,12 +115,25 @@ def save_npy(fname: str, contents):
 OPEN = {'.mat': open_mat,
         '.h5': open_h5,
         '.npy': open_npy,
+        '.pt': open_pt,
         }
 
 SAVE = {'.mat': save_mat,
         '.h5': save_h5,
         '.npy': save_npy,
         }
+
+
+def is_db(fname: str):
+    return any([fname.endswith(ext) for ext in OPEN.keys()])
+
+
+def static_vars(**kwargs):
+    def decorate(func):
+        for k in kwargs:
+            setattr(func, k, kwargs[k])
+        return func
+    return decorate
 
 
 @static_vars(to='', duplicate=True)
@@ -95,30 +153,5 @@ def convert(fname: str, *args):
         print(fname_new)
 
 
-def is_db(fname: str):
-    return any([fname.endswith(ext) for ext in OPEN.keys()])
-
-
 if __name__ == '__main__':
-    for arg in sys.argv[1:]:
-        if arg == '--no-duplicate':
-            convert.duplicate = False
-
-    for arg in sys.argv[1:]:
-        if arg.startswith('-'):
-            convert.to = '.' + arg.replace('-', '')
-        elif os.path.isdir(arg):
-            if not convert.to:
-                raise 'Choose file type.'
-            pool = mp.Pool(mp.cpu_count())
-            for folder, _, _ in os.walk(arg):
-                files = glob(os.path.join(folder, '*.*'))
-                files = [f for f in files if is_db(f)]
-                if files:
-                    pool.map_async(convert, files)
-            pool.close()
-            pool.join()
-        elif os.path.isfile(arg):
-            if not convert.to:
-                raise 'Choose file type.'
-            convert(arg)
+    main()
