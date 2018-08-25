@@ -24,9 +24,11 @@ python convert_db.py [--no-duplicate]
 * Avaiable types of original file: .mat, .h5, .npy, .pt
 """
 
+import pdb  # noqa: F401
+
 import numpy as np
 import scipy.io as scio
-import deepdish.io as ddio
+import deepdish as dd
 import torch
 
 import sys
@@ -68,7 +70,7 @@ def main():
             if not convert.to:
                 raise NoOptionError
 
-            convert(arg)
+            convert(arg, show=True)
         else:
             raise FileExistsError
 
@@ -99,7 +101,7 @@ def open_mat(fname: str):
 
 
 def open_h5(fname: str):
-    return ddio.load(fname)
+    return dd.io.load(fname)
 
 
 def open_npy(fname: str):
@@ -127,7 +129,9 @@ def save_mat(fname: str, contents):
 def save_h5(fname: str, contents):
     if type(contents) == dict and len(contents) == 1:
         exec(f'{list(contents)[0]} = {contents[list(contents)[0]]}')
-    ddio.save(fname, eval(list(contents)[0]), compression=None)
+        dd.io.save(fname, eval(list(contents)[0]), compression=None)
+    else:
+        dd.io.save(fname, contents, compression=None)
 
 
 def save_npy(fname: str, contents):
@@ -185,7 +189,7 @@ def static_vars(**kwargs):
 
 
 @static_vars(to='', duplicate=True)
-def convert(fname: str, *args):
+def convert(fname: str, show=False, *args):
     if args:
         convert.to, convert.duplicate = args
 
@@ -200,7 +204,8 @@ def convert(fname: str, *args):
     elif convert.to == '--show':
         print(str_simple(contents))
     else:
-        print(str_simple(contents))
+        if show:
+            print(str_simple(contents))
         fname_new = fname.replace(ext, convert.to)
         if os.path.isfile(fname_new) and not convert.duplicate:
             print('Didn\'t duplicate')
