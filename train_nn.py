@@ -14,7 +14,11 @@ import multiprocessing as mp
 
 from typing import NamedTuple, Tuple
 
-from iv_dataset import IVDataset
+from iv_dataset import IVDataset, norm_iv
+
+
+def NDARR_TO_STR(a):
+    return np.array2string(a, formatter={'float_kind': lambda x: f'{x:.2e}'})
 
 
 def printProgress(iteration: int, total: int, prefix='', suffix='',
@@ -90,7 +94,7 @@ class HyperParameters(NamedTuple):
     Hyper Parameters of NN
     """
     N_epochs = 100
-    batch_size = 6
+    batch_size = 1500
     learning_rate = 1e-3
     N_data = 7200
     L_cut_x = 19
@@ -131,20 +135,21 @@ class NNTrainer():
                                   )
 
         # Dataset
+        # Training + Validation Set
         self.data = IVDataset(self.DIR_TRAIN, self.XNAME, self.YNAME,
                               N_data=hparams.N_data)
 
+        # Test Set
         data_test = IVDataset(DIR_TEST, XNAME, YNAME,
                               N_data=hparams.N_data//4,
-                              normalize=False
+                              doNormalize=False
                               )
-        data_test.do_normalize(self.data.mean_x, self.data.mean_y,
-                               self.data.std_x, self.data.std_y)
+        data_test.doNormalize(self.data.normalize)
 
         self.loader_test = DataLoader(data_test,
-                                      batch_size=1,
+                                      batch_size=int(data_test.N_frames[0]),
                                       shuffle=False,
-                                      collate_fn=IVDataset.my_collate,
+                                      # collate_fn=IVDataset.my_collate,
                                       num_workers=mp.cpu_count(),
                                       )
 
@@ -168,19 +173,21 @@ class NNTrainer():
         loader_train = DataLoader(data_train,
                                   batch_size=hparams.batch_size,
                                   shuffle=True,
-                                  collate_fn=IVDataset.my_collate,
                                   num_workers=mp.cpu_count(),
+                                  # collate_fn=IVDataset.my_collate,
                                   )
         loader_valid = DataLoader(data_valid,
-                                  batch_size=1,
+                                  batch_size=int(data_valid.N_frames[0]),
                                   shuffle=False,
-                                  collate_fn=IVDataset.my_collate,
                                   num_workers=mp.cpu_count(),
+                                  # collate_fn=IVDataset.my_collate,
                                   )
 
         loss_train = np.zeros(hparams.N_epochs)
-        loss_valid = np.zeros(hparams.N_epochs)
-        snr_valid_dB = np.zeros(hparams.N_epochs)
+        # loss_valid = np.zeros(hparams.N_epochs)
+        # snr_valid_dB = np.zeros(hparams.N_epochs)
+        loss_valid = np.zeros((hparams.N_epochs, 2))
+        snr_valid_dB = np.zeros((hparams.N_epochs, 2))
 
         N_total_frame = 0
         scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
@@ -194,7 +201,8 @@ class NNTrainer():
             N_frame = 0
             for data in loader_train:
                 iteration += 1
-                x_stacked, y_stacked = data
+                x_stacked = data['x_stacked']
+                y_stacked = data['y_stacked']
 
                 N_frame = x_stacked.size(0)
                 if epoch == 0:
@@ -214,16 +222,15 @@ class NNTrainer():
                 printProgress(iteration, len(loader_train),
                               f'epoch {epoch+1:3d}: {loss.data.item():.1e}')
             loss_train[epoch] /= N_total_frame
-            # ===================log========================
-            # print(('epoch [{}/{}]: loss of the last data: {:.2e}')
-            #       .format(epoch + 1, hparams.N_epochs,
-            #               loss.data.item()/N_frame))
 
+            # Validation
             loss_valid[epoch], snr_valid_dB[epoch] \
                 = self.eval(loader_valid,
                             FNAME=f'MLP_result_{epoch}.mat')
-            print(f'Validation Loss: {loss_valid[epoch]:.2e}', end='\t')
-            print(f'Validation SNR (dB): {snr_valid_dB[epoch]:.2e}')
+
+            # print loss, snr and save
+            print(f'Validation Loss: {NDARR_TO_STR(loss_valid[epoch])}\t'
+                  f'Validation SNR (dB): {NDARR_TO_STR(snr_valid_dB[epoch])}')
 
             scio.savemat(f'MLP_loss_{epoch}.mat',
                          {'loss_train': loss_train,
@@ -238,15 +245,20 @@ class NNTrainer():
                                 time.gmtime(time.time()-t_start)))
             # Early Stopping
             if epoch >= 4:
-                loss_max = loss_valid[epoch-4:epoch+1].max()
-                loss_min = loss_valid[epoch-4:epoch+1].min()
+                # loss_max = loss_valid[epoch-4:epoch+1].max()
+                # loss_min = loss_valid[epoch-4:epoch+1].min()
+                loss_slice_all = loss_valid[epoch-4:epoch+1, :].sum(axis=1)
+                loss_max = loss_slice_all.max()
+                loss_min = loss_slice_all.min()
                 if loss_max - loss_min < 0.01 * loss_max:
                     print('Early Stopped')
                     break
 
+        # Test and print
         loss_test, snr_test_dB = self.eval(FNAME='MLP_result_test.mat')
-        print(f'\nTest Loss: {loss_test:.2e}', end='\t')
-        print(f'Test SNR (dB): {snr_test_dB:.2e}')
+        print('')
+        print(f'Test Loss: {NDARR_TO_STR(loss_test)}\t'
+              f'Test SNR (dB): {NDARR_TO_STR(snr_test_dB)}')
 
     def eval(self, loader: DataLoader=None, FNAME='') -> Tuple[float, float]:
         """
@@ -256,11 +268,15 @@ class NNTrainer():
         """
         if not loader:
             loader = self.loader_test
-        avg_loss = 0.
-        avg_snr = 0.
+
+        # avg_loss = 0.
+        # avg_snr =  0.
+        avg_loss = np.array([0., 0.])
+        avg_snr = np.array([0., 0.])
         iteration = 0
-        norm_frames = [None]*len(loader)
-        norm_errors = [None]*len(loader)
+        # norm_frames = [None]*len(loader)
+        # norm_errors = [None]*len(loader)
+        sum_N_frames = 0
         dict_to_save = {}
         printProgress(iteration, len(loader), 'eval:')
         with torch.no_grad():
@@ -268,68 +284,65 @@ class NNTrainer():
 
             for data in loader:
                 iteration += 1
-                x_stacked, y_stacked = data
+                x_stacked = data['x_stacked']
+                y_stacked_cpu = data['y_stacked']
 
                 N_frame = x_stacked.size(0)
+                sum_N_frames += N_frame
 
                 _input = x_stacked.view(N_frame, -1).cuda(device=0)
                 # =========================forward=============================
                 output = self.model(_input)
 
-                y_stacked = y_stacked.cuda(device=1)
+                y_stacked = y_stacked_cpu.cuda(device=1)
                 y_vec = y_stacked.view(N_frame, -1)
                 loss = self.criterion(output, y_vec)/N_frame
                 # =============================================================
                 # Reconstruct & Performance Measure
-                output_stacked = output.view(y_stacked.size())
+                out_stacked = output.view(y_stacked.size())
 
-                y_unstack = IVDataset.unstack_y(y_stacked)
-                output_unstack = IVDataset.unstack_y(output_stacked)
-                y_np = y_unstack.cpu().numpy()
-                output_np = output_unstack.cpu().numpy()
+                y_np = y_stacked_cpu.numpy()
+                out_np = out_stacked.cpu().numpy()
+                y_denorm = loader.dataset.denormalize(y_np, 'y')
+                out_denorm = loader.dataset.denormalize(out_np, 'y')
 
-                # y_recon = np.arctanh(y_np)
-                # output_recon = np.arctanh(output_np)
-                y_recon = loader.dataset.std_y*y_np + loader.dataset.mean_y
-                output_recon \
-                    = loader.dataset.std_y*output_np + loader.dataset.mean_y
+                y_recon = IVDataset.unstack_y(y_denorm)
+                out_recon = IVDataset.unstack_y(out_denorm)
 
-                # y_recon = (y_recon*x)
-                # output_recon = (output_recon*x)
-                norm_frames[iteration-1] = (y_recon**2).sum(axis=(0, -1))
-                norm_errors[iteration-1] \
-                    = ((output_recon-y_recon)**2).sum(axis=(0, -1))
+                # norm_frames[iteration-1] = norm_iv(y_recon)
+                # norm_errors[iteration-1] = norm_iv(out_recon-y_recon)
+                # norm_frames = norm_iv(y_recon)
+                # norm_errors = norm_iv(out_recon-y_recon)
+                # avg_snr += (norm_frames / norm_errors).sum()
+                norm_frames = norm_iv(y_recon, parts=('I', 'a'))
+                norm_errors = norm_iv(out_recon-y_recon, parts=('I', 'a'))
+                avg_loss += [a.sum() for a in norm_errors]
+                avg_snr += [(a/b).sum()
+                            for a, b in zip(norm_frames, norm_errors)]
 
                 # Save IV Result
                 if FNAME and not dict_to_save:
-                    x_np = IVDataset.unstack_x(
-                        loader.dataset.std_x*x_stacked.numpy()
-                        + loader.dataset.mean_x
-                    )
-                    # x_recon = np.arctanh(x_np)
-                    # x_recon = loader.dataset.std_x*x_np \
-                    #     + loader.dataset.mean_x
-                    x_recon = x_np
+                    x_stacked = loader.dataset.denormalize(x_stacked, 'x')
+                    x_recon = IVDataset.unstack_x(x_stacked).numpy()
                     dict_to_save = {'IV_free': y_recon,
                                     'IV_room': x_recon,
-                                    'IV_estimated': output_recon,
+                                    'IV_estimated': out_recon,
                                     }
 
-                avg_loss += loss.data.cpu().item()*N_frame
                 printProgress(iteration, len(loader),
                               f'{"eval":<9}: {loss.data.item():.1e}')
 
-            norm_frames = np.concatenate(norm_frames)
-            norm_errors = np.concatenate(norm_errors)
-            avg_loss /= norm_frames.shape[0]
-            avg_snr = (norm_frames / norm_errors).mean()
+            # norm_frames = np.concatenate(norm_frames)
+            # norm_errors = np.concatenate(norm_errors)
+            # avg_loss /= norm_frames.shape[0]
+            # avg_snr = (norm_frames / norm_errors).mean()
+            avg_loss /= sum_N_frames
+            avg_snr /= sum_N_frames
             avg_snr_dB = 10*np.log10(avg_snr)
-            if np.isnan(avg_snr_dB):
-                pdb.set_trace()
 
             if FNAME:
-                dict_to_save['norm_frames'] = norm_frames
-                dict_to_save['norm_errors'] = norm_errors
+                # dict_to_save['norm_frames'] = norm_frames
+                # dict_to_save['norm_errors'] = norm_errors
                 scio.savemat(FNAME, dict_to_save)
             self.model.train()
         return avg_loss, avg_snr_dB
