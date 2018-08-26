@@ -8,7 +8,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 import gc
-import sys
+import os
 import time
 import multiprocessing as mp
 
@@ -22,17 +22,23 @@ def NDARR_TO_STR(a):
 
 
 def printProgress(iteration: int, total: int, prefix='', suffix='',
-                  decimals=1, barLength=57):
+                  decimals=1, barLength=0):
     """
     Print Progress Bar
     """
-    percent = f'{100 * iteration / total:.{decimals}f}'
+    percent = f'{100 * iteration / total:3.{decimals}f}'
+    if barLength == 0:
+        barLength = os.get_terminal_size().columns \
+            - len(prefix) - len(percent) - len(suffix) - 6
+
     filledLength = barLength * iteration // total
     bar = '#' * filledLength + '-' * (barLength - filledLength)
-    sys.stdout.write(f'\r{prefix} |{bar}| {percent}% {suffix}')
+
+    if iteration == 0:
+        print('')
+    print(f'{prefix} |{bar}| {percent}% {suffix}', end='\r')
     if iteration == total:
-        sys.stdout.write('\n')
-    sys.stdout.flush()
+        print('')
 
 
 def print_cuda_tensors():
@@ -72,8 +78,8 @@ class MLP(nn.Module):
             nn.Dropout(p=0.5),
             nn.Linear(n_hidden, n_hidden),
             # nn.BatchNorm1d(n_hidden),
-            nn.ReLU(inplace=True),
-            # nn.PReLU(num_parameters=1, init=0.25),
+            # nn.ReLU(inplace=True),
+            nn.PReLU(num_parameters=1, init=0.25),
         )
         self.output = nn.Sequential(
             nn.Dropout(p=0.5),
@@ -93,10 +99,10 @@ class HyperParameters(NamedTuple):
     """
     Hyper Parameters of NN
     """
-    N_epochs = 100
-    batch_size = 1500
-    learning_rate = 1e-3
-    N_data = 7200
+    N_epochs = 60
+    batch_size = 1900
+    learning_rate = 5e-4
+    N_data = 10800
     L_cut_x = 19
 
     n_input: int
@@ -147,7 +153,7 @@ class NNTrainer():
         data_test.doNormalize(self.data.normalize)
 
         self.loader_test = DataLoader(data_test,
-                                      batch_size=int(data_test.N_frames[0]),
+                                      batch_size=hparams.batch_size,
                                       shuffle=False,
                                       # collate_fn=IVDataset.my_collate,
                                       num_workers=mp.cpu_count(),
@@ -177,7 +183,7 @@ class NNTrainer():
                                   # collate_fn=IVDataset.my_collate,
                                   )
         loader_valid = DataLoader(data_valid,
-                                  batch_size=int(data_valid.N_frames[0]),
+                                  batch_size=hparams.batch_size,
                                   shuffle=False,
                                   num_workers=mp.cpu_count(),
                                   # collate_fn=IVDataset.my_collate,
@@ -189,7 +195,6 @@ class NNTrainer():
         loss_valid = np.zeros((hparams.N_epochs, 2))
         snr_valid_dB = np.zeros((hparams.N_epochs, 2))
 
-        N_total_frame = 0
         scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                     step_size=1, gamma=0.8)
         for epoch in range(hparams.N_epochs):
@@ -198,15 +203,14 @@ class NNTrainer():
             iteration = 0
             printProgress(iteration, len(loader_train), f'epoch {epoch+1:3d}:')
             scheduler.step()
-            N_frame = 0
             for data in loader_train:
                 iteration += 1
                 x_stacked = data['x_stacked']
                 y_stacked = data['y_stacked']
 
                 N_frame = x_stacked.size(0)
-                if epoch == 0:
-                    N_total_frame += N_frame
+                # if epoch == 0:
+                #     N_total_frame += N_frame
 
                 _input = x_stacked.view(N_frame, -1).cuda(device=0)
                 # ===================forward=====================
@@ -221,7 +225,7 @@ class NNTrainer():
                 self.optimizer.step()
                 printProgress(iteration, len(loader_train),
                               f'epoch {epoch+1:3d}: {loss.data.item():.1e}')
-            loss_train[epoch] /= N_total_frame
+            loss_train[epoch] /= len(loader_train.dataset)
 
             # Validation
             loss_valid[epoch], snr_valid_dB[epoch] \
@@ -244,15 +248,15 @@ class NNTrainer():
             print(time.strftime('%M min %S sec',
                                 time.gmtime(time.time()-t_start)))
             # Early Stopping
-            if epoch >= 4:
-                # loss_max = loss_valid[epoch-4:epoch+1].max()
-                # loss_min = loss_valid[epoch-4:epoch+1].min()
-                loss_slice_all = loss_valid[epoch-4:epoch+1, :].sum(axis=1)
-                loss_max = loss_slice_all.max()
-                loss_min = loss_slice_all.min()
-                if loss_max - loss_min < 0.01 * loss_max:
-                    print('Early Stopped')
-                    break
+            # if epoch >= 4:
+            #     # loss_max = loss_valid[epoch-4:epoch+1].max()
+            #     # loss_min = loss_valid[epoch-4:epoch+1].min()
+            #     loss_slice_all = loss_valid[epoch-4:epoch+1, :].sum(axis=1)
+            #     loss_max = loss_slice_all.max()
+            #     loss_min = loss_slice_all.min()
+            #     if loss_max - loss_min < 0.01 * loss_max:
+            #         print('Early Stopped')
+            #         break
 
         # Test and print
         loss_test, snr_test_dB = self.eval(FNAME='MLP_result_test.mat')
@@ -276,7 +280,6 @@ class NNTrainer():
         iteration = 0
         # norm_frames = [None]*len(loader)
         # norm_errors = [None]*len(loader)
-        sum_N_frames = 0
         dict_to_save = {}
         printProgress(iteration, len(loader), 'eval:')
         with torch.no_grad():
@@ -288,7 +291,6 @@ class NNTrainer():
                 y_stacked_cpu = data['y_stacked']
 
                 N_frame = x_stacked.size(0)
-                sum_N_frames += N_frame
 
                 _input = x_stacked.view(N_frame, -1).cuda(device=0)
                 # =========================forward=============================
@@ -314,19 +316,21 @@ class NNTrainer():
                 # norm_frames = norm_iv(y_recon)
                 # norm_errors = norm_iv(out_recon-y_recon)
                 # avg_snr += (norm_frames / norm_errors).sum()
+                norm_errors = norm_iv(out_np - y_np, parts=('I', 'a'))
+                avg_loss += [a.sum() for a in norm_errors]
                 norm_frames = norm_iv(y_recon, parts=('I', 'a'))
                 norm_errors = norm_iv(out_recon-y_recon, parts=('I', 'a'))
-                avg_loss += [a.sum() for a in norm_errors]
                 avg_snr += [(a/b).sum()
                             for a, b in zip(norm_frames, norm_errors)]
 
                 # Save IV Result
                 if FNAME and not dict_to_save:
+                    N_frame = loader.dataset.N_frames[0]
                     x_stacked = loader.dataset.denormalize(x_stacked, 'x')
-                    x_recon = IVDataset.unstack_x(x_stacked).numpy()
-                    dict_to_save = {'IV_free': y_recon,
+                    x_recon = IVDataset.unstack_x(x_stacked[:N_frame]).numpy()
+                    dict_to_save = {'IV_free': y_recon[:, :N_frame, :],
                                     'IV_room': x_recon,
-                                    'IV_estimated': out_recon,
+                                    'IV_estimated': out_recon[:, :N_frame, :],
                                     }
 
                 printProgress(iteration, len(loader),
@@ -336,8 +340,8 @@ class NNTrainer():
             # norm_errors = np.concatenate(norm_errors)
             # avg_loss /= norm_frames.shape[0]
             # avg_snr = (norm_frames / norm_errors).mean()
-            avg_loss /= sum_N_frames
-            avg_snr /= sum_N_frames
+            avg_loss /= len(loader.dataset)
+            avg_snr /= len(loader.dataset)
             avg_snr_dB = 10*np.log10(avg_snr)
 
             if FNAME:

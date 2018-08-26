@@ -68,6 +68,15 @@ def transpose(a: TensorArray, axes: Union[Tuple, int]=None) -> TensorArray:
         raise TypeError
 
 
+def squeeze(a: TensorArray, axis=None) -> int:
+    if type(a) == torch.Tensor:
+        return a.squeeze(dim=axis)
+    elif type(a) == np.ndarray:
+        return a.squeeze(axis=axis)
+    else:
+        raise TypeError
+
+
 def _cat_stack(fn: str,
                a: Union[List, Tuple],
                axis=0,
@@ -331,10 +340,10 @@ class IVDataset(Dataset):
                                group='/'+self.XNAME,
                                sel=dd.aslice[:, i_x_lower:i_x_upper, :]
                                )
-        y = dd.io.load(self._all_files[i_file],
-                       group='/'+self.YNAME,
-                       sel=dd.aslice[:, i_frame, :]
-                       )
+        y_stacked = dd.io.load(self._all_files[i_file],
+                               group='/'+self.YNAME,
+                               sel=dd.aslice[:, i_frame:i_frame+1, :]
+                               )
 
         # Zero-padding & unsqueeze
         L0, _, L2 = x_stacked.shape
@@ -342,7 +351,6 @@ class IVDataset(Dataset):
                                     x_stacked,
                                     np.zeros((L0, margin_upper, L2))),
                                    axis=1)
-        y_stacked = y[:, np.newaxis, :]
         # data_dict = np.load(self._all_files[idx]).item()
         # x = data_dict[self.XNAME]
         # y = data_dict[self.YNAME]
@@ -401,7 +409,7 @@ class IVDataset(Dataset):
         if ndim(x) != 4 or shape(x)[2] <= cls.L_cut_x//2:
             raise Exception('Dimension/Size Mismatch')
 
-        x = x[:, :, cls.L_cut_x//2, :].squeeze()
+        x = x[:, :, cls.L_cut_x//2, :]
 
         return transpose(x, (1, 0, 2))
 
@@ -410,7 +418,7 @@ class IVDataset(Dataset):
         if ndim(y) != 4 or shape(y)[2] != 1:
             raise Exception('Dimension/Size Mismatch')
 
-        return transpose(y.squeeze(), (1, 0, 2))
+        return transpose(squeeze(y, axis=2), (1, 0, 2))
 
     # @staticmethod
     # def my_collate(batch):
@@ -457,12 +465,13 @@ class IVDataset(Dataset):
 
 
 def norm_iv(data: TensorArray, parts: Union[str, List[str], Tuple[str]]='all'):
-    if ndim(data) != 3:
-        raise f'Dimension Mismatch: {ndim(data)}'
+    dim = ndim(data)
+    if dim != 3 and dim != 4:
+        raise f'Dimension Mismatch: {dim}'
 
-    DICT_IDX = {'I': range(3),
-                'a': 3,
-                'all': range(4),
+    DICT_IDX = {'I': range(0, 3),
+                'a': range(3, 4),
+                'all': range(0, 4),
                 }
 
     if type(parts) == str:
@@ -471,8 +480,12 @@ def norm_iv(data: TensorArray, parts: Union[str, List[str], Tuple[str]]='all'):
     result = []
     for part in parts:
         if part in DICT_IDX.keys():
-            temp = data[:, :, DICT_IDX[part]]**2
-            result.append(sum_axis(temp, axis=(0, -1)))
+            temp = data[..., DICT_IDX[part]]**2
+            if dim == 3:
+                axis = (0, 2)
+            else:
+                axis = (1, 2, 3)
+            result.append(sum_axis(temp, axis=axis))
         else:
             raise ValueError('"parts" should be "I", "a", or "all" '
                              'or an array of them')
