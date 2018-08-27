@@ -26,10 +26,10 @@ def printProgress(iteration: int, total: int, prefix='', suffix='',
     """
     Print Progress Bar
     """
-    percent = f'{100 * iteration / total:3.{decimals}f}'
+    percent = f'{100 * iteration / total:>3.{decimals}f}'
     if barLength == 0:
-        barLength = os.get_terminal_size().columns \
-            - len(prefix) - len(percent) - len(suffix) - 6
+        barLength = min(os.get_terminal_size().columns, 80) \
+            - len(prefix) - len(percent) - len(suffix) - 11
 
     filledLength = barLength * iteration // total
     bar = '#' * filledLength + '-' * (barLength - filledLength)
@@ -102,8 +102,8 @@ class HyperParameters(NamedTuple):
     N_epochs = 60
     batch_size = 1900
     learning_rate = 5e-4
-    N_data = 10800
-    L_cut_x = 19
+    N_file = 10800
+    L_cut_x = 13
 
     n_input: int
     n_hidden: int
@@ -143,11 +143,11 @@ class NNTrainer():
         # Dataset
         # Training + Validation Set
         self.data = IVDataset(self.DIR_TRAIN, self.XNAME, self.YNAME,
-                              N_data=hparams.N_data)
+                              N_file=hparams.N_file)
 
         # Test Set
         data_test = IVDataset(DIR_TEST, XNAME, YNAME,
-                              N_data=hparams.N_data//4,
+                              N_file=hparams.N_file//4,
                               doNormalize=False
                               )
         data_test.doNormalize(self.data.normalize)
@@ -192,8 +192,8 @@ class NNTrainer():
         loss_train = np.zeros(hparams.N_epochs)
         # loss_valid = np.zeros(hparams.N_epochs)
         # snr_valid_dB = np.zeros(hparams.N_epochs)
-        loss_valid = np.zeros((hparams.N_epochs, 2))
-        snr_valid_dB = np.zeros((hparams.N_epochs, 2))
+        loss_valid = np.zeros((hparams.N_epochs, 3))
+        snr_valid_dB = np.zeros((hparams.N_epochs, 3))
 
         scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                     step_size=1, gamma=0.8)
@@ -245,8 +245,9 @@ class NNTrainer():
             torch.save(self.model.state_dict(),
                        f'./MLP_{epoch}.pt')
 
-            print(time.strftime('%M min %S sec',
-                                time.gmtime(time.time()-t_start)))
+            print(f'epoch {epoch+1:3d}: '
+                  + time.strftime('%M min %S sec',
+                                  time.gmtime(time.time()-t_start)))
             # Early Stopping
             # if epoch >= 4:
             #     # loss_max = loss_valid[epoch-4:epoch+1].max()
@@ -275,8 +276,8 @@ class NNTrainer():
 
         # avg_loss = 0.
         # avg_snr =  0.
-        avg_loss = np.array([0., 0.])
-        avg_snr = np.array([0., 0.])
+        avg_loss = np.zeros(3)
+        avg_snr = np.zeros(3)
         iteration = 0
         # norm_frames = [None]*len(loader)
         # norm_errors = [None]*len(loader)
@@ -316,10 +317,14 @@ class NNTrainer():
                 # norm_frames = norm_iv(y_recon)
                 # norm_errors = norm_iv(out_recon-y_recon)
                 # avg_snr += (norm_frames / norm_errors).sum()
-                norm_errors = norm_iv(out_np - y_np, parts=('I', 'a'))
+                norm_errors = norm_iv(out_np - y_np,
+                                      parts=('I', 'a', 'all'))
                 avg_loss += [a.sum() for a in norm_errors]
-                norm_frames = norm_iv(y_recon, parts=('I', 'a'))
-                norm_errors = norm_iv(out_recon-y_recon, parts=('I', 'a'))
+
+                norm_frames = norm_iv(y_recon,
+                                      parts=('I', 'a', 'all'))
+                norm_errors = norm_iv(out_recon - y_recon,
+                                      parts=('I', 'a', 'all'))
                 avg_snr += [(a/b).sum()
                             for a, b in zip(norm_frames, norm_errors)]
 

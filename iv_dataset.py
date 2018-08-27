@@ -154,12 +154,13 @@ class IVDataset(Dataset):
     L_cut_y = 1
 
     def __init__(self, DIR: str, XNAME: str, YNAME: str,
-                 N_data=-1, doNormalize=True):
+                 N_file=-1, doNormalize=True):
         self.DIR = DIR
         self.XNAME = XNAME
         self.YNAME = YNAME
 
-        fname_list = os.path.join(DIR, f'list_files_{N_data}.h5')
+        fname_list \
+            = os.path.join(DIR, f'list_files_{N_file}_{IVDataset.L_cut_x}.h5')
         if os.path.isfile(fname_list):
             self._all_files, self.N_frames, self.cum_N_frames, normalize \
                 = dd.io.load(fname_list)
@@ -176,8 +177,8 @@ class IVDataset(Dataset):
                           and f.name != 'metadata.h5'
                           and not f.name.startswith('list_files_')]
             self._all_files = np.random.permutation(_all_files)
-            if N_data != -1:
-                self._all_files = self._all_files[:N_data]
+            if N_file != -1:
+                self._all_files = self._all_files[:N_file]
 
             pool = mp.Pool(mp.cpu_count())
             if doNormalize:
@@ -232,7 +233,7 @@ class IVDataset(Dataset):
                         self.normalize)
                        )
         print(f'{len(self)} frames prepared '
-              f'from {N_data} files of {os.path.basename(DIR)}.')
+              f'from {N_file} files of {os.path.basename(DIR)}.')
 
     @classmethod
     def n_frame_files(cls, tup: Tuple[str, str]) -> int:

@@ -12,6 +12,7 @@ from pre_processing import PreProcessor as Pre
 from pre_processing import SFTData
 # import show_IV_image as showIV
 from train_nn import NNTrainer
+from train_nn import NDARR_TO_STR
 
 if __name__ == '__main__':
     DIR_DATA = '../../De-Reverberation Data'
@@ -79,19 +80,20 @@ if __name__ == '__main__':
                                 metadata['L_hop'])
             trainer.train()
         elif sys.argv[1] == 'test_nn':
+            str_epoch = sys.argv[2]
             trainer = NNTrainer(DIR_IV_dict['TRAIN'], DIR_IV_dict['TEST'],
                                 'IV_room', 'IV_free',
                                 metadata['N_freq'],
                                 metadata['L_frame'],
                                 metadata['L_hop'],
-                                f_model_state='MLP_26.pt'
+                                f_model_state=f'MLP_{str_epoch}.pt'
                                 )
 
             loss_test, snr_test_dB = trainer.eval(
-                FNAME='MLP_result_26_test.mat'
+                FNAME=f'MLP_result_{str_epoch}_test.mat'
             )
-            print(f'\nTest Loss: {loss_test:.2e}', end='\t')
-            print(f'Test SNR (dB): {snr_test_dB:.2e}')
+            print(f'Test Loss: {NDARR_TO_STR(loss_test)}\t'
+                  f'Test SNR (dB): {NDARR_TO_STR(snr_test_dB)}')
 
         # elif sys.argv[1] == 'show_IV_image':
         #     doSave = False
