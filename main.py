@@ -1,29 +1,37 @@
+"""
+<USAGE>
+python main.py FUNCTION [ARGS]
+
+<FUNCTION>
+- pre_processing
+    ARGS: [TRAIN(default) | TEST]
+- train_nn
+- test_nn
+    ARGS: [n] (The parameters of the n-th epoch will be used.)
+"""
+
 import pdb  # noqa: F401
 
 # import numpy as np
 import scipy.io as scio
 import deepdish as dd
 
-import os
+from os import path
 from glob import glob
 import sys
 
-from pre_processing import PreProcessor as Pre
-from pre_processing import SFTData
+from pre_processing import PreProcessor as Pre, SFTData
 # import show_IV_image as showIV
-from train_nn import NNTrainer
-from train_nn import NDARR_TO_STR
+from train_nn import NNTrainer, array2string
 
 if __name__ == '__main__':
     DIR_DATA = '../../De-Reverberation Data'
     DIR_WAVFILE = DIR_DATA + '/speech/data/lisa/data/timit/raw/TIMIT/'
-    DIR_IV_dict = {'TRAIN': DIR_DATA + '/IV/TRAIN',
-                   'TEST': DIR_DATA + '/IV/TEST'}
+    DIR_IV_dict = {'TRAIN': path.join(DIR_DATA, 'IV/TRAIN'),
+                   'TEST': path.join(DIR_DATA, 'IV/TEST')}
     FORM = '%04d_%02d.h5'
     ID = '*.WAV'  # The common name of wave file
 
-    # main needs the arguments
-    # python main.py FUNCTION [TRAIN(default) | TEST] [ADDITIONAL_ARG]
     if len(sys.argv) == 1:
         print('Arguments are needed')
         exit()
@@ -38,7 +46,7 @@ if __name__ == '__main__':
         DIR_WAVFILE += KIND_DATA
 
         # RIR Data
-        transfer_dict = scio.loadmat(os.path.join(DIR_DATA, 'RIR_Ys.mat'),
+        transfer_dict = scio.loadmat(path.join(DIR_DATA, 'RIR_Ys.mat'),
                                      squeeze_me=True)
         RIRs = transfer_dict['RIR_'+KIND_DATA].transpose((2, 0, 1))
         Ys = transfer_dict['Ys_'+KIND_DATA].T
@@ -48,7 +56,7 @@ if __name__ == '__main__':
         #     Ys[ii] = Ys_original[ii]
 
         # SFT Data
-        sft_dict = scio.loadmat(os.path.join(DIR_DATA, 'sft_data.mat'),
+        sft_dict = scio.loadmat(path.join(DIR_DATA, 'sft_data.mat'),
                                 variable_names=('bEQspec', 'Yenc',
                                                 'Wnv', 'Wpv', 'Vv'),
                                 squeeze_me=True)
@@ -63,14 +71,14 @@ if __name__ == '__main__':
 
         # The index of the first wave file that have to be processed
         idx_start \
-            = len(glob(os.path.join(DIR_IV, f'*_{RIRs.shape[0]-1:02d}.h5')))+1
+            = len(glob(path.join(DIR_IV, f'*_{RIRs.shape[0]-1:02d}.h5')))+1
 
         p = Pre(RIRs, Ys, sftdata)
         p.process(DIR_WAVFILE, ID, idx_start, DIR_IV, FORM)
 
     else:  # the functions that need metadata
         metadata \
-            = dd.io.load(os.path.join(DIR_IV_dict['TRAIN'], 'metadata.h5'))
+            = dd.io.load(path.join(DIR_IV_dict['TRAIN'], 'metadata.h5'))
 
         if sys.argv[1] == 'train_nn':
             trainer = NNTrainer(DIR_IV_dict['TRAIN'], DIR_IV_dict['TEST'],
@@ -92,8 +100,8 @@ if __name__ == '__main__':
             loss_test, snr_test_dB = trainer.eval(
                 FNAME=f'MLP_result_{str_epoch}_test.mat'
             )
-            print(f'Test Loss: {NDARR_TO_STR(loss_test)}\t'
-                  f'Test SNR (dB): {NDARR_TO_STR(snr_test_dB)}')
+            print(f'Test Loss: {array2string(loss_test)}\t'
+                  f'Test SNR (dB): {array2string(snr_test_dB)}')
 
         # elif sys.argv[1] == 'show_IV_image':
         #     doSave = False
@@ -111,7 +119,7 @@ if __name__ == '__main__':
         #     if not FNAME.endswith('.npy'):
         #         FNAME += '.npy'
         #
-        #     IV_dict = np.load(os.path.join(DIR_IV, FNAME)).item()
+        #     IV_dict = np.load(path.join(DIR_IV, FNAME)).item()
         #
         #     IVnames = [key for key in IV_dict if key.startswith('IV')]
         #     title = ['{} ({})'.format(FNAME.replace('.npy',''),

@@ -5,6 +5,7 @@ import cupy as cp
 import scipy.signal as scsig
 
 import os
+from os import path
 import time
 from glob import glob
 import deepdish as dd
@@ -23,7 +24,7 @@ NDArray = TypeVar('NDArray', np.ndarray, cp.ndarray)
 def search_all_files(DIR_WAVFILE: str, ID: str) -> List[str]:
     result = []
     for folder, _, _ in os.walk(DIR_WAVFILE):
-        files = glob(os.path.join(folder, ID))
+        files = glob(path.join(folder, ID))
         if not files:
             continue
         result += files
@@ -41,7 +42,7 @@ class SFTData(NamedTuple):
     Wpv: NDArray
     Vv: NDArray
 
-    def get_triags(self):
+    def get_triags(self) -> Tuple:
         return (self.Wnv, self.Wpv, self.Vv)
 
 
@@ -74,7 +75,7 @@ class PreProcessor:
 
     def process(self, DIR_WAVFILE: str, ID: str, idx_start: int,
                 DIR_IV: str, FORM: str, N_CORES=mp.cpu_count()//4):
-        if not os.path.exists(DIR_IV):
+        if not path.exists(DIR_IV):
             os.makedirs(DIR_IV)
         self.DIR_IV = DIR_IV
 
@@ -236,7 +237,7 @@ class PreProcessor:
                    # 'norm_factor_room': norm_factor_room,
                    }
             FNAME = FORM % (*args, i_loc)
-            dd.io.save(os.path.join(self.DIR_IV, FNAME), dic, compression=None)
+            dd.io.save(path.join(self.DIR_IV, FNAME), dic, compression=None)
 
             print(FORM % (*args, i_loc))
 
@@ -263,7 +264,7 @@ class PreProcessor:
                     'path_wavfiles': self.all_files,
                     }
 
-        dd.io.save(os.path.join(self.DIR_IV, 'metadata.h5'), metadata)
+        dd.io.save(path.join(self.DIR_IV, 'metadata.h5'), metadata)
 
     @staticmethod
     def seltriag(Ain: NDArray, nrord: int, shft: Tuple[int, int]) -> NDArray:

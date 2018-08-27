@@ -17,7 +17,7 @@ from typing import NamedTuple, Tuple
 from iv_dataset import IVDataset, norm_iv
 
 
-def NDARR_TO_STR(a):
+def array2string(a):
     return np.array2string(a, formatter={'float_kind': lambda x: f'{x:.2e}'})
 
 
@@ -233,8 +233,8 @@ class NNTrainer():
                             FNAME=f'MLP_result_{epoch}.mat')
 
             # print loss, snr and save
-            print(f'Validation Loss: {NDARR_TO_STR(loss_valid[epoch])}\t'
-                  f'Validation SNR (dB): {NDARR_TO_STR(snr_valid_dB[epoch])}')
+            print(f'Validation Loss: {array2string(loss_valid[epoch])}\t'
+                  f'Validation SNR (dB): {array2string(snr_valid_dB[epoch])}')
 
             scio.savemat(f'MLP_loss_{epoch}.mat',
                          {'loss_train': loss_train,
@@ -262,8 +262,8 @@ class NNTrainer():
         # Test and print
         loss_test, snr_test_dB = self.eval(FNAME='MLP_result_test.mat')
         print('')
-        print(f'Test Loss: {NDARR_TO_STR(loss_test)}\t'
-              f'Test SNR (dB): {NDARR_TO_STR(snr_test_dB)}')
+        print(f'Test Loss: {array2string(loss_test)}\t'
+              f'Test SNR (dB): {array2string(snr_test_dB)}')
 
     def eval(self, loader: DataLoader=None, FNAME='') -> Tuple[float, float]:
         """
