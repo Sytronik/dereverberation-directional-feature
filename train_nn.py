@@ -300,7 +300,7 @@ class NNTrainer():
                 output = self.model(_input)
 
                 y_stacked = y_stacked_cpu.cuda(device=1)
-                y_vec = y_stacked.view(N_frame, -1)
+                # y_vec = y_stacked.view(N_frame, -1)
                 # loss = self.criterion(output, y_vec)/N_frame
                 # =============================================================
                 # Reconstruct & Performance Measure
