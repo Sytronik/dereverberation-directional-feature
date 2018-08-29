@@ -191,12 +191,13 @@ class NNTrainer():
 
         loss_train = np.zeros(hparams.N_epochs)
         # loss_valid = np.zeros(hparams.N_epochs)
-        # snr_valid_dB = np.zeros(hparams.N_epochs)
+        # snr_seg_valid = np.zeros(hparams.N_epochs)
         loss_valid = np.zeros((hparams.N_epochs, 3))
-        snr_valid_dB = np.zeros((hparams.N_epochs, 3))
+        snr_seg_valid = np.zeros((hparams.N_epochs, 3))
 
         scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                     step_size=1, gamma=0.8)
+        N_frame = loader_train.batch_size
         for epoch in range(hparams.N_epochs):
             t_start = time.time()
 
@@ -208,7 +209,7 @@ class NNTrainer():
                 x_stacked = data['x_stacked']
                 y_stacked = data['y_stacked']
 
-                N_frame = x_stacked.size(0)
+                # N_frame = x_stacked.size(0)
                 # if epoch == 0:
                 #     N_total_frame += N_frame
 
@@ -228,18 +229,18 @@ class NNTrainer():
             loss_train[epoch] /= len(loader_train.dataset)
 
             # Validation
-            loss_valid[epoch], snr_valid_dB[epoch] \
+            loss_valid[epoch], snr_seg_valid[epoch] \
                 = self.eval(loader_valid,
                             FNAME=f'MLP_result_{epoch}.mat')
 
             # print loss, snr and save
             print(f'Validation Loss: {array2string(loss_valid[epoch])}\t'
-                  f'Validation SNR (dB): {array2string(snr_valid_dB[epoch])}')
+                  f'Validation SNR (dB): {array2string(snr_seg_valid[epoch])}')
 
             scio.savemat(f'MLP_loss_{epoch}.mat',
                          {'loss_train': loss_train,
                           'loss_valid': loss_valid,
-                          'snr_valid_dB': snr_valid_dB,
+                          'snr_seg_valid': snr_seg_valid,
                           }
                          )
             torch.save(self.model.state_dict(),
@@ -277,12 +278,13 @@ class NNTrainer():
         # avg_loss = 0.
         # avg_snr =  0.
         avg_loss = np.zeros(3)
-        avg_snr = np.zeros(3)
+        snr_seg = np.zeros(3)
         iteration = 0
-        # norm_frames = [None]*len(loader)
-        # norm_errors = [None]*len(loader)
+        norm_frames = [None]*len(loader)
+        norm_errors = [None]*len(loader)
         dict_to_save = {}
         printProgress(iteration, len(loader), 'eval:')
+        N_frame = loader.batch_size
         with torch.no_grad():
             self.model.eval()
 
@@ -291,7 +293,7 @@ class NNTrainer():
                 x_stacked = data['x_stacked']
                 y_stacked_cpu = data['y_stacked']
 
-                N_frame = x_stacked.size(0)
+                # N_frame = x_stacked.size(0)
 
                 _input = x_stacked.view(N_frame, -1).cuda(device=0)
                 # =========================forward=============================
@@ -299,7 +301,7 @@ class NNTrainer():
 
                 y_stacked = y_stacked_cpu.cuda(device=1)
                 y_vec = y_stacked.view(N_frame, -1)
-                loss = self.criterion(output, y_vec)/N_frame
+                # loss = self.criterion(output, y_vec)/N_frame
                 # =============================================================
                 # Reconstruct & Performance Measure
                 out_stacked = output.view(y_stacked.size())
@@ -312,46 +314,44 @@ class NNTrainer():
                 y_recon = IVDataset.unstack_y(y_denorm)
                 out_recon = IVDataset.unstack_y(out_denorm)
 
-                # norm_frames[iteration-1] = norm_iv(y_recon)
-                # norm_errors[iteration-1] = norm_iv(out_recon-y_recon)
-                # norm_frames = norm_iv(y_recon)
-                # norm_errors = norm_iv(out_recon-y_recon)
-                # avg_snr += (norm_frames / norm_errors).sum()
-                norm_errors = norm_iv(out_np - y_np,
-                                      parts=('I', 'a', 'all'))
-                avg_loss += [a.sum() for a in norm_errors]
+                norm_normalized = norm_iv(out_np - y_np,
+                                          parts=('I', 'a', 'all'))  # 3 x t
+                avg_loss += norm_normalized.sum(axis=1)
 
-                norm_frames = norm_iv(y_recon,
-                                      parts=('I', 'a', 'all'))
-                norm_errors = norm_iv(out_recon - y_recon,
-                                      parts=('I', 'a', 'all'))
-                avg_snr += [(a/b).sum()
-                            for a, b in zip(norm_frames, norm_errors)]
+                # 3 x t x f
+                norm_frames[iteration-1] = norm_iv(y_recon,
+                                                   keep_freq_axis=True,
+                                                   parts=('I', 'a', 'all'))
+                norm_errors[iteration-1] = norm_iv(out_recon - y_recon,
+                                                   keep_freq_axis=True,
+                                                   parts=('I', 'a', 'all'))
+
+                sum_frames = norm_frames[iteration-1].sum(axis=2)
+                sum_errors = norm_errors[iteration-1].sum(axis=2)
+                snr_seg += 10*np.log10(sum_frames/sum_errors).sum(axis=1)
 
                 # Save IV Result
                 if FNAME and not dict_to_save:
-                    N_frame = loader.dataset.N_frames[0]
+                    N_first = loader.dataset.N_frames[0]
                     x_stacked = loader.dataset.denormalize(x_stacked, 'x')
-                    x_recon = IVDataset.unstack_x(x_stacked[:N_frame]).numpy()
-                    dict_to_save = {'IV_free': y_recon[:, :N_frame, :],
+                    x_recon = IVDataset.unstack_x(x_stacked[:N_first]).numpy()
+                    dict_to_save = {'IV_free': y_recon[:, :N_first, :],
                                     'IV_room': x_recon,
-                                    'IV_estimated': out_recon[:, :N_frame, :],
+                                    'IV_estimated': out_recon[:, :N_first, :],
                                     }
 
                 printProgress(iteration, len(loader),
-                              f'{"eval":<9}: {loss.data.item():.1e}')
+                              f'{"eval":<9}: {norm_errors[2]:.1e}')
 
-            # norm_frames = np.concatenate(norm_frames)
-            # norm_errors = np.concatenate(norm_errors)
-            # avg_loss /= norm_frames.shape[0]
-            # avg_snr = (norm_frames / norm_errors).mean()
             avg_loss /= len(loader.dataset)
-            avg_snr /= len(loader.dataset)
-            avg_snr_dB = 10*np.log10(avg_snr)
+            snr_seg /= len(loader.dataset)
 
             if FNAME:
-                # dict_to_save['norm_frames'] = norm_frames
-                # dict_to_save['norm_errors'] = norm_errors
+                norm_frames = np.concatenate(norm_frames, axis=1)
+                norm_errors = np.concatenate(norm_errors, axis=1)
+
+                dict_to_save['norm_frames'] = norm_frames
+                dict_to_save['norm_errors'] = norm_errors
                 scio.savemat(FNAME, dict_to_save)
             self.model.train()
-        return avg_loss, avg_snr_dB
+        return avg_loss, snr_seg

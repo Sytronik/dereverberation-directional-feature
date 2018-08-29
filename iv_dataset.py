@@ -365,7 +365,8 @@ class IVDataset(Dataset):
         return tuple(result)
 
 
-def norm_iv(data: gen.TensArr, parts: Union[str, List[str], Tuple[str]]='all'):
+def norm_iv(data: gen.TensArr, keep_freq_axis=False,
+            parts: Union[str, List[str], Tuple[str]]='all') -> gen.TensArr:
     dim = gen.ndim(data)
     if dim != 3 and dim != 4:
         raise f'Dimension Mismatch: {dim}'
@@ -381,14 +382,19 @@ def norm_iv(data: gen.TensArr, parts: Union[str, List[str], Tuple[str]]='all'):
     result = []
     for part in parts:
         if part in DICT_IDX.keys():
-            temp = data[..., DICT_IDX[part]]**2
+            squared = data[..., DICT_IDX[part]]**2
             if dim == 3:
-                axis = (0, 2)
+                axis = (0, 2)  # N_freq, channel
             else:
-                axis = (1, 2, 3)
-            result.append(gen.sum_axis(temp, axis=axis))
+                axis = (1, 2, 3)  # N_freq, L_cut, channel
+            if keep_freq_axis:
+                axis = axis[1:]
+            norm = gen.sum_axis(squared, axis=axis)
+            if dim == 3:
+                norm = transpose(norm)
+            result.append(norm)
         else:
             raise ValueError('"parts" should be "I", "a", or "all" '
                              'or an array of them')
 
-    return result[0] if len(result) == 1 else result
+    return result[0] if len(result) == 1 else stack(result)

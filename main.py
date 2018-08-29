@@ -97,11 +97,11 @@ if __name__ == '__main__':
                                 f_model_state=f'MLP_{str_epoch}.pt'
                                 )
 
-            loss_test, snr_test_dB = trainer.eval(
+            loss_test, snr_seg_test = trainer.eval(
                 FNAME=f'MLP_result_{str_epoch}_test.mat'
             )
             print(f'Test Loss: {array2string(loss_test)}\t'
-                  f'Test SNR (dB): {array2string(snr_test_dB)}')
+                  f'Test SNR (dB): {array2string(snr_seg_test)}')
 
         # elif sys.argv[1] == 'show_IV_image':
         #     doSave = False
