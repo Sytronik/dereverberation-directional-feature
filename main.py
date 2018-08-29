@@ -50,10 +50,10 @@ if __name__ == '__main__':
                                      squeeze_me=True)
         RIRs = transfer_dict['RIR_'+KIND_DATA].transpose((2, 0, 1))
         Ys = transfer_dict['Ys_'+KIND_DATA].T
-        # Ys_original = transfer_dict['Ys']
-        # Ys = np.zeros((Ys_original.size, Ys_original[0].size), dtype=complex)
-        # for ii in range(Ys_original.size):
-        #     Ys[ii] = Ys_original[ii]
+
+        # RIRs_0 = scio.loadmat(path.join(DIR_DATA, 'RIR_0_order.mat'),
+        #                       variable_names='RIR_'+KIND_DATA)
+        # RIRs_0 = RIRs_0['RIR_'+KIND_DATA].transpose((2, 0, 1))
 
         # SFT Data
         sft_dict = scio.loadmat(path.join(DIR_DATA, 'sft_data.mat'),
@@ -73,6 +73,7 @@ if __name__ == '__main__':
         idx_start \
             = len(glob(path.join(DIR_IV, f'*_{RIRs.shape[0]-1:02d}.h5')))+1
 
+        # p = Pre(RIRs, Ys, sftdata, RIRs_0=RIRs_0)
         p = Pre(RIRs, Ys, sftdata)
         p.process(DIR_WAVFILE, ID, idx_start, DIR_IV, FORM)
 

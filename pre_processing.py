@@ -47,21 +47,21 @@ class SFTData(NamedTuple):
 
 
 class PreProcessor:
-    def __init__(self, RIRs, Ys, sftdata: SFTData, L_WIN_MS=20.):
+    def __init__(self, RIRs: np.ndarray, Ys: np.ndarray, sftdata: SFTData,
+                 L_WIN_MS=20., RIRs_0: np.ndarray=None):
         # Bug Fix
         np.fft.restore_all()
         # From Parameters
         self.RIRs = RIRs
         self.N_LOC, self.N_MIC, self.L_RIR = RIRs.shape
         self.Ys = Ys
+        self.RIRs_0 = RIRs_0
         self.sftdata = sftdata
 
         self.L_WIN_MS = L_WIN_MS
 
         # Determined during process
         self.DIR_IV = ''
-        self.N_frame_free = 0
-        self.N_frame_room = 0
         self.all_files = []
 
         # Common for all wave file
@@ -122,10 +122,6 @@ class PreProcessor:
 
             # print(fname)
 
-            # Data length
-            self.N_frame_free = data.shape[0]//self.L_hop - 1
-            self.N_frame_room = (data.shape[0]+self.L_RIR-1)//self.L_hop - 1
-
             # logger = mp.log_to_stderr()  # debugging subprocess
             # logger.setLevel(mp.SUBDEBUG)  # debugging subprocess
             pools.append(mp.Pool(N_CORES))
@@ -168,6 +164,8 @@ class PreProcessor:
             else:
                 self.N_wavfile += 1
 
+        for pool in pools:
+            pool.join()
         print('Done.')
         self.print_save_info()
 
@@ -190,54 +188,88 @@ class PreProcessor:
         Ys = cp.array(self.Ys)
         sftdata = SFTData(*[cp.array(item) for item in self.sftdata])
 
+        N_frame_free = data.shape[0]//self.L_hop - 1
+        N_frame_room = (data.shape[0]+self.L_RIR-1)//self.L_hop - 1
+
         for i_loc in range_loc:
             # RIR Filtering
-            filtered \
+            # data_0 \
+            #     = cp.array(scsig.fftconvolve(cp.asnumpy(data.reshape(1, -1)),
+            #                                  self.RIRs_0[i_loc]))
+            data_room \
                 = cp.array(scsig.fftconvolve(cp.asnumpy(data.reshape(1, -1)),
                                              self.RIRs[i_loc]))
 
+            # Energy using 0-th Order RIR
+            # iv_0 = cp.zeros((self.N_freq, N_frame_room, 4))
+            # energy_0 = 0
+            # for i_frame in range(N_frame_room):
+            #     interval = i_frame*self.L_hop + np.arange(self.L_frame)
+            #     fft = cp.fft.fft(data_0[:, interval]*win, n=self.N_fft)
+            #     anm = (sftdata.Yenc @ fft) * sftdata.bEQspec
+            #     energy_0 += cp.sum(cp.abs(anm[:, :self.N_freq])**2)
+            #
+            #     iv_0[:, i_frame, :3] \
+            #         = PreProcessor.calc_intensity(anm[:, :self.N_freq],
+            #                                       *sftdata.get_triags())
+            #     iv_0[:, i_frame, 3] \
+            #         = cp.sum(cp.abs(anm[:, :self.N_freq])**2, axis=0)
+            #
+            # energy_0 /= N_frame_room
+
             # Free-field Intensity Vector Image
-            iv_free = cp.zeros((self.N_freq, self.N_frame_free, 4))
+            iv_free = cp.zeros((self.N_freq, N_frame_free, 4))
+            # energy_free = 0
             # norm_factor_free = float('-inf')
-            for i_frame in range(self.N_frame_free):
+            for i_frame in range(N_frame_free):
                 interval = i_frame*self.L_hop + np.arange(self.L_frame)
                 fft = cp.fft.fft(data[interval]*win, n=self.N_fft)
                 anm = cp.outer(Ys[i_loc].conj(), fft)
+                # energy_free += cp.sum(cp.abs(anm[:, :self.N_freq])**2)
 
                 iv_free[:, i_frame, :3] \
                     = PreProcessor.calc_intensity(anm[:, :self.N_freq],
                                                   *sftdata.get_triags())
-                iv_free[:, i_frame, 3] = cp.abs(anm[0, :self.N_freq])**2
-
+                iv_free[:, i_frame, 3] \
+                    = cp.sum(cp.abs(anm[:, :self.N_freq])**2, axis=0)
                 # max_in_frame \
                 #     = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
                 # norm_factor_free = np.max([norm_factor_free, max_in_frame])
+            iv_free /= iv_free[:, :, 3].mean()
+            # energy_free /= N_frame_free
+            # print((energy_0 / energy_free))
+            # iv_free *= (energy_0 / energy_free)
 
             # Room Intensity Vector Image
-            iv_room = cp.zeros((self.N_freq, self.N_frame_room, 4))
+            iv_room = cp.zeros((self.N_freq, N_frame_room, 4))
             # norm_factor_room = float('-inf')
-            for i_frame in range(self.N_frame_room):
+            for i_frame in range(N_frame_room):
                 interval = i_frame*self.L_hop + np.arange(self.L_frame)
-                fft = cp.fft.fft(filtered[:, interval]*win, n=self.N_fft)
+                fft = cp.fft.fft(data_room[:, interval]*win, n=self.N_fft)
                 anm = (sftdata.Yenc @ fft) * sftdata.bEQspec
 
                 iv_room[:, i_frame, :3] \
                     = PreProcessor.calc_intensity(anm[:, :self.N_freq],
                                                   *sftdata.get_triags())
-                iv_room[:, i_frame, 3] = cp.abs(anm[0, :self.N_freq])**2
+                iv_room[:, i_frame, 3] \
+                    = cp.sum(cp.abs(anm[:, :self.N_freq])**2, axis=0)
 
                 # max_in_frame \
                 #     = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
                 # norm_factor_room = np.max([norm_factor_room, max_in_frame])
+            iv_room /= iv_room[:, :, 3].mean()
 
             # Save
-            dic = {'IV_free': cp.asnumpy(iv_free),
-                   'IV_room': cp.asnumpy(iv_room),
-                   # 'norm_factor_free': norm_factor_free,
-                   # 'norm_factor_room': norm_factor_room,
-                   }
+            dict_to_save = {'IV_free': cp.asnumpy(iv_free),
+                            'IV_room': cp.asnumpy(iv_room),
+                            # 'IV_0': cp.asnumpy(iv_0),
+                            # 'data': cp.asnumpy(data),
+                            # 'norm_factor_free': norm_factor_free,
+                            # 'norm_factor_room': norm_factor_room,
+                            }
             FNAME = FORM % (*args, i_loc)
-            dd.io.save(path.join(self.DIR_IV, FNAME), dic, compression=None)
+            dd.io.save(path.join(self.DIR_IV, FNAME), dict_to_save,
+                       compression=None)
 
             print(FORM % (*args, i_loc))
 
