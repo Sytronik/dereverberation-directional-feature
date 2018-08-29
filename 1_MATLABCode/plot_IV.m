@@ -1,6 +1,6 @@
 if ~exist('IV_free')
     clear;
-    load 'MLP_result_59.mat'
+    load 'MLP_frame_result_59_test.mat'
 end
 
 N_IV = 1;
@@ -19,9 +19,15 @@ if exist('IV_estimated')
     IVs{N_IV} = IV_estimated;
     titles{N_IV} = 'Estimated Free-field';
 end
+
+if exist('IV_0')
+    N_IV = N_IV+1;
+    IVs{N_IV} = IV_0;
+    titles{N_IV} = 'Free-field with Aliasing';
+end
     
 %% Constants
-gamma = 7;
+gamma = 1/7;
 x_max = 0;
 for ii = 1:N_IV
     [N_freq, temp] = size(IVs{ii}(:,:,1));
@@ -55,7 +61,7 @@ for ii = 1:N_IV
     IVs{ii}(:,:,1:3) = hsv2rgb(hsv);
     
     % contrast enhancment
-    IVs{ii}(:,:,1:3) = IVs{ii}(:,:,1:3).^(1/gamma);
+    IVs{ii}(:,:,1:3) = IVs{ii}(:,:,1:3).^gamma;
 %     IVs{ii}(:,:,1:3) = 1./(1+exp(-gamma*(IVs{ii}(:,:,1:3)-0.5)));
 %     IVs{ii}(:,:,1:3) = (IVs{ii}(:,:,1:3)-0.5)/2./max(max(max(abs(IVs{ii}(:,:,1:3)-0.5))))+0.5;
 
@@ -64,6 +70,7 @@ for ii = 1:N_IV
     IVs{ii}(:,:,4) = (IVs{ii}(:,:,4)>0).*IVs{ii}(:,:,4);
     
     % normalize
+    [num2str(mean(mean(IVs{ii}(:,:,4)))) ' ' num2str(max(max(IVs{ii}(:,:,4))))]
     IVs{ii}(:,:,4) = IVs{ii}(:,:,4) / max(max(IVs{ii}(:,:,4)));
     
     % dB scale
@@ -118,12 +125,14 @@ for ii = 1:N_IV
     drawnow;
     c.Location = 'eastoutside';
 end
-fname = ['MLP_pReLU_result_26_HSV_' num2str(N_IV)];
-print('-dpng' , '-r600' , fname)
-saveas(fig,fname,'fig')
+% fname = ['MLP_frame_result_23_' num2str(N_IV)];
+% print('-dpng' , '-r600' , fname)
+% saveas(fig,fname,'fig')
 
 n=2;
 figure('DefaultAxesFontSize',14, 'Position',[50 40 800 950]);
+fig = gcf;
+set(fig,'renderer','painter');
 for ii = 1:N_IV
     ax=subplot(N_IV,1,ii);
     board = repmat((checkerboard(n, ceil(N_freq/2/n), ceil(x_max/2/n))>0.5)*0.2+0.8, [1 1 3]);
@@ -139,10 +148,8 @@ for ii = 1:N_IV
     title([titles{ii} ' $\mathbf{I}(\tau,f)$ (HSV) \& $|a_{00}(\tau,f)|^2$ (dB)'], 'Interpreter', 'latex');
     hold off;
 end
-fig = gcf;
-set(fig,'renderer','painter');
-fname = ['MLP_pReLU_result_26_HSVa_' num2str(N_IV)];
-print('-dpng' , '-r600' , fname)
-saveas(fig,fname,'fig')
+% fname = ['MLP_frame_result_23_merge_a_' num2str(N_IV)];
+% print('-dpng' , '-r600' , fname)
+% saveas(fig,fname,'fig')
 % clear;
 % close all;
