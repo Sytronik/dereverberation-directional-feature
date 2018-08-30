@@ -10,11 +10,15 @@ from torch.utils.data import DataLoader
 import gc
 import os
 import time
-import multiprocessing as mp
+from multiprocessing import cpu_count  # noqa: F401
 
 from typing import NamedTuple, Tuple
 
 from iv_dataset import IVDataset, norm_iv
+
+
+# NUM_WORKERS = cpu_count()
+NUM_WORKERS = 0
 
 
 def array2string(a):
@@ -99,11 +103,11 @@ class HyperParameters(NamedTuple):
     """
     Hyper Parameters of NN
     """
-    N_epochs = 60
+    N_epochs = 50
     batch_size = 1900
     learning_rate = 5e-4
-    N_file = 10800
-    L_cut_x = 13
+    N_file = 7200
+    L_cut_x = 19
 
     n_input: int
     n_hidden: int
@@ -156,7 +160,7 @@ class NNTrainer():
                                       batch_size=hparams.batch_size,
                                       shuffle=False,
                                       # collate_fn=IVDataset.my_collate,
-                                      num_workers=mp.cpu_count(),
+                                      num_workers=NUM_WORKERS,
                                       )
 
         # Model (Using Parallel GPU)
@@ -179,13 +183,13 @@ class NNTrainer():
         loader_train = DataLoader(data_train,
                                   batch_size=hparams.batch_size,
                                   shuffle=True,
-                                  num_workers=mp.cpu_count(),
+                                  num_workers=NUM_WORKERS,
                                   # collate_fn=IVDataset.my_collate,
                                   )
         loader_valid = DataLoader(data_valid,
                                   batch_size=hparams.batch_size,
                                   shuffle=False,
-                                  num_workers=mp.cpu_count(),
+                                  num_workers=NUM_WORKERS,
                                   # collate_fn=IVDataset.my_collate,
                                   )
 
@@ -197,7 +201,6 @@ class NNTrainer():
 
         scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
                                                     step_size=1, gamma=0.8)
-        N_frame = loader_train.batch_size
         for epoch in range(hparams.N_epochs):
             t_start = time.time()
 
@@ -209,7 +212,7 @@ class NNTrainer():
                 x_stacked = data['x_stacked']
                 y_stacked = data['y_stacked']
 
-                # N_frame = x_stacked.size(0)
+                N_frame = x_stacked.size(0)
                 # if epoch == 0:
                 #     N_total_frame += N_frame
 
@@ -284,7 +287,6 @@ class NNTrainer():
         norm_errors = [None]*len(loader)
         dict_to_save = {}
         printProgress(iteration, len(loader), 'eval:')
-        N_frame = loader.batch_size
         with torch.no_grad():
             self.model.eval()
 
@@ -293,7 +295,7 @@ class NNTrainer():
                 x_stacked = data['x_stacked']
                 y_stacked_cpu = data['y_stacked']
 
-                # N_frame = x_stacked.size(0)
+                N_frame = x_stacked.size(0)
 
                 _input = x_stacked.view(N_frame, -1).cuda(device=0)
                 # =========================forward=============================
@@ -316,7 +318,8 @@ class NNTrainer():
 
                 norm_normalized = norm_iv(out_np - y_np,
                                           parts=('I', 'a', 'all'))  # 3 x t
-                avg_loss += norm_normalized.sum(axis=1)
+                loss = norm_normalized.sum(axis=1)
+                avg_loss += loss
 
                 # 3 x t x f
                 norm_frames[iteration-1] = norm_iv(y_recon,
@@ -341,7 +344,8 @@ class NNTrainer():
                                     }
 
                 printProgress(iteration, len(loader),
-                              f'{"eval":<9}: {norm_errors[2]:.1e}')
+                              f'{"eval":<9}: {loss[2]:.1e}'
+                              )
 
             avg_loss /= len(loader.dataset)
             snr_seg /= len(loader.dataset)
