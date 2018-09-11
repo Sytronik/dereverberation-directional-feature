@@ -1,23 +1,28 @@
 % final_epoch = 60
-clear;
+% clear;
 % loss_struct{1} = load('MLP_pReLU_loss_39.mat');
-loss_struct{1} = load('MLP_loss_59.mat');
+% loss_struct{1} = load('MLP_loss_59.mat');
 sum_I_a = false;
-% load(['MLP_result_' num2str(final_epoch) '.mat'])
-% clear 'IV_free' 'IV_room' 'IV_estimated'
-% loss_struct{1}.loss_train = loss_train
-% loss_struct{1}.loss_valid = loss_valid
-% loss_struct{1}.snr_valid_dB = snr_valid_dB
+only_all = true;
+loss_struct{1}.loss_train = loss_train;
+loss_struct{1}.loss_valid = loss_valid;
+loss_struct{1}.snr_seg_valid = snr_seg_valid;
 
 
-epochs = 1:60;
+epochs = 1:50;
 
 
 for ii = 1:numel(loss_struct)
     [~, N] = size(loss_struct{ii}.loss_valid);
     if N == 2 || N == 3
-        loss_struct{ii}.loss_valid = loss_struct{ii}.loss_valid.';
-        loss_struct{ii}.snr_valid_dB = loss_struct{ii}.snr_valid_dB.';
+        if only_all
+            loss_struct{ii}.loss_valid = loss_struct{ii}.loss_valid(:,3).';
+            loss_struct{ii}.snr_seg_valid = loss_struct{ii}.snr_seg_valid(:,3).';
+
+        else
+            loss_struct{ii}.loss_valid = loss_struct{ii}.loss_valid.';
+            loss_struct{ii}.snr_seg_valid = loss_struct{ii}.snr_seg_valid.';
+        end
     end
     [M, ~] = size(loss_struct{ii}.loss_valid);
     if sum_I_a && M ==2
@@ -29,7 +34,8 @@ for ii = 1:numel(loss_struct)
 %     loss_struct{ii}.loss_valid = loss_struct{ii}.loss_valid/161;
 end
 
-figure('DefaultAxesFontSize',14); clf;
+close all;
+figure('DefaultAxesFontSize',14);
 ax=subplot(2,1,1);
 for ii = 1:numel(loss_struct)
     ax.ColorOrderIndex = ii;
@@ -43,10 +49,7 @@ grid on
 xlabel('epoch');
 xlim([0 epochs(end)]);
 ylabel('Mean squared error loss');
-legend('file-based (train set)', 'file-based (validation set)', ...
-       'frame-based (train set)', ...
-       'frame-based (validation set)', 'frame-based (validation set, I)', ...
-       'frame-based (validation set, a)');
+legend('train set', 'validation set');
 % legend('frame-based (validation set, L_I)', ...
 %        'frame-based (validation set, L_\alpha)');
 
@@ -54,16 +57,15 @@ ax = subplot(2,1,2);
 for ii = 1:numel(loss_struct)
     hold on;
     ax.ColorOrderIndex = ii;
-    plot(epochs, loss_struct{ii}.snr_valid_dB(:,epochs));
+    plot(epochs, loss_struct{ii}.snr_seg_valid(:,epochs));
 end
 hold off;
 box on;
 grid on;
 xlabel('epoch');
 xlim([0 epochs(end)]);
-ylabel('SNR (dB)');
-legend('file-based (validation set, SNR)', 'frame-based (validation set, SNR_I)', ...
-       'frame-based (validation set, SNR_\alpha)','Location','southeast');
+ylabel('SNRseg (dB)');
+legend('validation set' ,'Location','southeast');
 % legend('frame-based (validation set, SNR_I)', ...
 %        'frame-based (validation set, SNR_\alpha)','Location','southeast');
 

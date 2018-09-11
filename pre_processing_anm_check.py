@@ -55,7 +55,7 @@ class PreProcessor:
         self.RIRs = RIRs
         self.N_LOC, self.N_MIC, self.L_RIR = RIRs.shape
         self.Ys = Ys
-        # self.RIRs_0 = RIRs_0
+        self.RIRs_0 = RIRs_0
         self.sftdata = sftdata
 
         self.L_WIN_MS = L_WIN_MS
@@ -91,83 +91,33 @@ class PreProcessor:
         print(f'Start processing from the {idx_start}-th wave file')
 
         # Search all wave files
-        self.all_files = search_all_files(DIR_WAVFILE, ID)
+        # self.all_files = search_all_files(DIR_WAVFILE, ID)
+        self.Fs = 16000
+        data = np.random.normal(size=(16000*10))
+        self.L_frame = int(self.Fs*self.L_WIN_MS//1000)
+        self.N_fft = self.L_frame
+        if self.N_fft % 2 == 0:
+            self.N_freq = self.N_fft//2 + 1
+        else:
+            self.N_freq = self.N_fft//2
+        self.L_hop = self.L_frame//2
 
+        self.win = scsig.hamming(self.L_frame, sym=False)
+
+        pdb.set_trace()
         # Main Process
-        pools: List[mp.pool.Pool] = []
-        t_start: int
-        for fname in self.all_files:
-            if self.N_wavfile < idx_start-1:
-                self.N_wavfile += 1
-                continue
-
-            if (self.N_wavfile - idx_start) % max_n_pool == max_n_pool-1:
-                t_start = time.time()
-
-            # File Open (& Resample)
-            if self.Fs == 0:
-                data, self.Fs = sf.read(fname)
-                self.L_frame = int(self.Fs*self.L_WIN_MS//1000)
-                self.N_fft = self.L_frame
-                if self.N_fft % 2 == 0:
-                    self.N_freq = self.N_fft//2 + 1
-                else:
-                    self.N_freq = self.N_fft//2
-                self.L_hop = self.L_frame//2
-
-                self.win = scsig.hamming(self.L_frame, sym=False)
-                self.print_save_info()
+        for i_proc in range(N_CORES):
+            if (i_proc + 1) * n_loc_per_core <= self.N_LOC:
+                range_loc = range(i_proc * n_loc_per_core,
+                                  (i_proc+1) * n_loc_per_core)
+            elif i_proc * n_loc_per_core < self.N_LOC:
+                range_loc = range(i_proc * n_loc_per_core, self.N_LOC)
             else:
-                data, _ = sf.read(fname)
-
-            # print(fname)
-
-            # logger = mp.log_to_stderr()  # debugging subprocess
-            # logger.setLevel(mp.SUBDEBUG)  # debugging subprocess
-            pools.append(mp.Pool(N_CORES))
-            for i_proc in range(N_CORES):
-                if (i_proc + 1) * n_loc_per_core <= self.N_LOC:
-                    range_loc = range(i_proc * n_loc_per_core,
-                                      (i_proc+1) * n_loc_per_core)
-                elif i_proc * n_loc_per_core < self.N_LOC:
-                    range_loc = range(i_proc * n_loc_per_core, self.N_LOC)
-                else:
-                    break
-                pools[-1].apply_async(self.save_IV,
-                                      (i_proc % N_CUDA_DEV,
-                                       data,
-                                       range_loc,
-                                       FORM, self.N_wavfile+1))
-            pools[-1].close()
-
-            # Non-parallel
-            # for i_proc in range(N_CORES):
-            #     if (i_proc + 1) * n_loc_per_core <= self.N_LOC:
-            #         range_loc = range(i_proc * n_loc_per_core,
-            #                           (i_proc+1) * n_loc_per_core)
-            #     elif i_proc * n_loc_per_core < self.N_LOC:
-            #         range_loc = range(i_proc * n_loc_per_core, self.N_LOC)
-            #     else:
-            #         break
-            #     self.save_IV(i_proc % N_CUDA_DEV,
-            #                  data,
-            #                  range_loc,
-            #                  FORM, self.N_wavfile+1)
-
-            if (self.N_wavfile - idx_start) % max_n_pool == max_n_pool-2:
-                for pool in pools:
-                    pool.join()
-                print(f'{time.time() - t_start:.3f} sec')
-                pools = []
-                self.N_wavfile += 1
-                self.print_save_info()
-            else:
-                self.N_wavfile += 1
-
-        for pool in pools:
-            pool.join()
-        print('Done.')
-        self.print_save_info()
+                break
+            self.save_IV(i_proc % N_CUDA_DEV,
+                         data,
+                         range_loc,
+                         FORM, self.N_wavfile+1)
 
     def save_IV(self, i_dev: int, data: NDArray, range_loc: iter,
                 FORM: str, *args):
@@ -193,75 +143,39 @@ class PreProcessor:
 
         for i_loc in range_loc:
             # RIR Filtering
-            # data_0 \
-            #     = cp.array(scsig.fftconvolve(cp.asnumpy(data.reshape(1, -1)),
-            #                                  self.RIRs_0[i_loc]))
-            data_room \
+            data_0 \
                 = cp.array(scsig.fftconvolve(cp.asnumpy(data.reshape(1, -1)),
-                                             self.RIRs[i_loc]))
+                                             self.RIRs_0[i_loc]))
 
-            # Energy using 0-th Order RIR
-            # iv_0 = cp.zeros((self.N_freq, N_frame_room, 4))
-            # for i_frame in range(N_frame_room):
-            #     interval = i_frame*self.L_hop + np.arange(self.L_frame)
-            #     fft = cp.fft.fft(data_0[:, interval]*win, n=self.N_fft)
-            #     anm = (sftdata.Yenc @ fft) * sftdata.bEQspec
-            #
-            #     iv_0[:, i_frame, :3] \
-            #         = PreProcessor.calc_intensity(anm[:, :self.N_freq],
-            #                                       *sftdata.get_triags())
-            #     iv_0[:, i_frame, 3] \
-            #         = cp.sum(cp.abs(anm[:, :self.N_freq])**2, axis=0)
+            # using 0-th Order RIR
+            iv_0 = cp.zeros((self.N_freq, N_frame_room, 16), dtype=complex)
+            for i_frame in range(N_frame_room):
+                interval = i_frame*self.L_hop + np.arange(self.L_frame)
+                fft = cp.fft.fft(data_0[:, interval]*win, n=self.N_fft)
+                anm = (sftdata.Yenc @ fft) * sftdata.bEQspec
+
+                iv_0[:, i_frame, :] = anm[:, :self.N_freq].T
 
             # Free-field Intensity Vector Image
-            iv_free = cp.zeros((self.N_freq, N_frame_free, 4))
-            # norm_factor_free = float('-inf')
+            iv_free = cp.zeros((self.N_freq, N_frame_free, 16), dtype=complex)
             for i_frame in range(N_frame_free):
                 interval = i_frame*self.L_hop + np.arange(self.L_frame)
                 fft = cp.fft.fft(data[interval]*win, n=self.N_fft)
                 anm = cp.outer(Ys[i_loc].conj(), fft)
-                # energy_free += cp.sum(cp.abs(anm[:, :self.N_freq])**2)
 
-                iv_free[:, i_frame, :3] \
-                    = PreProcessor.calc_intensity(anm[:, :self.N_freq],
-                                                  *sftdata.get_triags())
-                iv_free[:, i_frame, 3] \
-                    = cp.sum(cp.abs(anm[:, :self.N_freq])**2, axis=0)
-
-                # max_in_frame \
-                #     = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
-                # norm_factor_free = np.max([norm_factor_free, max_in_frame])
-            # iv_free /= iv_free[:, :, 3].mean()
-
-            # Room Intensity Vector Image
-            iv_room = cp.zeros((self.N_freq, N_frame_room, 4))
-            # norm_factor_room = float('-inf')
-            for i_frame in range(N_frame_room):
-                interval = i_frame*self.L_hop + np.arange(self.L_frame)
-                fft = cp.fft.fft(data_room[:, interval]*win, n=self.N_fft)
-                anm = (sftdata.Yenc @ fft) * sftdata.bEQspec
-
-                iv_room[:, i_frame, :3] \
-                    = PreProcessor.calc_intensity(anm[:, :self.N_freq],
-                                                  *sftdata.get_triags())
-                iv_room[:, i_frame, 3] \
-                    = cp.sum(cp.abs(anm[:, :self.N_freq])**2, axis=0)
-
-                # max_in_frame \
-                #     = cp.max(0.5*cp.sum(cp.abs(anm)**2, axis=0)).get().item()
-                # norm_factor_room = np.max([norm_factor_room, max_in_frame])
-            # iv_room /= iv_room[:, :, 3].mean()
+                iv_free[:, i_frame, :] = anm[:, :self.N_freq].T
 
             # Save
             dict_to_save = {'IV_free': cp.asnumpy(iv_free),
-                            'IV_room': cp.asnumpy(iv_room),
-                            # 'IV_0': cp.asnumpy(iv_0),
+                            # 'IV_room': cp.asnumpy(iv_room),
+                            'IV_0': cp.asnumpy(iv_0),
                             # 'data': cp.asnumpy(data),
                             # 'norm_factor_free': norm_factor_free,
                             # 'norm_factor_room': norm_factor_room,
                             }
             FNAME = FORM % (*args, i_loc)
-            dd.io.save(path.join(self.DIR_IV, FNAME), dict_to_save,
+            dd.io.save(path.join(self.DIR_IV, FNAME),
+                       dict_to_save,
                        compression=None)
 
             print(FORM % (*args, i_loc))

@@ -149,9 +149,7 @@ class IVDataset(Dataset):
             dd.io.save(fname, data_dict, compression=None)
             y = data_dict[YNAME]
 
-        # x_stacked = cls.stack_x(x, L_trunc=y.shape[1])
-
-        return y.shape[1]
+        return y.shape[1] - cls.L_cut_x // 2
 
     @classmethod
     def sum_frames(cls, tup: Tuple[str, str, str]) -> Tuple[Any, Any, int]:
@@ -163,16 +161,18 @@ class IVDataset(Dataset):
         try:
             data_dict = dd.io.load(fname)
         except:  # noqa: E722
-            fname_npy = fname.replace('.h5', '.npy')
-            data_dict = np.load(fname_npy).item()
-            dd.io.save(fname, data_dict, compression=None)
+            raise Exception(fname)
 
+        half = cls.L_cut_x // 2
         x = data_dict[XNAME]
         y = data_dict[YNAME]
+        max_idx = y.shape[1]
+        min_idx = half
+        x_stacked = cls.stack_x(x[:, min_idx - half:max_idx + half + 1, :])
+        y = y[:, min_idx:max_idx, :]
 
-        x_stacked = cls.stack_x(x, L_trunc=y.shape[1])
-
-        return (x_stacked.sum(axis=0), y.sum(axis=1)[:, np.newaxis, :],
+        return (x_stacked.sum(axis=0),
+                y.sum(axis=1)[:, np.newaxis, :],
                 y.shape[1])
 
     @classmethod
@@ -184,10 +184,13 @@ class IVDataset(Dataset):
         """
         fname, XNAME, YNAME, mean_x, mean_y = tup
         data_dict = dd.io.load(fname)
+        half = cls.L_cut_x // 2
         x = data_dict[XNAME]
         y = data_dict[YNAME]
-
-        x_stacked = cls.stack_x(x, L_trunc=y.shape[1])
+        max_idx = y.shape[1]
+        min_idx = half
+        x_stacked = cls.stack_x(x[:, min_idx - half:max_idx + half + 1, :])
+        y = y[:, min_idx:max_idx, :]
 
         return (((x_stacked - mean_x)**2).sum(axis=0),
                 ((y - mean_y)**2).sum(axis=1)[:, np.newaxis, :],
@@ -209,66 +212,43 @@ class IVDataset(Dataset):
         return self.cum_N_frames[-1]
 
     def __getitem__(self, idx: int):
+        half = IVDataset.L_cut_x//2
         # File Index
         i_file = np.where(self.cum_N_frames > idx)[0][0]
 
         # Frame Index of y
         if i_file >= 1:
-            i_frame = idx - self.cum_N_frames[i_file-1]
+            i_frame = idx - self.cum_N_frames[i_file-1] + half
         else:
-            i_frame = idx
-        if i_frame >= self.N_frames[i_file]:
+            i_frame = idx + half
+        if i_frame >= self.N_frames[i_file] + half:
             pdb.set_trace()
 
-        # Frame range of stacked x
-        i_x_lower = i_frame - IVDataset.L_cut_x//2
-        if i_x_lower < 0:
-            margin_lower = 0 - i_x_lower
-        else:
-            margin_lower = 0
-        i_x_lower = i_x_lower+margin_lower
-
-        i_x_upper = i_frame + IVDataset.L_cut_x//2 + 1
-        if i_x_upper > self.N_frames[i_file]:
-            margin_upper = i_x_upper - self.N_frames[i_file]
-        else:
-            margin_upper = 0
-        i_x_upper = i_x_upper-margin_upper
+        range_x = range(i_frame - half, i_frame + half + 1)
 
         # File Open (with Slicing)
-        x_stacked = dd.io.load(self._all_files[i_file],
-                               group='/'+self.XNAME,
-                               sel=dd.aslice[:, i_x_lower:i_x_upper, :]
-                               )
-        y_stacked = dd.io.load(self._all_files[i_file],
-                               group='/'+self.YNAME,
-                               sel=dd.aslice[:, i_frame:i_frame+1, :]
-                               )
+        x = dd.io.load(self._all_files[i_file],
+                       group='/'+self.XNAME,
+                       sel=dd.aslice[:, range_x, :]
+                       )
+        y = dd.io.load(self._all_files[i_file],
+                       group='/'+self.YNAME,
+                       sel=dd.aslice[:, i_frame:i_frame+1, :]
+                       )
 
-        # Zero-padding & unsqueeze
-        L0, _, L2 = x_stacked.shape
-        x_stacked = np.concatenate((np.zeros((L0, margin_lower, L2)),
-                                    x_stacked,
-                                    np.zeros((L0, margin_upper, L2))),
-                                   axis=1)
-        # data_dict = np.load(self._all_files[idx]).item()
-        # x = data_dict[self.XNAME]
-        # y = data_dict[self.YNAME]
-
-        # Stack & Normalize
-        # x_stacked = IVDataset.stack_x(x, L_trunc=y.shape[1])
+        # Normalize
         if self.normalize:
-            x_stacked = (x_stacked-self.normalize.mean_x)/self.normalize.std_x
-            y_stacked = (y_stacked-self.normalize.mean_y)/self.normalize.std_y
+            x = (x-self.normalize.mean_x)/self.normalize.std_x
+            y = (y-self.normalize.mean_y)/self.normalize.std_y
 
-        x_stacked = torch.from_numpy(x_stacked).float()
-        y_stacked = torch.from_numpy(y_stacked).float()
-        sample = {'x_stacked': x_stacked, 'y_stacked': y_stacked}
+        x = torch.from_numpy(x).float()
+        y = torch.from_numpy(y).float()
+        sample = {'x': x, 'y': y}
 
         return sample
 
     @classmethod
-    def stack_x(cls, x: gen.TensArr, L_trunc=0) -> gen.TensArr:
+    def stack_x(cls, x: gen.TensArr) -> gen.TensArr:
         """
         Make groups of the frames of x and stack the groups
         x_stacked: (time_length) x (N_freq) x (L_cut_x) x (XYZ0 channel)
@@ -278,31 +258,19 @@ class IVDataset(Dataset):
         if gen.ndim(x) != 3:
             raise Exception('Dimension Mismatch')
 
-        half = cls.L_cut_x//2
-
-        L0, L1, L2 = gen.shape(x)
-
-        x = gen.cat((np.zeros((L0, half, L2)),
-                     x,
-                     np.zeros((L0, half, L2))),
-                    axis=1, astype=type(x))
-
-        if L_trunc != 0:
-            L1 = L_trunc
-
-        return gen.stack([x[:, ii - half:ii + half + 1, :]
-                          for ii in range(half, half + L1)
+        return gen.stack([x[:, ii:ii+cls.L_cut_x, :]
+                          for ii in range(x.shape[1] - cls.L_cut_x)
                           ])
-
-    @classmethod
-    def stack_y(cls, y: gen.TensArr) -> gen.TensArr:
-        """
-        y_stacked: (time_length) x (N_freq) x (1) x (XYZ0 channel)
-        """
-        if gen.ndim(y) != 3:
-            raise Exception('Dimension Mismatch')
-
-        return gen.transpose(y, (1, 0, 2))[:, :, None, :]
+    #
+    # @classmethod
+    # def stack_y(cls, y: gen.TensArr) -> gen.TensArr:
+    #     """
+    #     y_stacked: (time_length) x (N_freq) x (1) x (XYZ0 channel)
+    #     """
+    #     if gen.ndim(y) != 3:
+    #         raise Exception('Dimension Mismatch')
+    #
+    #     return gen.transpose(y, (1, 0, 2))[:, :, None, :]
 
     @classmethod
     def unstack_x(cls, x: gen.TensArr) -> gen.TensArr:
@@ -391,10 +359,10 @@ def norm_iv(data: gen.TensArr, keep_freq_axis=False,
                 axis = axis[1:]
             norm = gen.sum_axis(squared, axis=axis)
             if dim == 3:
-                norm = transpose(norm)
+                norm = gen.transpose(norm)
             result.append(norm)
         else:
             raise ValueError('"parts" should be "I", "a", or "all" '
                              'or an array of them')
 
-    return result[0] if len(result) == 1 else stack(result)
+    return result[0] if len(result) == 1 else gen.stack(result)

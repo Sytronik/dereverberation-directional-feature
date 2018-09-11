@@ -2,6 +2,7 @@ import pdb  # noqa: F401
 
 import numpy as np
 import scipy.io as scio
+import deepdish as dd
 
 import torch
 from torch import nn
@@ -13,12 +14,13 @@ import time
 from multiprocessing import cpu_count  # noqa: F401
 
 from typing import NamedTuple, Tuple
+from collections import OrderedDict
 
 from iv_dataset import IVDataset, norm_iv
 
 
-# NUM_WORKERS = cpu_count()
-NUM_WORKERS = 0
+NUM_WORKERS = cpu_count()
+# NUM_WORKERS = 0
 
 
 def array2string(a):
@@ -30,7 +32,7 @@ def printProgress(iteration: int, total: int, prefix='', suffix='',
     """
     Print Progress Bar
     """
-    percent = f'{100 * iteration / total:>3.{decimals}f}'
+    percent = f'{100 * iteration / total:>{decimals+4}.{decimals}f}'
     if barLength == 0:
         barLength = min(os.get_terminal_size().columns, 80) \
             - len(prefix) - len(percent) - len(suffix) - 11
@@ -38,8 +40,6 @@ def printProgress(iteration: int, total: int, prefix='', suffix='',
     filledLength = barLength * iteration // total
     bar = '#' * filledLength + '-' * (barLength - filledLength)
 
-    if iteration == 0:
-        print('')
     print(f'{prefix} |{bar}| {percent}% {suffix}', end='\r')
     if iteration == total:
         print('')
@@ -62,34 +62,33 @@ class MLP(nn.Module):
     """
     Multi-layer Perceptron
     """
-    def __init__(self, n_input: int, n_hidden: int, n_output: int):
+    def __init__(self, n_input: int, n_hidden: int, n_output: int, p: float):
         super(MLP, self).__init__()
 
-        self.layer1 = nn.Sequential(
-            nn.Linear(n_input, n_hidden, bias=False),
-            nn.BatchNorm1d(n_hidden, momentum=0.1),
+        self.layer1 = nn.Sequential(OrderedDict([
+            ('fc', nn.Linear(n_input, n_hidden, bias=False)),
+            ('bn', nn.BatchNorm1d(n_hidden, momentum=0.1)),
+            # ('act', nn.ReLU(inplace=True)),
+            ('act', nn.PReLU(num_parameters=1, init=0.25)),
+        ]))
+        self.layer2 = nn.Sequential(OrderedDict([
+            # ('do', nn.Dropout(p=p)),
+            ('fc', nn.Linear(n_hidden, n_hidden)),
+            ('bn', nn.BatchNorm1d(n_hidden, momentum=0.1)),
+            # ('act', nn.ReLU(inplace=True)),
+            ('act', nn.PReLU(num_parameters=1, init=0.25)),
+        ]))
+        self.layer3 = nn.Sequential(OrderedDict([
+            # ('do', nn.Dropout(p=p)),
+            ('fc', nn.Linear(n_hidden, n_hidden)),
+            ('bn', nn.BatchNorm1d(n_hidden, momentum=0.1)),
             # nn.ReLU(inplace=True),
-            nn.PReLU(num_parameters=1, init=0.25),
-        )
-        self.layer2 = nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Linear(n_hidden, n_hidden),
-            # nn.BatchNorm1d(n_hidden, momentum=0.1),
-            # nn.ReLU(inplace=True),
-            nn.PReLU(num_parameters=1, init=0.25),
-        )
-        self.layer3 = nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Linear(n_hidden, n_hidden),
-            # nn.BatchNorm1d(n_hidden),
-            # nn.ReLU(inplace=True),
-            nn.PReLU(num_parameters=1, init=0.25),
-        )
-        self.output = nn.Sequential(
-            nn.Dropout(p=0.5),
-            nn.Linear(n_hidden, n_output),
-            # nn.Tanh(),
-        )
+            ('act', nn.PReLU(num_parameters=1, init=0.25)),
+        ]))
+        self.output = nn.Sequential(OrderedDict([
+            ('do', nn.Dropout(p=p)),
+            ('fc', nn.Linear(n_hidden, n_output)),
+        ]))
 
     def forward(self, x):
         x = self.layer1(x)
@@ -103,46 +102,85 @@ class HyperParameters(NamedTuple):
     """
     Hyper Parameters of NN
     """
-    N_epochs = 50
-    batch_size = 1900
+    N_epochs = 100
+    batch_size = 2000
     learning_rate = 5e-4
-    N_file = 7200
-    L_cut_x = 19
+    N_file = 100
+    L_cut_x = 13
 
-    n_input: int
-    n_hidden: int
-    n_output: int
+    n_per_frame: int
+    p = 0.5  # Dropout p
 
-    # scheduler step_size, gamma
-    # Adam weight_decay
-    # Dropout p
+    # lr scheduler
+    step_size = 1
+    gamma = 0.9
+
+    weight_decay = 1e-8  # Adam weight_decay
 
     def for_MLP(self) -> Tuple:
-        return (self.n_input, self.n_hidden, self.n_output)
+        n_input = self.L_cut_x * self.n_per_frame
+        n_hidden = 17 * self.n_per_frame
+        n_output = self.n_per_frame
+        return (n_input, n_hidden, n_output, self.p)
 
 
 # Global Variables
 hparams: HyperParameters
 
 
+class MultipleOptimizer(object):
+    def __init__(self, *op):
+        self.optimizers = op
+
+    def zero_grad(self):
+        for op in self.optimizers:
+            op.zero_grad()
+
+    def step(self):
+        for op in self.optimizers:
+            op.step()
+
+    def __len__(self):
+        return len(self.optimizers)
+
+    def __getitem__(self, idx: int):
+        return self.optimizers[idx]
+
+
+class MultipleScheduler(object):
+    def __init__(self, cls_scheduler: type,
+                 optimizers: MultipleOptimizer, **kwargs):
+        self.schedulers = []
+        for op in optimizers:
+            self.schedulers.append(cls_scheduler(op, **kwargs))
+
+    def step(self):
+        for sch in self.schedulers:
+            sch.step()
+
+    def __len__(self):
+        return len(self.schedulers)
+
+    def __getitem__(self, idx: int):
+        return self.schedulers[idx]
+
+
 class NNTrainer():
+    global hparams
+
     def __init__(self, DIR_TRAIN: str, DIR_TEST: str,
-                 XNAME: str, YNAME: str,
-                 N_freq: int, L_frame: int, L_hop: int, f_model_state=''):
+                 XNAME: str, YNAME: str, f_model_state=''):
         self.DIR_TRAIN = DIR_TRAIN
         self.DIR_TEST = DIR_TEST
         self.XNAME = XNAME
         self.YNAME = YNAME
-        self.N_freq = N_freq
-        self.L_frame = L_frame
-        self.L_hop = L_hop
+        self.DIR_RESULT = './MLP/MLP_'
 
-        global hparams
-        IVDataset.L_cut_x = HyperParameters.L_cut_x
-        hparams = HyperParameters(n_input=IVDataset.L_cut_x*N_freq*4,
-                                  n_hidden=17*N_freq*4,
-                                  n_output=N_freq*4,
-                                  )
+        if not os.path.isdir(self.DIR_RESULT):
+            os.makedirs(self.DIR_RESULT)
+        dd.io.save(self.DIR_RESULT+'hparams.h5', dict(hparams._asdict()))
+
+        IVDataset.L_cut_x = hparams.L_cut_x
 
         # Dataset
         # Training + Validation Set
@@ -170,12 +208,25 @@ class NNTrainer():
         if f_model_state:
             self.model.load_state_dict(torch.load(f_model_state))
 
-        # MSE Loss and Adam Optimizer
+        # MSE Loss
         self.criterion = nn.MSELoss(reduction='sum')
-        self.optimizer = torch.optim.Adam(self.model.parameters(),
-                                          lr=hparams.learning_rate,
-                                          weight_decay=0,
-                                          )
+
+        # Optimizer
+        param1 = [value
+                  for key, value in self.model.named_parameters()
+                  if 'act' not in key]
+        param2 = [value
+                  for key, value in self.model.named_parameters()
+                  if 'act' in key]
+        self.optimizer = MultipleOptimizer(
+            torch.optim.Adam(param1,
+                             lr=hparams.learning_rate,
+                             weight_decay=hparams.weight_decay,
+                             ),
+            torch.optim.Adam(param2,
+                             lr=hparams.learning_rate,
+                             ),
+        )
 
     def train(self):
         data_train, data_valid = IVDataset.split(self.data, (0.7, -1))
@@ -199,18 +250,23 @@ class NNTrainer():
         loss_valid = np.zeros((hparams.N_epochs, 3))
         snr_seg_valid = np.zeros((hparams.N_epochs, 3))
 
-        scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer,
-                                                    step_size=1, gamma=0.8)
+        scheduler \
+            = MultipleScheduler(torch.optim.lr_scheduler.StepLR,
+                                self.optimizer,
+                                step_size=hparams.step_size,
+                                gamma=hparams.gamma)
+
         for epoch in range(hparams.N_epochs):
             t_start = time.time()
 
             iteration = 0
+            print('')
             printProgress(iteration, len(loader_train), f'epoch {epoch+1:3d}:')
             scheduler.step()
             for data in loader_train:
                 iteration += 1
-                x_stacked = data['x_stacked']
-                y_stacked = data['y_stacked']
+                x_stacked = data['x']
+                y_stacked = data['y']
 
                 N_frame = x_stacked.size(0)
                 # if epoch == 0:
@@ -230,24 +286,25 @@ class NNTrainer():
                 printProgress(iteration, len(loader_train),
                               f'epoch {epoch+1:3d}: {loss.data.item():.1e}')
             loss_train[epoch] /= len(loader_train.dataset)
+            print(f'Training Loss: {loss_train[epoch]:.2e}')
 
             # Validation
             loss_valid[epoch], snr_seg_valid[epoch] \
                 = self.eval(loader_valid,
-                            FNAME=f'MLP_result_{epoch}.mat')
+                            FNAME=f'{self.DIR_RESULT}IV_{epoch}.mat')
 
             # print loss, snr and save
-            print(f'Validation Loss: {array2string(loss_valid[epoch])}\t'
-                  f'Validation SNR (dB): {array2string(snr_seg_valid[epoch])}')
+            print(f'Validation Loss: {loss_valid[epoch, 2]:.2e}\t'
+                  f'Validation SNRseg (dB): {snr_seg_valid[epoch, 2]:.2e}')
 
-            scio.savemat(f'MLP_loss_{epoch}.mat',
+            scio.savemat(f'{self.DIR_RESULT}loss_{epoch}.mat',
                          {'loss_train': loss_train,
                           'loss_valid': loss_valid,
                           'snr_seg_valid': snr_seg_valid,
                           }
                          )
             torch.save(self.model.state_dict(),
-                       f'./MLP_{epoch}.pt')
+                       f'{self.DIR_RESULT}{epoch}.pt')
 
             print(f'epoch {epoch+1:3d}: '
                   + time.strftime('%M min %S sec',
@@ -264,7 +321,8 @@ class NNTrainer():
             #         break
 
         # Test and print
-        loss_test, snr_test_dB = self.eval(FNAME='MLP_result_test.mat')
+        loss_test, snr_test_dB \
+            = self.eval(FNAME=f'{self.DIR_RESULT}IV_test.mat')
         print('')
         print(f'Test Loss: {array2string(loss_test)}\t'
               f'Test SNR (dB): {array2string(snr_test_dB)}')
@@ -292,8 +350,8 @@ class NNTrainer():
 
             for data in loader:
                 iteration += 1
-                x_stacked = data['x_stacked']
-                y_stacked_cpu = data['y_stacked']
+                x_stacked = data['x']
+                y_stacked_cpu = data['y']
 
                 N_frame = x_stacked.size(0)
 
@@ -344,18 +402,18 @@ class NNTrainer():
                                     }
 
                 printProgress(iteration, len(loader),
-                              f'{"eval":<9}: {loss[2]:.1e}'
+                              f'{"eval":<9}: {loss[2]/N_frame:.1e}'
                               )
 
             avg_loss /= len(loader.dataset)
             snr_seg /= len(loader.dataset)
 
             if FNAME:
-                norm_frames = np.concatenate(norm_frames, axis=1)
-                norm_errors = np.concatenate(norm_errors, axis=1)
-
-                dict_to_save['norm_frames'] = norm_frames
-                dict_to_save['norm_errors'] = norm_errors
+                # norm_frames = np.concatenate(norm_frames, axis=1)
+                # norm_errors = np.concatenate(norm_errors, axis=1)
+                #
+                # dict_to_save['norm_frames'] = norm_frames[2, :, :]
+                # dict_to_save['norm_errors'] = norm_errors[2, :, :]
                 scio.savemat(FNAME, dict_to_save)
             self.model.train()
         return avg_loss, snr_seg
