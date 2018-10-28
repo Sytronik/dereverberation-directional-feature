@@ -1,10 +1,7 @@
-speech/
-IV/
-Figures/
-
 *.mat
 *.npy
 *.asv
+*.h5
 
 .ftpconfig
 .ftpignore
