@@ -19,10 +19,10 @@ def convert(a: TensArr, astype: type) -> TensArr:
         if type(a) == Tensor:
             return a
         else:
-            return torch.tensor(a, dtype=torch.float32)
+            return torch.from_numpy(a)
     elif astype == ndarray:
         if type(a) == Tensor:
-            return a.numpy()
+            return a.cpu().numpy()
         else:
             return a
     else:
@@ -67,7 +67,7 @@ def transpose(a: TensArr,
         raise TypeError
 
 
-def squeeze(a: TensArr, axis=None) -> int:
+def squeeze(a: TensArr, axis=None) -> TensArr:
     if type(a) == Tensor:
         return a.squeeze(dim=axis)
     elif type(a) == ndarray:

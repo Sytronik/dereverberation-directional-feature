@@ -1,1 +1,0 @@
-TIMIT Data 순서 확인

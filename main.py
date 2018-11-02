@@ -14,7 +14,6 @@ import pdb  # noqa: F401
 
 # import numpy as np
 import scipy.io as scio
-import deepdish as dd
 
 from os import path
 from glob import glob
@@ -23,13 +22,11 @@ import sys
 from pre_processing import PreProcessor as Pre, SFTData
 from pre_processing_anm_check import PreProcessor as AnmCheck
 # import show_IV_image as showIV
-import neuralnet
+
+import mypath
 
 if __name__ == '__main__':
-    DIR_DATA = '../../De-Reverberation Data'
-    DIR_WAVFILE = DIR_DATA + '/speech/data/lisa/data/timit/raw/TIMIT/'
-    DIR_IV_dict = {'TRAIN': path.join(DIR_DATA, 'IV/TRAIN'),
-                   'TEST': path.join(DIR_DATA, 'IV/TEST')}
+    DIR_DATA = mypath.path('root')
     FORM = '%04d_%02d.h5'
     ID = '*.WAV'  # The common name of wave file
 
@@ -43,8 +40,8 @@ if __name__ == '__main__':
             KIND_DATA = sys.argv[2].upper()
         else:
             KIND_DATA = 'TRAIN'
-        DIR_IV = DIR_IV_dict[KIND_DATA]
-        DIR_WAVFILE += KIND_DATA
+        DIR_IV = mypath.path(f'iv_{KIND_DATA.lower()}')
+        DIR_WAVFILE = mypath.path(f'wav_{KIND_DATA.lower()}')
 
         # RIR Data
         transfer_dict = scio.loadmat(path.join(DIR_DATA, 'RIR_Ys.mat'),
@@ -81,32 +78,6 @@ if __name__ == '__main__':
         else:
             p = AnmCheck(RIRs, Ys, sftdata, RIRs_0=RIRs_0)
             p.process(DIR_WAVFILE, ID, 1, DIR_IV, '%04d_%02d_anm_check.h5')
-
-    else:  # the functions that need metadata
-        metadata \
-            = dd.io.load(path.join(DIR_IV_dict['TRAIN'], 'metadata.h5'))
-
-        if sys.argv[1] == 'train_nn':
-            neuralnet.hparams \
-                = neuralnet.HyperParameters(n_per_frame=metadata['N_freq']*4)
-            trainer = neuralnet.NNTrainer(DIR_IV_dict['TRAIN'],
-                                          DIR_IV_dict['TEST'],
-                                          'IV_room', 'IV_free',
-                                          )
-            trainer.train()
-
-        elif sys.argv[1] == 'test_nn':
-            str_epoch = sys.argv[2]
-            trainer = neuralnet.NNTrainer(DIR_IV_dict['TRAIN'],
-                                          DIR_IV_dict['TEST'],
-                                          'IV_room', 'IV_free',
-                                          f_model_state=f'MLP_{str_epoch}.pt',
-                                          )
-
-            loss_test, snr_seg_test \
-                = trainer.eval(FNAME=f'MLP_result_{str_epoch}_test.mat')
-            print(f'Test Loss: {neuralnet.array2string(loss_test)}\t'
-                  f'Test SNRseg (dB): {neuralnet.array2string(snr_seg_test)}')
 
         # elif sys.argv[1] == 'show_IV_image':
         #     doSave = False

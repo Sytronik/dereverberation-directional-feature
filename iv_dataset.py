@@ -6,7 +6,7 @@ import deepdish as dd
 import torch
 from torch.utils.data import Dataset
 
-from typing import Tuple, Any, Union, List, NamedTuple
+from typing import Tuple, Any, Union, List, NamedTuple, Dict
 
 import os
 from os import path
@@ -14,6 +14,7 @@ from copy import copy
 import multiprocessing as mp
 
 import generic as gen
+import mypath
 
 
 class NormalizeConst(NamedTuple):
@@ -23,18 +24,27 @@ class NormalizeConst(NamedTuple):
     std_y: gen.TensArr
 
     def __str__(self):
-        return (f'mean: {self.mean_x.shape}, {self.mean_y.shape},\t'
-                f'std: {self.std_x.shape}, {self.std_y.shape}')
+        return (f'mean: {gen.shape(self.mean_x)}, {gen.shape(self.mean_y)},\t'
+                f'std: {gen.shape(self.std_x)}, {gen.shape(self.std_y)}')
 
-    def astype(self, T: type=torch.Tensor):
-        return NormalizeConst(*[gen.convert(item, T) for item in self])
+    @staticmethod
+    def create_all(a, cuda_dev=1):
+        if type(a[0]) == np.ndarray and a[0].dtype != np.float32:
+            a = [item.astype(np.float32) for item in a]
+        tensor_a \
+            = [gen.convert(item, torch.Tensor) for item in a]
+        return {
+            'np': NormalizeConst(*a),
+            'cpu': NormalizeConst(*tensor_a),
+            'cuda': NormalizeConst(*[item.cuda(cuda_dev) for item in tensor_a])
+        }
 
 
 class IVDataset(Dataset):
     """
     <Instance Variable>
     (not splitted)
-    DIR
+    PATH
     XNAME
     YNAME
     normalize
@@ -48,29 +58,31 @@ class IVDataset(Dataset):
     L_cut_x = 1
     L_cut_y = 1
 
-    def __init__(self, DIR: str, XNAME: str, YNAME: str,
-                 N_file=-1, doNormalize=True):
-        self.DIR = DIR
+    def __init__(self, split: str, XNAME: str, YNAME: str,
+                 N_file=-1, doNormalize=True, cuda_dev=1):
+        self.PATH = mypath.path(f'iv_{split}')
         self.XNAME = XNAME
         self.YNAME = YNAME
 
         # fname_list: The name of the file
         # that has information about data file list, mean, std, ...
-        fname_list \
-            = path.join(DIR, f'list_files_{N_file}_{IVDataset.L_cut_x}.h5')
+        fname_list = path.join(self.PATH,
+                               f'list_files_{N_file}_{IVDataset.L_cut_x}.h5')
+
         if path.isfile(fname_list):
             self._all_files, self.N_frames, self.cum_N_frames, normalize \
                 = dd.io.load(fname_list)
-
             if doNormalize:
-                self.normalize = NormalizeConst(*normalize)
+                self.normalize = NormalizeConst.create_all(normalize, cuda_dev)
+                print(self.normalize['np'])
             else:
                 self.normalize = None
-            print(self.normalize)
+                print()
+
         else:
             # search all data files
             _all_files = [f.path
-                          for f in os.scandir(DIR)
+                          for f in os.scandir(self.PATH)
                           if f.name.endswith('.h5')
                           and f.name != 'metadata.h5'
                           and not f.name.startswith('list_files_')]
@@ -114,7 +126,9 @@ class IVDataset(Dataset):
                 std_y = np.sqrt(sum_sq_dev_y / sum_N_frames + 1e-5)
                 print(f'std: {std_x}, {std_y}')
 
-                self.normalize = NormalizeConst(mean_x, mean_y, std_x, std_y)
+                self.normalize \
+                    = NormalizeConst.create_all((mean_x, mean_y, std_x, std_y),
+                                                cuda_dev)
             else:
                 # Calculate only the number of frames of each files
                 self.N_frames = np.array(
@@ -129,10 +143,10 @@ class IVDataset(Dataset):
             dd.io.save(fname_list,
                        (self._all_files,
                         self.N_frames, self.cum_N_frames,
-                        self.normalize)
+                        self.normalize['np'] if self.normalize else None)
                        )
         print(f'{len(self)} frames prepared '
-              f'from {N_file} files of {path.basename(DIR)}.')
+              f'from {N_file} files of {path.basename(self.PATH)}.')
 
     @classmethod
     def n_frame_files(cls, tup: Tuple[str, str]) -> int:
@@ -142,7 +156,7 @@ class IVDataset(Dataset):
         fname, YNAME = tup
 
         try:
-            y = dd.io.load(fname, group='/'+YNAME)
+            y = dd.io.load(fname, group='/' + YNAME)
         except:  # noqa: E722
             fname_npy = fname.replace('.h5', '.npy')
             data_dict = np.load(fname_npy).item()
@@ -196,11 +210,18 @@ class IVDataset(Dataset):
                 ((y - mean_y)**2).sum(axis=1)[:, np.newaxis, :],
                 )
 
-    def doNormalize(self, const: NormalizeConst):
+    def doNormalize(self, const: Dict[str, NormalizeConst], cuda_dev=1):
         self.normalize = const
 
     def denormalize(self, a: gen.TensArr, xy: str) -> gen.TensArr:
-        normalize = self.normalize.astype(type(a))
+        if type(a) == torch.Tensor:
+            if a.device == torch.device('cpu'):
+                normalize = self.normalize['cpu']
+            else:
+                normalize = self.normalize['cuda']
+        else:
+            normalize = self.normalize['np']
+
         if xy == 'x':
             return normalize.std_x * a + normalize.mean_x
         elif xy == 'y':
@@ -208,17 +229,33 @@ class IVDataset(Dataset):
         else:
             raise 'xy should be "x" or "y"'
 
+    def denormalize_(self, a: gen.TensArr, xy: str) -> gen.TensArr:
+        if type(a) == torch.Tensor:
+            if a.device == torch.device('cpu'):
+                normalize = self.normalize['cpu']
+            else:
+                normalize = self.normalize['cuda']
+        else:
+            normalize = self.normalize['np']
+
+        if xy == 'x':
+            return a.mul_(normalize.std_x).add_(normalize.mean_x)
+        elif xy == 'y':
+            return a.mul_(normalize.std_y).add_(normalize.mean_y)
+        else:
+            raise 'xy should be "x" or "y"'
+
     def __len__(self):
         return self.cum_N_frames[-1]
 
     def __getitem__(self, idx: int):
-        half = IVDataset.L_cut_x//2
+        half = IVDataset.L_cut_x // 2
         # File Index
         i_file = np.where(self.cum_N_frames > idx)[0][0]
 
         # Frame Index of y
         if i_file >= 1:
-            i_frame = idx - self.cum_N_frames[i_file-1] + half
+            i_frame = idx - self.cum_N_frames[i_file - 1] + half
         else:
             i_frame = idx + half
         if i_frame >= self.N_frames[i_file] + half:
@@ -228,18 +265,18 @@ class IVDataset(Dataset):
 
         # File Open (with Slicing)
         x = dd.io.load(self._all_files[i_file],
-                       group='/'+self.XNAME,
+                       group='/' + self.XNAME,
                        sel=dd.aslice[:, range_x, :]
                        )
         y = dd.io.load(self._all_files[i_file],
-                       group='/'+self.YNAME,
-                       sel=dd.aslice[:, i_frame:i_frame+1, :]
+                       group='/' + self.YNAME,
+                       sel=dd.aslice[:, i_frame:i_frame + 1, :]
                        )
 
         # Normalize
         if self.normalize:
-            x = (x-self.normalize.mean_x)/self.normalize.std_x
-            y = (y-self.normalize.mean_y)/self.normalize.std_y
+            x = (x - self.normalize['np'].mean_x) / self.normalize['np'].std_x
+            y = (y - self.normalize['np'].mean_y) / self.normalize['np'].std_y
 
         x = torch.from_numpy(x).float()
         y = torch.from_numpy(y).float()
@@ -258,7 +295,7 @@ class IVDataset(Dataset):
         if gen.ndim(x) != 3:
             raise Exception('Dimension Mismatch')
 
-        return gen.stack([x[:, ii:ii+cls.L_cut_x, :]
+        return gen.stack([x[:, ii:ii + cls.L_cut_x, :]
                           for ii in range(x.shape[1] - cls.L_cut_x)
                           ])
     #
@@ -274,12 +311,10 @@ class IVDataset(Dataset):
 
     @classmethod
     def unstack_x(cls, x: gen.TensArr) -> gen.TensArr:
-        if gen.ndim(x) != 4 or gen.shape(x)[2] <= cls.L_cut_x//2:
+        if gen.ndim(x) != 4 or gen.shape(x)[2] <= cls.L_cut_x // 2:
             raise Exception('Dimension/Size Mismatch')
 
-        x = x[:, :, cls.L_cut_x//2, :]
-
-        return gen.transpose(x, (1, 0, 2))
+        return gen.transpose(x[:, :, cls.L_cut_x // 2, :], (1, 0, 2))
 
     @classmethod
     def unstack_y(cls, y: gen.TensArr) -> gen.TensArr:
@@ -324,9 +359,9 @@ class IVDataset(Dataset):
 
         for ii in range(n_split):
             result[ii]._all_files \
-                = a._all_files[idx_data[ii]:idx_data[ii+1]]
+                = a._all_files[idx_data[ii]:idx_data[ii + 1]]
             result[ii].N_frames \
-                = a.N_frames[idx_data[ii]:idx_data[ii+1]]
+                = a.N_frames[idx_data[ii]:idx_data[ii + 1]]
             result[ii].cum_N_frames \
                 = np.cumsum(result[ii].N_frames)
 
