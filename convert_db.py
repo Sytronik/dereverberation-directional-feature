@@ -31,65 +31,45 @@ import scipy.io as scio
 import deepdish as dd
 import torch
 
-import sys
+from argparse import ArgumentParser
 import os
 from glob import glob
 
 import multiprocessing as mp
 
+from utils import static_vars
+
 
 def main():
-    argv = sys.argv[1:]
-    for arg in sys.argv[1:]:
-        if arg == '--no-duplicate':
-            convert.duplicate = False
-            argv.remove(arg)
+    parser = ArgumentParser()
+    parser.add_argument('--show', '-s', nargs='*', metavar='PATH')
+    parser.add_argument('--show-full', '-sf', nargs='*', metavar='PATH')
+    parser.add_argument('--mat', '-m', nargs='*', metavar='PATH')
+    parser.add_argument('--h5', '-h5', nargs='*', metavar='PATH')
+    parser.add_argument('--npy', '-n', nargs='*', metavar='PATH')
+    parser.add_argument('--no-duplicate', '--nd', action='store_true')
+    ARGS = parser.parse_args()
+    convert.duplicate = not ARGS.no_duplicate
+    del ARGS.no_duplicate
 
-    for arg in argv:
-        if arg.startswith('--show'):  # --show, --show-full
-            if arg != '--show' and arg != '--show-full':
-                raise WrongOptionError
-            convert.to = arg
-        elif arg.startswith('-'):  # --mat, --h5, --npy
-            convert.to = '.' + arg.replace('-', '')
-            if convert.to not in SAVE.keys():
-                raise WrongOptionError
-        elif os.path.isdir(arg):  # Directory
-            if not convert.to:
-                raise NoOptionError
-
-            pool = mp.Pool(mp.cpu_count())
-            for folder, _, _ in os.walk(arg):
-                files = glob(os.path.join(folder, '*.*'))
-                files = [f for f in files if is_db(f)]
-                if files:
-                    pool.map_async(convert, files)
-            pool.close()
-            pool.join()
-        elif os.path.isfile(arg):  # File
-            if not convert.to:
-                raise NoOptionError
-
-            convert(arg, show=True)
-        else:
-            raise FileExistsError
-
-
-class WrongOptionError(Exception):
-    def __init__(self, message, errors):
-        super().__init__('Choose a right option '
-                         '(--mat, --h5, --npy, --show, --show-full).')
-
-        self.errors = errors
-
-
-class NoOptionError(Exception):
-    def __init__(self, message, errors):
-        super().__init__('Choose a file type, '
-                         'or you can just see the file contents '
-                         'by putting "--show" or "--show-full"')
-
-        self.errors = errors
+    for to, paths in ARGS.__dict__.items():
+        convert.to = to
+        if not paths:
+            continue
+        for path in paths:
+            if os.path.isdir(path):
+                pool = mp.Pool(mp.cpu_count())
+                for folder, _, _ in os.walk(path):
+                    files = glob(os.path.join(folder, '*.*'))
+                    files = [f for f in files if is_db(f)]
+                    if files:
+                        pool.map_async(convert, files)
+                pool.close()
+                pool.join()
+            elif os.path.isfile(path):
+                convert(path, show=True)
+            else:
+                raise FileExistsError
 
 
 def open_mat(fname: str):
@@ -149,8 +129,6 @@ OPEN = {'.mat': open_mat,
 SAVE = {'.mat': save_mat,
         '.h5': save_h5,
         '.npy': save_npy,
-        '.show': 0,
-        '.showfull': 0,
         }
 
 
@@ -180,35 +158,31 @@ def str_simple(contents) -> str:
     return result
 
 
-def static_vars(**kwargs):
-    def decorate(func):
-        for k in kwargs:
-            setattr(func, k, kwargs[k])
-        return func
-    return decorate
-
-
 @static_vars(to='', duplicate=True)
-def convert(fname: str, show=False, *args):
-    if args:
-        convert.to, convert.duplicate = args
+def convert(fname: str, show=False,
+            # *args
+            ):
+    # if args:
+    #     convert.to, convert.duplicate = args
 
     # Open
-    ext = '.' + fname.split('.')[-1]
+    ext = os.path.splitext(fname)[-1]
     contents = OPEN[ext](fname)
 
     # Print
-    if convert.to == '--show-full':
+    if convert.to == 'show_full':
         print(contents)
         return
-    elif convert.to == '--show':
+    elif convert.to == 'show':
         print(str_simple(contents))
     else:
+        if not convert.to.startswith('.'):
+            convert.to = f'.{convert.to}'
         if show:
             print(str_simple(contents))
         fname_new = fname.replace(ext, convert.to)
         if os.path.isfile(fname_new) and not convert.duplicate:
-            print('Didn\'t duplicate')
+            print('Didn\'t convert for avoiding duplicate')
             return
         else:
             SAVE[convert.to](fname_new, contents)
