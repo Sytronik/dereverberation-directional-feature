@@ -6,49 +6,57 @@ import os
 import gc
 
 
+def static_vars(**kwargs):
+    def decorate(func):
+        for k in kwargs:
+            setattr(func, k, kwargs[k])
+        return func
+    return decorate
+
+
 class MultipleOptimizer(object):
     def __init__(self, *op):
-        self.optimizers = [item for item in op if item]
+        self._optimizers = [item for item in op if item]
 
     def zero_grad(self):
-        for op in self.optimizers:
+        for op in self._optimizers:
             op.zero_grad()
 
     def step(self):
-        for op in self.optimizers:
+        for op in self._optimizers:
             op.step()
 
     def __len__(self):
-        return len(self.optimizers)
+        return len(self._optimizers)
 
     def __getitem__(self, idx: int):
-        return self.optimizers[idx]
+        return self._optimizers[idx]
 
 
 class MultipleScheduler(object):
     def __init__(self, cls_scheduler: type,
                  optimizers: MultipleOptimizer, **kwargs):
-        self.schedulers = []
+        self._schedulers = []
         for op in optimizers:
-            self.schedulers.append(cls_scheduler(op, **kwargs))
+            self._schedulers.append(cls_scheduler(op, **kwargs))
 
     def step(self):
-        for sch in self.schedulers:
+        for sch in self._schedulers:
             sch.step()
 
     def __len__(self):
-        return len(self.schedulers)
+        return len(self._schedulers)
 
     def __getitem__(self, idx: int):
-        return self.schedulers[idx]
+        return self._schedulers[idx]
 
 
 def arr2str(a):
     return np.arr2str(a, formatter={'float_kind': lambda x: f'{x:.2e}'})
 
 
-def printProgress(iteration: int, total: int, prefix='', suffix='',
-                  decimals=1, barLength=0):
+def print_progress(iteration: int, total: int, prefix='', suffix='',
+                   decimals=1, barLength=0):
     """
     Print Progress Bar
     """
