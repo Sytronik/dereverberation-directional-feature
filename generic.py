@@ -29,15 +29,6 @@ def convert(a: TensArr, astype: type) -> TensArr:
         raise ValueError(astype)
 
 
-def shape(a: TensArr) -> Tuple[int, ...]:
-    if type(a) == Tensor:
-        return tuple(a.size())
-    elif type(a) == ndarray:
-        return a.shape
-    else:
-        raise TypeError
-
-
 def ndim(a: TensArr) -> int:
     if type(a) == Tensor:
         return a.dim()
