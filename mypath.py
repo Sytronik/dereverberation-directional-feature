@@ -1,14 +1,18 @@
+path_wav = './Data/speech/data/lisa/data/timit/raw/TIMIT'
+path_iv = './Data/IV'
+
+
 def path(to):
     if to == 'root':
         return './Data'
     elif to == 'wav_train':
-        return './Data/speech/data/lisa/data/timit/raw/TIMIT/TRAIN'
+        return f'{path_wav}/TRAIN'
     elif to == 'wav_test':
-        return './Data/speech/data/lisa/data/timit/raw/TIMIT/TEST'
+        return f'{path_wav}/TEST'
     elif to == 'iv_train':
-        return './Data/IV/TRAIN'
+        return f'{path_iv}/TRAIN'
     elif to == 'iv_test':
-        return './Data/IV/TEST'
+        return f'{path_iv}/TEST'
 
     else:
         print('Path to {} is not available.'.format(to))
