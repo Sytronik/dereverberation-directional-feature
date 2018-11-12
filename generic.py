@@ -19,7 +19,7 @@ def convert(a: TensArr, astype: type) -> TensArr:
         if type(a) == Tensor:
             return a
         else:
-            return torch.from_numpy(a)
+            return torch.as_tensor(a, dtype=torch.float32)
     elif astype == ndarray:
         if type(a) == Tensor:
             return a.cpu().numpy()
