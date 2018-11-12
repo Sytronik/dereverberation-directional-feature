@@ -2,7 +2,7 @@
 <<Usage>>
 python convert_db.py [--no-duplicate]
     {
-        {--mat | --h5 | --npy | --show | --show-full}
+        {--mat | --h5 | --npy | --show | --show-full | --txt}
         {
             {directory path 1 | file path 1}
             {directory path 2 | file path 2}
@@ -10,7 +10,7 @@ python convert_db.py [--no-duplicate]
         }
     }
     {
-        {--mat | --h5 | --npy | --show | --show-full}
+        {--mat | --h5 | --npy | --show | --show-full | --txt}
         {
             {directory path 1 | file path 1}
             {directory path 2 | file path 2}
@@ -42,12 +42,10 @@ from utils import static_vars
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument('--show', '-s', nargs='*', metavar='PATH')
-    parser.add_argument('--show-full', '-sf', nargs='*', metavar='PATH')
-    parser.add_argument('--mat', '-m', nargs='*', metavar='PATH')
-    parser.add_argument('--h5', '-h5', nargs='*', metavar='PATH')
-    parser.add_argument('--npy', '-n', nargs='*', metavar='PATH')
+    for arg_for_path in LIST_ARGS_FOR_PATH:
+        parser.add_argument(*arg_for_path, nargs='*', metavar='PATH')
     parser.add_argument('--no-duplicate', '--nd', action='store_true')
+
     ARGS = parser.parse_args()
     convert.duplicate = not ARGS.no_duplicate
     del ARGS.no_duplicate
@@ -120,15 +118,27 @@ def save_npy(fname: str, contents):
     np.save(fname, contents)
 
 
+def save_txt(fname: str, contents):
+    with open(fname, 'w') as f:
+        f.write(str(contents))
+
+
+LIST_ARGS_FOR_PATH = {('--show', '-s'),
+                      ('--show-full', '-sf'),
+                      ('--mat', '-m'),
+                      ('--h5', '-h5'),
+                      ('--npy', '-n'),
+                      ('--txt', '-t'),
+                      }
 OPEN = {'.mat': open_mat,
         '.h5': open_h5,
         '.npy': open_npy,
         '.pt': open_pt,
         }
-
 SAVE = {'.mat': save_mat,
         '.h5': save_h5,
         '.npy': save_npy,
+        '.txt': save_txt,
         }
 
 
@@ -139,7 +149,7 @@ def is_db(fname: str):
 def str_simple(contents) -> str:
     if type(contents) == dict:
         length = max([len(k) for k in contents.keys()])
-        spaces = '\n' + ' '*(length+2)
+        spaces = '\n' + ' ' * (length + 2)
         result = ''
         for key, value in contents.items():
             value_simple = str_simple(value).replace('\n', spaces)
