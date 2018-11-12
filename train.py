@@ -7,7 +7,6 @@ import deepdish as dd
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
-import torch.nn.functional as F
 
 from argparse import ArgumentParser
 import os
@@ -24,8 +23,8 @@ from unet import UNet
 import mypath
 
 # manually selected
-# NUM_WORKERS = cpu_count()
-NUM_WORKERS = 0
+NUM_WORKERS = cpu_count()
+# NUM_WORKERS = 0
 OUT_CUDA_DEV = 1
 NORM_PARTS = ('all',)
 
@@ -40,10 +39,17 @@ YNAME = 'IV_free'
 
 # determined by sys argv
 parser = ArgumentParser()
+parser.add_argument('--from',
+                    type=int, nargs=1, dest='train_epoch', metavar='EPOCH')
 parser.add_argument('--test',
                     type=int, nargs=1, dest='test_epoch', metavar='EPOCH')
 ARGS = parser.parse_args()
-f_model_state = f'MLP_{ARGS.test_epoch}.pt' if ARGS.test_epoch else None
+if ARGS.train_epoch:
+    f_model_state = f'{DIR_RESULT}{ARGS.train_epoch[0]}.pt'
+elif ARGS.test_epoch:
+    f_model_state = f'{DIR_RESULT}{ARGS.test_epoch[0]}.pt'
+else:
+    f_model_state = None
 
 
 class HyperParameters(NamedTuple):
@@ -52,17 +58,17 @@ class HyperParameters(NamedTuple):
     """
     N_epochs = 1000
     batch_size = 24
-    learning_rate = 1e-3
-    N_file = 7200
+    learning_rate = 5e-4
+    N_file = 20*700
 
     n_per_frame: int
     p = 0.5  # Dropout p
 
     # lr scheduler
     step_size = 10
-    gamma = 0.5
+    gamma = 0.8
 
-    weight_decay = 1e-5  # Adam weight_decay
+    weight_decay = 0  # 1e-8  # Adam weight_decay
 
     # def for_MLP(self) -> Tuple:
     #     n_input = self.L_cut_x * self.n_per_frame
@@ -87,7 +93,7 @@ if __name__ == '__main__':
     dataset_test = IVDataset('test', XNAME, YNAME, N_file=hp.N_file // 4,
                              doNormalize=False
                              )
-    dataset_test.normalizeOn(dataset.normalize)
+    dataset_test.normalizeOnLike(dataset)
     del dataset
 
     # DataLoader
@@ -284,7 +290,7 @@ def eval_model(loader: DataLoader=None, FNAME='',
                 norm_frames[iteration] = []
                 norm_errors[iteration] = []
                 for N_frame, item_out, item_y \
-                        in zip(N_frames, out_denorm, y_denorm):
+                        in zip(data['N_frames_y'], out_denorm, y_denorm):
                     norm_frames[iteration].append(
                         norm_iv(
                             item_y[..., :N_frame],
@@ -309,8 +315,8 @@ def eval_model(loader: DataLoader=None, FNAME='',
                 norm_normalized = norm_iv(output - y_cuda, parts=norm_parts)
                 loss = norm_normalized.sum(dim=1)
                 # 3 x f x t
-                if y_denorm.shape[-1] < N_frames:
-                    F.pad(y_denorm, (0, N_frames - y_denorm.shape[-1]))
+                # if y_denorm.shape[-1] < N_frames:
+                #     F.pad(y_denorm, (0, N_frames - y_denorm.shape[-1]))
                 norm_frames[iteration] = norm_iv(y_denorm,
                                                  keep_freq_axis=True,
                                                  parts=norm_parts,
@@ -364,7 +370,7 @@ def eval_model(loader: DataLoader=None, FNAME='',
 
 
 def run():
-    if not f_model_state:
+    if not f_model_state or ARGS.train_epoch:
         train()
     else:
         loss_test, snr_seg_test \
