@@ -8,8 +8,8 @@ import gc
 
 def static_vars(**kwargs):
     def decorate(func):
-        for k in kwargs:
-            setattr(func, k, kwargs[k])
+        for k, a in kwargs.items():
+            setattr(func, k, a)
         return func
     return decorate
 
