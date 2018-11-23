@@ -51,8 +51,11 @@ class MultipleScheduler(object):
         return self._schedulers[idx]
 
 
-def arr2str(a):
-    return np.arr2str(a, formatter={'float_kind': lambda x: f'{x:.2e}'})
+def arr2str(a, n_decimal=2):
+    return np.array2string(
+        a,
+        formatter={'float_kind': lambda x: f'{x:.{n_decimal}e}'}
+    )
 
 
 def print_progress(iteration: int, total: int, prefix='', suffix='',
