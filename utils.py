@@ -35,14 +35,18 @@ class MultipleOptimizer(object):
 
 class MultipleScheduler(object):
     def __init__(self, cls_scheduler: type,
-                 optimizers: MultipleOptimizer, **kwargs):
+                 optimizers: MultipleOptimizer, *args, **kwargs):
         self._schedulers = []
         for op in optimizers:
-            self._schedulers.append(cls_scheduler(op, **kwargs))
+            self._schedulers.append(cls_scheduler(op, *args, **kwargs))
 
     def step(self):
         for sch in self._schedulers:
             sch.step()
+
+    def batch_step(self):
+        for sch in self._schedulers:
+            sch.batch_step()
 
     def __len__(self):
         return len(self._schedulers)

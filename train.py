@@ -23,6 +23,7 @@ from utils import (arr2str,
                    )
 
 from mlp import MLP  # noqa: F401
+from cosine_scheduler import CosineLRWithRestarts
 from unet import UNet  # noqa: F401
 from deeplab_xception import DeepLabv3_plus  # noqa: F401
 
@@ -36,7 +37,7 @@ DIR_RESULT = './result/UNet'
 # DIR_RESULT = './result/Deeplab'
 if not os.path.isdir(DIR_RESULT):
     os.makedirs(DIR_RESULT)
-DIR_RESULT = os.path.join(DIR_RESULT, os.path.basename(DIR_RESULT) + '_')
+DIR_RESULT = os.path.join(DIR_RESULT, 'UNet_')
 
 # ------determined by IV files------
 XNAME = 'IV_room'
@@ -54,6 +55,7 @@ if ARGS.train_epoch:
     INIT_EPOCH = ARGS.train_epoch[0] + 1
 elif ARGS.test_epoch:
     f_model_state = f'{DIR_RESULT}{ARGS.test_epoch[0]}.pt'
+    INIT_EPOCH = 0
 else:
     f_model_state = None
     INIT_EPOCH = 0
@@ -68,7 +70,7 @@ class HyperParameters(NamedTuple):
     """
     N_epochs = 200
     batch_size = 32
-    learning_rate = 1e-4
+    learning_rate = 1e-3
     N_file = 20 * 500
 
     n_per_frame: int
@@ -79,13 +81,16 @@ class HyperParameters(NamedTuple):
               'gamma': 0.8}
 
     CosineAnnealingLR = {'T_max': 10,
-                         'eta_min': 0,
-                         'last_epoch': -1}
+                         'eta_min': 0}
+
+    CosineLRWithRestarts = dict(restart_period=10,
+                                t_mult=2,
+                                eta_threshold=1000,)
 
     weight_decay = 1e-8  # Adam weight_decay
 
     # weight_dyn_loss = (1, 0.5, 0.5)
-    weight_dyn_loss = (1, 1, 1)
+    weight_dyn_loss = (1, 0.5, 0.3)
 
     # def for_MLP(self) -> Tuple:
     #     n_input = self.L_cut_x * self.n_per_frame
@@ -163,8 +168,16 @@ if __name__ == '__main__':
     # Scheduler
     # scheduler = MultipleScheduler(torch.optim.lr_scheduler.StepLR,
     #                               optimizer, **hp.StepLR)
-    scheduler = MultipleScheduler(torch.optim.lr_scheduler.CosineAnnealingLR,
-                                  optimizer, **hp.CosineAnnealingLR)
+    # scheduler = MultipleScheduler(torch.optim.lr_scheduler.CosineAnnealingLR,
+    #                               optimizer, **hp.CosineAnnealingLR,
+    #                               last_epoch=INIT_EPOCH-1)
+    scheduler = MultipleScheduler(CosineLRWithRestarts,
+                                  optimizer,
+                                  batch_size=hp.batch_size,
+                                  epoch_size=len(dataset_train),
+                                  **hp.CosineLRWithRestarts,
+                                  last_epoch=INIT_EPOCH - 1)
+    avg_snr_seg_pre = None
 
 
 def train():
@@ -172,13 +185,13 @@ def train():
     # loss_valid = np.zeros(hp.N_epochs)
     # snr_seg_valid = np.zeros(hp.N_epochs)
     loss_valid = np.zeros((hp.N_epochs, len(NORM_PARTS)))
-    snr_seg_valid = np.zeros((hp.N_epochs, len(NORM_PARTS)))
+    avg_snr_seg_valid = np.zeros((hp.N_epochs, len(NORM_PARTS)))
     if INIT_EPOCH:
         dict_loss = scio.loadmat(f'{DIR_RESULT}loss_{INIT_EPOCH-1}.mat',
                                  squeeze_me=True)
         loss_train[:INIT_EPOCH] = dict_loss['loss_train']
         loss_valid[:INIT_EPOCH] = dict_loss['loss_valid']
-        snr_seg_valid[:INIT_EPOCH] = dict_loss['snr_seg_valid']
+        avg_snr_seg_valid[:INIT_EPOCH] = dict_loss['snr_seg_valid']
 
     # Start Training
     for epoch in range(INIT_EPOCH, hp.N_epochs):
@@ -229,6 +242,7 @@ def train():
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            scheduler.batch_step()
             loss = (loss / len(N_frames)).item()
             print_progress(i_iter + 1, len(loader_train),
                            f'epoch {epoch:3d}: {loss:.1e}')
@@ -238,24 +252,26 @@ def train():
         print(f'Training Loss: {loss_train[epoch]:.2e}')
 
         # ==================Validation=========================
-        loss_valid[epoch], snr_seg_valid[epoch] \
+        loss_valid[epoch], avg_snr_seg_valid[epoch] \
             = eval_model(loader=loader_valid,
                          FNAME=f'{DIR_RESULT}IV_{epoch}.mat',
                          norm_parts=NORM_PARTS)
 
         print(f'Validation Loss: {loss_valid[epoch, -1]:.2e}\t'
-              f'Validation SNRseg (dB): {snr_seg_valid[epoch, -1]:.2e}')
+              f'Validation SNRseg (dB): {avg_snr_seg_valid[epoch, -1]:.2e}')
 
         try:
             os.remove(f'{DIR_RESULT}loss_{epoch-1}.mat')
         except FileNotFoundError:
             pass
-        scio.savemat(f'{DIR_RESULT}loss_{epoch}.mat',
-                     {'loss_train': loss_train[:epoch + 1].squeeze(),
-                      'loss_valid': loss_valid[:epoch + 1].squeeze(),
-                      'snr_seg_valid': snr_seg_valid[:epoch + 1].squeeze(),
-                      }
-                     )
+        scio.savemat(
+            f'{DIR_RESULT}loss_{epoch}.mat',
+            {'loss_train': loss_train[:epoch + 1].squeeze(),
+             'loss_valid': loss_valid[:epoch + 1].squeeze(),
+             'avg_snr_seg_valid': avg_snr_seg_valid[:epoch + 1].squeeze(),
+             'avg_snr_seg_pre': avg_snr_seg_pre,
+             }
+        )
         if epoch % 5 == 0:
             torch.save(model.state_dict(), f'{DIR_RESULT}{epoch}.pt')
 
@@ -278,6 +294,56 @@ def train():
     print()
     print(f'Test Loss: {arr2str(loss_test)}\t'
           f'Test SNR (dB): {arr2str(snr_test_dB)}')
+
+
+def calc_snr_seg(loader: DataLoader=None, norm_parts='all'):
+    if not loader:
+        loader = loader_test
+
+    if type(norm_parts) == str:
+        norm_parts = (norm_parts,)
+
+    avg_snr_seg = torch.zeros(len(norm_parts),
+                              requires_grad=False).cuda(OUT_CUDA_DEV)
+    with torch.no_grad():
+        model.eval()
+        print_progress(0, len(loader), f'{"eval":<9}')
+        for i_iter, data in enumerate(loader):
+            # =======================get data============================
+            x = data['x']
+            y = data['y']
+
+            N_frames = data['T_ys'] if 'T_ys' in data else y.shape[-1]
+
+            x_cuda = x.cuda(device=2)
+            y_cuda = y.cuda(device=2)
+            x_denorm = loader.dataset.denormalize(x_cuda, 'y')
+            y_denorm = loader.dataset.denormalize(y_cuda, 'y')
+
+            if type(N_frames) == np.ndarray:
+                # Loss
+
+                snr_seg = torch.zeros(len(norm_parts)).cuda(OUT_CUDA_DEV)
+                for i_b, (T, item_x, item_y) \
+                        in enumerate(zip(N_frames, x_denorm, y_denorm)):
+                    norm_y = norm_iv(item_y[:, :T, :], parts=norm_parts)
+                    norm_err = norm_iv(
+                        item_x[:, :T, :] - item_y[:, :T, :], parts=norm_parts
+                    )
+                    snr_seg += torch.log10(norm_y / norm_err).mean(dim=1)
+                snr_seg *= 10
+            else:
+                norm_y = norm_iv(y_denorm, parts=norm_parts)
+                norm_err = norm_iv(x_denorm - y_denorm, parts=norm_parts)
+                snr_seg = 10 * torch.log10(norm_y / norm_err).mean(dim=1)
+
+            avg_snr_seg += snr_seg
+            print_progress(i_iter + 1, len(loader),
+                           f'{"eval":<9}: {snr_seg[-1].item():.2e}')
+        avg_snr_seg /= len(loader.dataset)
+        model.train()
+
+    return avg_snr_seg.cpu().numpy()
 
 
 # @static_vars(sum_N_frames=0)
@@ -432,14 +498,20 @@ def eval_model(loader: DataLoader=None, FNAME='',
 
 
 def run():
+    global avg_snr_seg_pre
     if not f_model_state or ARGS.train_epoch:
+        avg_snr_seg_pre = calc_snr_seg(loader_valid, norm_parts=NORM_PARTS)
         train()
     else:
+        avg_snr_seg_pre = calc_snr_seg(norm_parts=('I', 'a', 'all'))
         loss_test, snr_seg_test \
             = eval_model(FNAME=f'MLP_result_{ARGS.test_epoch}_test.mat',
                          norm_parts=('I', 'a', 'all'))
         print(f'Test Loss: {arr2str(loss_test, n_decimal=4)}\t'
-              f'Test SNRseg (dB): {arr2str(snr_seg_test, n_decimal=4)}')
+              f'Test SNRseg (dB): {arr2str(snr_seg_test, n_decimal=4)}\n'
+              f'Test SNRseg of Reverberant Speech (dB): '
+              f'{arr2str(avg_snr_seg_pre, n_decimal=4)}'
+              )
 
 
 if __name__ == '__main__':
