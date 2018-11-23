@@ -1,19 +1,20 @@
-path_wav = './Data/speech/data/lisa/data/timit/raw/TIMIT'
-path_iv = './Data/IV'
+PATH_WAV = './Data/speech/data/lisa/data/timit/raw/TIMIT'
+PATH_IV = './Data/IV'
+
+DICT_PATH = {
+    'root': './Data',
+    'wav_train': f'{PATH_WAV}/TRAIN',
+    'wav_test': f'{PATH_WAV}/TEST',
+    'iv_train': f'{PATH_IV}/TRAIN',
+    'iv_test': f'{PATH_IV}/TEST',
+
+}
 
 
 def path(to):
-    if to == 'root':
-        return './Data'
-    elif to == 'wav_train':
-        return f'{path_wav}/TRAIN'
-    elif to == 'wav_test':
-        return f'{path_wav}/TEST'
-    elif to == 'iv_train':
-        return f'{path_iv}/TRAIN'
-    elif to == 'iv_test':
-        return f'{path_iv}/TEST'
-
+    _path = DICT_PATH.get(to)
+    if _path:
+        return _path
     else:
-        print('Path to {} is not available.'.format(to))
+        print(f'Path to {to} is not available.')
         raise NotImplementedError
