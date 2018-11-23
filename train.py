@@ -409,8 +409,9 @@ def eval_model(loader: DataLoader=None, FNAME='',
                         loss += hp.weight_dyn_loss[i_dyn] / int(T) \
                             * norm_iv(item_out[:, :, :T - 4 * i_dyn]
                                       - item_y[:, :, :T - 4 * i_dyn],
+                                      reduce_axis=(-3, -2, -1),
                                       parts=norm_parts
-                                      ).sum(dim=1)
+                                      )
 
                 # snr_seg
 
@@ -441,7 +442,10 @@ def eval_model(loader: DataLoader=None, FNAME='',
             else:
                 for y_dyn, out_dyn in zip(y_cuda, output):
                     loss += hp.weight_dyn_loss[i_dyn] / y_dyn.shape[-2] \
-                        * criterion(out_dyn, y_dyn)
+                        * norm_iv(out_dyn - y_dyn,
+                                  reduce_axis=(-3, -2, -1),
+                                  parts=norm_parts
+                                  )
                 # 3 x f x t
                 # norm_y[i_iter] = norm_iv(y_denorm,
                 #                               keep_freq_axis=True,

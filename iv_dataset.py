@@ -113,11 +113,12 @@ class IVDataset(Dataset):
         T_ys = np.array([batch[idx]['T_y'] for idx in idxs_sorted])
 
         x = [batch[idx]['x'].permute(-2, -3, -1) for idx in idxs_sorted]
-        x = pad_sequence(x, batch_first=True)
-        x = x.permute(0, -2, -3, -1)
-
         y = [batch[idx]['y'].permute(-2, -3, -1) for idx in idxs_sorted]
+
+        x = pad_sequence(x, batch_first=True)
         y = pad_sequence(y, batch_first=True)
+
+        x = x.permute(0, -2, -3, -1)
         y = y.permute(0, -2, -3, -1)
 
         # fnames = [i1tem['fname'] for item in batch]
@@ -206,29 +207,24 @@ DICT_IDX = {
     'a': range(3, 4),
     'all': range(0, 4),
 }
-DICT_EINEXP = {
-    # key: (dim, keep_freq_axis)
-    (4, True): 'bftc,bftc->bft',
-    (4, False): 'bftc,bftc->bt',
-    (3, True): 'ftc,ftc->ft',
-    (3, False): 'ftc,ftc->t',
-}
 
 
-def norm_iv(data: TensArr, keep_freq_axis=False,
+def norm_iv(data: TensArr, reduced_axis=(-3, -1),
             parts: Union[str, Iterable[str]]='all') -> TensArr:
     dim = gen.ndim(data)
     if dim != 3 and dim != 4:
         raise f'Dimension Mismatch: {dim}'
 
     parts = [parts] if type(parts) == str else parts
+    base_expr = 'bftc' if dim == 4 else 'ftc'
+    result_expr = ''.join([base_expr[a] for a in reduced_axis])
 
-    einexp = DICT_EINEXP[(dim, keep_freq_axis)]
+    ein_expr = f'{base_expr},{base_expr}->{result_expr}'
 
     result = []
     for part in parts:
         if part in DICT_IDX.keys():
-            norm = gen.einsum(einexp, (data[..., DICT_IDX[part]],) * 2)
+            norm = gen.einsum(ein_expr, (data[..., DICT_IDX[part]],) * 2)
             result.append(norm)
         else:
             raise ValueError('"parts" should be "I", "a", or "all" '
