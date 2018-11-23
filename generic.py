@@ -1,17 +1,31 @@
 """
 Generic type & functions for torch.Tensor and np.ndarray
 """
-
-import torch
-from torch import Tensor
+from typing import Union, TypeVar, Iterable
 
 import numpy as np
 from numpy import ndarray
 
-from typing import Tuple, Union, List, TypeVar
+import torch
+from torch import Tensor
 
 
 TensArr = TypeVar('TensArr', Tensor, ndarray)
+dict_package = {Tensor: torch, ndarray: np}
+dict_cat_stack_fn = {(Tensor, 'cat'): torch.cat,
+                     (ndarray, 'cat'): np.concatenate,
+                     (Tensor, 'stack'): torch.stack,
+                     (ndarray, 'stack'): np.stack,
+                     }
+
+
+def copy(a: TensArr, requires_grad=True) -> TensArr:
+    if type(a) == Tensor:
+        return a.clone() if requires_grad else torch.tensor(a)
+    elif type(a) == ndarray:
+        return np.copy(a)
+    else:
+        raise TypeError
 
 
 def convert(a: TensArr, astype: type) -> TensArr:
@@ -38,12 +52,11 @@ def ndim(a: TensArr) -> int:
         raise TypeError
 
 
-def transpose(a: TensArr,
-              axes: Union[int, Tuple[int, ...], List[int]]=None) -> TensArr:
+def transpose(a: TensArr, axes: Union[int, Iterable[int]]=None) -> TensArr:
     if type(a) == Tensor:
         if not axes:
             if a.dim() >= 2:
-                return a.permute((1, 0)+(-1,)*(a.dim()-2))
+                return a.permute((1, 0) + tuple(range(2, a.dim())))
             else:
                 return a
         else:
@@ -58,43 +71,44 @@ def transpose(a: TensArr,
         raise TypeError
 
 
-def squeeze(a: TensArr, axis=None) -> TensArr:
-    if type(a) == Tensor:
-        return a.squeeze(dim=axis)
-    elif type(a) == ndarray:
-        return a.squeeze(axis=axis)
+def einsum(subscripts: str,
+           operands: Iterable[TensArr],
+           astype: type=None) -> TensArr:
+    if not astype:
+        astype = type(operands[0])
+        if astype != Tensor and astype != ndarray:
+            raise TypeError
     else:
-        raise TypeError
+        types = [type(item) for item in operands]
+        for idx, type_ in enumerate(types):
+            if type_ != astype:
+                if type(operands) != list:
+                    operands = list(operands)
+                operands[idx] = convert(operands[idx], astype)
+
+    return dict_package[astype].einsum(subscripts, operands)
 
 
 def _cat_stack(fn: str,
-               a: Union[Tuple[TensArr, ...], List[TensArr]],
+               a: Iterable[TensArr],
                axis=0,
-               astype: type=None) -> TensArr:
-    fn_dict = {(torch, 'cat'): torch.cat,
-               (np, 'cat'): np.concatenate,
-               (torch, 'stack'): torch.stack,
-               (np, 'stack'): np.stack,
-               }
-
+               astype: type = None) -> TensArr:
     types = [type(item) for item in a]
-    if np.any(types != types[0]):
-        a = [convert(item, (astype if astype else types[0])) for item in a]
+    if not astype:
+        astype = types[0]
+    for idx, type_ in enumerate(types):
+        if type_ != astype:
+            if type(a) != list:
+                a = list(a)
+            a[idx] = convert(a[idx], astype)
 
-    if types[0] == Tensor:
-        result = fn_dict[(torch, fn)](a, dim=axis)
-    elif types[0] == ndarray:
-        result = fn_dict[(np, fn)](a, axis=axis)
-    else:
-        raise TypeError
-
-    return convert(result, astype) if astype else result
+    return dict_cat_stack_fn[(astype, fn)](a, axis)
 
 
 def cat(*args, **kargs) -> TensArr:
     """
     <parameters>
-    a:Union[Tuple[TensArr, ...], List[TensArr]]
+    a: Iterable[TensArr]
     axis=0
     astype: type=None
     """
@@ -104,20 +118,8 @@ def cat(*args, **kargs) -> TensArr:
 def stack(*args, **kargs) -> TensArr:
     """
     <parameters>
-    a: Union[Tuple[TensArr, ...], List[TensArr]]
+    a: Iterable[TensArr]
     axis=0
     astype: type=None
     """
     return _cat_stack('stack', *args, **kargs)
-
-
-def sum_axis(a: TensArr, axis=None):
-    if axis:
-        if type(a) == Tensor:
-            return a.sum(dim=axis)
-        elif type(a) == ndarray:
-            return a.sum(axis=axis)
-        else:
-            raise TypeError
-    else:
-        return a.sum()
