@@ -31,6 +31,20 @@ class NormalizationBase(dd.util.Saveable, metaclass=ABCMeta):
                        for k, a in self.save_to_dict().items()}
         return type(self)(**members)
 
+    @staticmethod
+    def calc_per_file(tup: Tuple) -> Tuple:
+        fname, XNAME, YNAME, list_func, args_x, args_y = tup
+        try:
+            data_dict = dd.io.load(fname)
+        except:  # noqa: E722
+            raise Exception(fname)
+        x, y = data_dict[XNAME], data_dict[YNAME]
+        result_x = {f: f(x, arg) for f, arg in zip(list_func, args_x)}
+        result_y = {f: f(y, arg) for f, arg in zip(list_func, args_y)}
+
+        print('.', end='', flush=True)
+        return result_x, result_y
+
     def _get_consts_like(self, a: TensArr):
         if type(a) == torch.Tensor:
             if a.device == torch.device('cpu'):
@@ -51,22 +65,6 @@ class NormalizationBase(dd.util.Saveable, metaclass=ABCMeta):
     @classmethod
     def load_from_dict(cls, d: Dict):
         return cls(**d)
-
-    @staticmethod
-    def calc_per_file(tup: Tuple) -> Tuple:
-        fname, XNAME, YNAME, list_func, args_x, args_y = tup
-        try:
-            data_dict = dd.io.load(fname)
-        except:  # noqa: E722
-            raise Exception(fname)
-        x, y = data_dict[XNAME], data_dict[YNAME]
-        result_x = {f: f(x, arg)
-                    for f, arg in zip(list_func, args_x)}
-        result_y = {f: f(y, arg)
-                    for f, arg in zip(list_func, args_y)}
-
-        print('.', end='', flush=True)
-        return result_x, result_y
 
     def __len__(self):
         return self._LEN
@@ -134,10 +132,11 @@ class MeanStdNormalization(NormalizationBase):
     def create(cls, all_files: List[str], XNAME: str, YNAME: str):
         # Calculate summation & size (parallel)
         pool = mp.Pool(mp.cpu_count())
-        result = pool.map(cls.calc_per_file,
-                          [(fname, XNAME, YNAME,
-                            (np.size,), (None,), (None,))
-                           for fname in all_files])
+        result = pool.map(
+            cls.calc_per_file,
+            [(fname, XNAME, YNAME, (np.size,), (None,), (None,))
+             for fname in all_files]
+        )
         print()
 
         # sum_x = np.sum([item[0]['sum'] for item in result], axis=0)
@@ -152,20 +151,20 @@ class MeanStdNormalization(NormalizationBase):
         print('Calculated Mean')
 
         # Calculate squared deviation (parallel)
-        result = pool.map(cls.calc_sq_dev,
-                          [(fname, XNAME, YNAME,
-                            (cls.sq_dev_log,), (mean_x,), (mean_y,))
-                           for fname in all_files])
+        result = pool.map(
+            cls.calc_sq_dev,
+            [(fname, XNAME, YNAME, (cls.sq_dev_log,), (mean_x,), (mean_y,))
+             for fname in all_files]
+        )
         pool.close()
 
         sum_sq_dev_x = np.sum([item[0][cls.sq_dev] for item in result], axis=0)
         sum_sq_dev_y = np.sum([item[1][cls.sq_dev] for item in result], axis=0)
 
-        std_x = np.sqrt(sum_sq_dev_x
-                        / (sum_size_x // sum_sq_dev_x.size) + 1e-5)
-        std_y = np.sqrt(sum_sq_dev_y
-                        / (sum_size_y // sum_sq_dev_y.size) + 1e-5)
+        std_x = np.sqrt(sum_sq_dev_x / (sum_size_x//sum_sq_dev_x.size) + 1e-5)
+        std_y = np.sqrt(sum_sq_dev_y / (sum_size_y//sum_sq_dev_y.size) + 1e-5)
         print('Calculated Std')
+
         return cls(mean_x, mean_y, std_x, std_y)
 
     def normalize(self, a: TensArr, xy: str) -> TensArr:
@@ -219,10 +218,11 @@ class MinMaxNormalization(NormalizationBase):
     def create(cls, all_files: List[str], XNAME: str, YNAME: str):
         # Calculate summation & no. of total frames (parallel)
         pool = mp.Pool(mp.cpu_count())
-        result = pool.map(cls.calc_minmax,
-                          [(fname, XNAME, YNAME,
-                            (np.min, np.max), (None, None), (None, None))
-                           for fname in all_files])
+        result = pool.map(
+            cls.calc_minmax,
+            [(fname, XNAME, YNAME, (np.min, np.max), (None,)*2, (None,)*2)
+             for fname in all_files]
+        )
         pool.close()
 
         min_x = np.min([res[0][np.min] for res in result])
