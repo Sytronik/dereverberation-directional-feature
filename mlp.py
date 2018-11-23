@@ -6,7 +6,7 @@ class MLP(nn.Module):
     Multi-layer Perceptron
     """
     def __init__(self, n_input: int, n_hidden: int, n_output: int, p: float):
-        super(MLP, self).__init__()
+        super().__init__()
 
         self.layer1 = nn.Sequential(
             nn.Linear(n_input, n_hidden, bias=False),
