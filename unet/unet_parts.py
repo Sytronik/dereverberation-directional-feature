@@ -1,13 +1,11 @@
 # sub-parts of the U-Net model
 
-import pdb  # noqa: F401
+from typing import Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-
-from typing import Tuple
 
 
 def force_size_same(a: torch.Tensor,
@@ -32,17 +30,21 @@ class double_conv(nn.Module):
     '''(conv => BN => ReLU) * 2'''
     def __init__(self, in_ch, out_ch):
         super(double_conv, self).__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, (5, 3), padding=(2, 1)),
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, (3, 3), padding=(1, 1)),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True),
-            nn.Conv2d(out_ch, out_ch, (5, 3), padding=(2, 1)),
+        )
+        self.conv2 = nn.Sequential(
+            # nn.Conv2d(out_ch, out_ch, (3, 3), padding=(1, 2), stride=(1, 2)),
+            nn.Conv2d(out_ch, out_ch, (3, 3), padding=(1, 1)),
             nn.BatchNorm2d(out_ch),
-            nn.ReLU(inplace=True)
+            nn.ReLU(inplace=True),
         )
 
     def forward(self, x):
-        x = self.conv(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
         return x
 
 
@@ -60,7 +62,8 @@ class down(nn.Module):
     def __init__(self, in_ch, out_ch):
         super(down, self).__init__()
         self.mpconv = nn.Sequential(
-            nn.Conv2d(in_ch, in_ch, (3, 2), stride=(3, 2)),
+            nn.Conv2d(in_ch, in_ch, (2, 2), stride=(2, 2)),
+            # nn.MaxPool2d((2, 2)),
             double_conv(in_ch, out_ch)
         )
 
@@ -80,7 +83,7 @@ class up(nn.Module):
                                   align_corners=True)
         else:
             self.up = nn.ConvTranspose2d(in_ch//2, in_ch//2,
-                                         (3, 2), stride=(3, 2))
+                                         (2, 2), stride=(2, 2))
 
         self.conv = double_conv(in_ch, out_ch)
 
@@ -97,42 +100,33 @@ class outconv(nn.Module):
     def __init__(self, in_ch, out_ch):
         super(outconv, self).__init__()
         self.conv1 = nn.Conv2d(in_ch, 11, 1)
+        self.relu1 = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv2d(out_ch + 11, 11, 1)
-        # self.sigmoid = nn.Sigmoid()
-        self.tanh = nn.Tanh()
-        self.relu = nn.ReLU()
+
+        self.act_transform = nn.Softsign()
+        # self.act_transform = nn.Tanh()
+
+        # self.act_mask = nn.ReLU()
+        # self.act_mask = nn.PReLU(num_parameters=1, init=0.25)
+        # self.act_mask = nn.Softplus(beta=1, threshold=20)
+        self.act_mask = nn.Sigmoid()
 
     def forward(self, x_decode, x_skip):
         x_decode = self.conv1(x_decode)
-        # diffX = x_decode.shape[-2] - x_skip.shape[-2]
-        # diffY = x_decode.shape[-1] - x_skip.shape[-1]
-        # if diffY > 0:
-        #     x_skip = F.pad(x_skip,
-        #                    (diffY//2, int(np.ceil(diffY/2)), 0, 0))
-        # elif diffY < 0:
-        #     x_decode = F.pad(x_decode,
-        #                      ((-diffY)//2, int(np.ceil((-diffY)/2)), 0, 0))
-        #
-        # if diffX > 0:
-        #     x_skip = F.pad(x_skip,
-        #                    (0, 0, diffX//2, int(np.ceil(diffX/2))))
-        # elif diffX < 0:
-        #     x_decode = F.pad(x_decode,
-        #                      (0, 0, (-diffX)//2, int(np.ceil((-diffX)/2))))
-
+        x_decode = self.relu1(x_decode)
         x = torch.cat([x_skip, x_decode], dim=1)
-        mask = self.conv2(x)
-        dim_ch = 1 if x_skip.dim() == 4 else 0
+        out = self.conv2(x)
+        einexp = 'bcft,bcft->bft' if x_skip.dim() == 4 else 'cft,cft->ft'
 
-        mask[..., 0:9, :, :] = self.tanh(mask[..., 0:9, :, :])
-        mask[..., 9:, :, :] = self.relu(mask[..., 9:, :, :])
-        y = [None]*4
-        for idx in range(0, 9, 3):
-            y[idx//3] = (mask[..., idx:idx+3, :, :]
-                         * x_skip[..., 0:3, :, :]).sum(dim=dim_ch,
-                                                       keepdim=True)
-
-        y[3] = mask[..., 9:10, :, :] * x_skip[..., 3:4, :, :]
-        y = torch.cat(y, dim=dim_ch)
-        y[..., 0:3, :, :] *= mask[..., 10:11, :, :]  # Broadcast
+        transform = self.act_transform(out[..., :9, :, :])
+        mask = self.act_mask(out[..., 9:, :, :])
+        y = torch.zeros_like(x_skip)
+        for idx in range(3):
+            y[..., idx, :, :] = torch.einsum(
+                einexp,
+                (transform[..., 3*idx:3*idx+3, :, :],
+                 x_skip[..., :3, :, :])
+            )
+        y[..., :3, :, :] *= mask[..., :1, :, :]  # Broadcast
+        y[..., 3, :, :] = mask[..., 1, :, :] * x_skip[..., 3, :, :]
         return y
