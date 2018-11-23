@@ -1,43 +1,48 @@
-import pdb  # noqa: F401
+from argparse import ArgumentParser
+from multiprocessing import cpu_count  # noqa: F401
+import os
+import time
+from typing import NamedTuple, Tuple, Iterable, Union
 
+import deepdish as dd
 import numpy as np
 import scipy.io as scio
-import deepdish as dd
 
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
-from argparse import ArgumentParser
-import os
-import time
-from multiprocessing import cpu_count  # noqa: F401
-
-from typing import NamedTuple, Tuple
-
-from iv_dataset import IVDataset, norm_iv
-from utils import (arr2str, print_progress,
-                   MultipleOptimizer, MultipleScheduler, static_vars)
-# from mlp import MLP
-from unet import UNet
+from iv_dataset import (IVDataset,
+                        delta,
+                        norm_iv)
 import mypath
+from utils import (arr2str,
+                   MultipleOptimizer,
+                   MultipleScheduler,
+                   print_progress,
+                   )
 
-# manually selected
+from mlp import MLP  # noqa: F401
+from unet import UNet  # noqa: F401
+from deeplab_xception import DeepLabv3_plus  # noqa: F401
+
+# ---------manually selected---------
 NUM_WORKERS = cpu_count()
 # NUM_WORKERS = 0
 OUT_CUDA_DEV = 1
-NORM_PARTS = ('all',)
+NORM_PARTS = 'all'
 
 DIR_RESULT = './result/UNet'
+# DIR_RESULT = './result/Deeplab'
 if not os.path.isdir(DIR_RESULT):
     os.makedirs(DIR_RESULT)
-DIR_RESULT = os.path.join(DIR_RESULT, os.path.basename(DIR_RESULT)+'_')
+DIR_RESULT = os.path.join(DIR_RESULT, os.path.basename(DIR_RESULT) + '_')
 
-# determined by IV files
+# ------determined by IV files------
 XNAME = 'IV_room'
 YNAME = 'IV_free'
 
-# determined by sys argv
+# ------determined by sys argv------
 parser = ArgumentParser()
 parser.add_argument('--from',
                     type=int, nargs=1, dest='train_epoch', metavar='EPOCH')
@@ -46,29 +51,41 @@ parser.add_argument('--test',
 ARGS = parser.parse_args()
 if ARGS.train_epoch:
     f_model_state = f'{DIR_RESULT}{ARGS.train_epoch[0]}.pt'
+    INIT_EPOCH = ARGS.train_epoch[0] + 1
 elif ARGS.test_epoch:
     f_model_state = f'{DIR_RESULT}{ARGS.test_epoch[0]}.pt'
 else:
     f_model_state = None
+    INIT_EPOCH = 0
+
+if f_model_state and not os.path.isfile(f_model_state):
+    raise FileNotFoundError
 
 
 class HyperParameters(NamedTuple):
     """
     Hyper Parameters of NN
     """
-    N_epochs = 1000
-    batch_size = 24
-    learning_rate = 5e-4
-    N_file = 20*700
+    N_epochs = 200
+    batch_size = 32
+    learning_rate = 1e-4
+    N_file = 20 * 500
 
     n_per_frame: int
     p = 0.5  # Dropout p
 
     # lr scheduler
-    step_size = 10
-    gamma = 0.8
+    StepLR = {'step_size': 5,
+              'gamma': 0.8}
 
-    weight_decay = 0  # 1e-8  # Adam weight_decay
+    CosineAnnealingLR = {'T_max': 10,
+                         'eta_min': 0,
+                         'last_epoch': -1}
+
+    weight_decay = 1e-8  # Adam weight_decay
+
+    # weight_dyn_loss = (1, 0.5, 0.5)
+    weight_dyn_loss = (1, 1, 1)
 
     # def for_MLP(self) -> Tuple:
     #     n_input = self.L_cut_x * self.n_per_frame
@@ -117,6 +134,7 @@ if __name__ == '__main__':
                              )
 
     # Model (Using Parallel GPU)
+    # model = nn.DataParallel(DeepLabv3_plus(4, 4),
     model = nn.DataParallel(UNet(n_channels=4, n_classes=4),
                             output_device=OUT_CUDA_DEV).cuda()
     if f_model_state:
@@ -143,10 +161,10 @@ if __name__ == '__main__':
     )
 
     # Scheduler
-    scheduler = MultipleScheduler(torch.optim.lr_scheduler.StepLR,
-                                  optimizer,
-                                  step_size=hp.step_size,
-                                  gamma=hp.gamma)
+    # scheduler = MultipleScheduler(torch.optim.lr_scheduler.StepLR,
+    #                               optimizer, **hp.StepLR)
+    scheduler = MultipleScheduler(torch.optim.lr_scheduler.CosineAnnealingLR,
+                                  optimizer, **hp.CosineAnnealingLR)
 
 
 def train():
@@ -155,68 +173,94 @@ def train():
     # snr_seg_valid = np.zeros(hp.N_epochs)
     loss_valid = np.zeros((hp.N_epochs, len(NORM_PARTS)))
     snr_seg_valid = np.zeros((hp.N_epochs, len(NORM_PARTS)))
+    if INIT_EPOCH:
+        dict_loss = scio.loadmat(f'{DIR_RESULT}loss_{INIT_EPOCH-1}.mat',
+                                 squeeze_me=True)
+        loss_train[:INIT_EPOCH] = dict_loss['loss_train']
+        loss_valid[:INIT_EPOCH] = dict_loss['loss_valid']
+        snr_seg_valid[:INIT_EPOCH] = dict_loss['snr_seg_valid']
 
     # Start Training
-    for epoch in range(hp.N_epochs):
+    for epoch in range(INIT_EPOCH, hp.N_epochs):
         t_start = time.time()
 
         print()
         print_progress(0, len(loader_train), f'epoch {epoch:3d}:')
         scheduler.step()
-        for iteration, data in enumerate(loader_train):
+        for i_iter, data in enumerate(loader_train):
+            # ==================ge data=====================
             x = data['x']
             y = data['y']
 
-            N_frames = data['N_frames_x'] \
-                if 'N_frames_x' in data else x.shape[-1]
-            size = sum(N_frames)
+            N_frames = data['T_ys'] if 'T_ys' in data else y.shape[-1]
+            # size = N_frames.sum()
+            x = x.permute(0, -1, -3, -2)
+            y = y.permute(0, -1, -3, -2)
+            x_cuda = x.cuda(device=0)
+            y_cuda = y.cuda(device=OUT_CUDA_DEV)
 
             # ===================forward=====================
-            _input = x.cuda(device=0)
-            output = model(_input)
-            y_cuda = y.cuda(device=OUT_CUDA_DEV)
-            if type(N_frames) == list:
-                loss = torch.tensor([0.]).cuda(OUT_CUDA_DEV)
-                for N_frame, item_out, item_y in zip(N_frames, output, y_cuda):
-                    loss += criterion(item_out[:, :, :N_frame],
-                                      item_y[:, :, :N_frame])
-            else:
-                loss = criterion(output, y_cuda)
+            output = model(x_cuda)[..., :y_cuda.shape[-1]]
 
-            loss /= size
+            # delta & delta-delta
+            y_cuda = [y_cuda, None, None]
+            output = [output, None, None]
+            for i_dyn in range(1, 3):
+                y_cuda[i_dyn], tplz_mat = delta(y_cuda[i_dyn - 1], axis=-1)
+                output[i_dyn], _ = delta(output[i_dyn - 1],
+                                         axis=-1, tplz_mat=tplz_mat)
+
+            loss = torch.tensor([0.]).cuda(OUT_CUDA_DEV)
+            if type(N_frames) == np.ndarray:
+                for i_dyn, (y_dyn, out_dyn) in enumerate(zip(y_cuda, output)):
+                    for T, item_y, item_out in zip(N_frames, y_dyn, out_dyn):
+                        loss += hp.weight_dyn_loss[i_dyn] / int(T) \
+                            * criterion(item_out[:, :, :T - 4 * i_dyn],
+                                        item_y[:, :, :T - 4 * i_dyn])
+            else:
+                for y_dyn, out_dyn in zip(y_cuda, output):
+                    loss += hp.weight_dyn_loss[i_dyn] / y_cuda.shape[-1] \
+                        * criterion(out_dyn, y_dyn)
+
+            # loss /= float(size)
             loss_train[epoch] += loss.item()
 
             # ===================backward====================
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            print_progress(iteration+1, len(loader_train),
-                           f'epoch {epoch:3d}: {loss.item():.1e}')
+            loss = (loss / len(N_frames)).item()
+            print_progress(i_iter + 1, len(loader_train),
+                           f'epoch {epoch:3d}: {loss:.1e}')
 
-        loss_train[epoch] /= len(loader_train)
+        # ================= show and save result ===============
+        loss_train[epoch] /= len(dataset_train)
         print(f'Training Loss: {loss_train[epoch]:.2e}')
 
-        # Validation
+        # ==================Validation=========================
         loss_valid[epoch], snr_seg_valid[epoch] \
             = eval_model(loader=loader_valid,
                          FNAME=f'{DIR_RESULT}IV_{epoch}.mat',
                          norm_parts=NORM_PARTS)
 
-        # print loss, snr and save
         print(f'Validation Loss: {loss_valid[epoch, -1]:.2e}\t'
               f'Validation SNRseg (dB): {snr_seg_valid[epoch, -1]:.2e}')
 
+        try:
+            os.remove(f'{DIR_RESULT}loss_{epoch-1}.mat')
+        except FileNotFoundError:
+            pass
         scio.savemat(f'{DIR_RESULT}loss_{epoch}.mat',
-                     {'loss_train': loss_train.squeeze(),
-                      'loss_valid': loss_valid.squeeze(),
-                      'snr_seg_valid': snr_seg_valid.squeeze(),
+                     {'loss_train': loss_train[:epoch + 1].squeeze(),
+                      'loss_valid': loss_valid[:epoch + 1].squeeze(),
+                      'snr_seg_valid': snr_seg_valid[:epoch + 1].squeeze(),
                       }
                      )
-        torch.save(model.state_dict(), f'{DIR_RESULT}{epoch}.pt')
+        if epoch % 5 == 0:
+            torch.save(model.state_dict(), f'{DIR_RESULT}{epoch}.pt')
 
-        print(f'epoch {epoch:3d}: '
-              + time.strftime('%M min %S sec',
-                              time.gmtime(time.time() - t_start)))
+        tt = time.strftime('%M min %S sec', time.gmtime(time.time() - t_start))
+        print(f'epoch {epoch:3d}: {tt}')
         # Early Stopping
         # if epoch >= 4:
         #     # loss_max = loss_valid[epoch-4:epoch].max()
@@ -236,9 +280,9 @@ def train():
           f'Test SNR (dB): {arr2str(snr_test_dB)}')
 
 
-@static_vars(sum_N_frames=0)
+# @static_vars(sum_N_frames=0)
 def eval_model(loader: DataLoader=None, FNAME='',
-               norm_parts='all') -> Tuple[float, float]:
+               norm_parts: Union[str, Iterable[str]]='all') -> Tuple:
     """
     Evaluate the performance of the model.
     loader: DataLoader to use.
@@ -247,100 +291,117 @@ def eval_model(loader: DataLoader=None, FNAME='',
     if not loader:
         loader = loader_test
 
-    # avg_loss = 0.
-    # avg_snr =  0.
+    if type(norm_parts) == str:
+        norm_parts = (norm_parts,)
+
     avg_loss = torch.zeros(len(norm_parts),
                            requires_grad=False).cuda(OUT_CUDA_DEV)
-    snr_seg = torch.zeros(len(norm_parts),
-                          requires_grad=False).cuda(OUT_CUDA_DEV)
-    norm_frames = [None] * len(loader)
-    norm_errors = [None] * len(loader)
-    if not eval_model.sum_N_frames:
-        sum_N_frames = 0
+    avg_snr_seg = torch.zeros(len(norm_parts),
+                              requires_grad=False).cuda(OUT_CUDA_DEV)
+    # norm_y = [None] * len(loader)
+    # norm_err = [None] * len(loader)
+    # if not eval_model.sum_N_frames:
+    #     sum_N_frames = 0
     dict_to_save = {}
     print_progress(0, len(loader), 'eval:')
     with torch.no_grad():
         model.eval()
 
-        for iteration, data in enumerate(loader):
+        for i_iter, data in enumerate(loader):
+            # =======================get data============================
             x = data['x']
             y = data['y']
 
-            N_frames = data['N_frames_x'] \
-                if 'N_frames_x' in data else x.shape[-1]
+            N_frames = data['T_ys'] if 'T_ys' in data else y.shape[-1]
+
+            x = x.permute(0, -1, -3, -2)
+            # y = y.permute(-1, -3, -2)
+            x_cuda = x.cuda(device=0)
+            y_cuda = y.cuda(device=OUT_CUDA_DEV)
 
             # =========================forward=============================
-            _input = x.cuda(device=0)
-            output = model(_input)
-            y_cuda = y.cuda(device=OUT_CUDA_DEV)
-            # =============================================================
-            # Reconstruct & Performance Measure
+            output = model(x_cuda)
+            # ============Reconstruct & Performance Measure==================
+            output = output.permute(0, -2, -1, -3)[..., :y_cuda.shape[-2], :]
+
             y_denorm = loader.dataset.denormalize(y_cuda, 'y')
             out_denorm = loader.dataset.denormalize(output, 'y')
 
-            if type(N_frames) == list:
-                loss = torch.tensor([0.]).cuda(OUT_CUDA_DEV)
-                for N_frame, item_out, item_y in zip(N_frames, output, y_cuda):
-                    norm_normalized = norm_iv(
-                        item_out[..., :N_frame] - item_y[..., :N_frame],
-                        parts=norm_parts
-                    )  # 3 x t
-                    loss += norm_normalized.sum(dim=1)
+            # delta & delta-delta
+            y_cuda = [y_cuda, None, None]
+            output = [output, None, None]
+            for i_dyn in range(1, 3):
+                y_cuda[i_dyn], tplz_mat = delta(y_cuda[i_dyn - 1], axis=-2)
+                output[i_dyn], _ = delta(output[i_dyn - 1],
+                                         axis=-2, tplz_mat=tplz_mat)
 
-                norm_frames[iteration] = []
-                norm_errors[iteration] = []
-                for N_frame, item_out, item_y \
-                        in zip(data['N_frames_y'], out_denorm, y_denorm):
-                    norm_frames[iteration].append(
-                        norm_iv(
-                            item_y[..., :N_frame],
-                            keep_freq_axis=True,
-                            parts=norm_parts
-                        )
-                    )
-                    norm_errors[iteration].append(
-                        norm_iv(
-                            item_out[..., :N_frame] - item_y[..., :N_frame],
-                            keep_freq_axis=True,
-                            parts=norm_parts
-                        )
-                    )
-                norm_frames[iteration] = torch.cat(norm_frames[iteration],
-                                                   dim=-1)
-                norm_errors[iteration] = torch.cat(norm_errors[iteration],
-                                                   dim=-1)
+            loss = torch.zeros(len(norm_parts)).cuda(OUT_CUDA_DEV)
+            if type(N_frames) == np.ndarray:
+                # Loss
+                for i_dyn, (y_dyn, out_dyn) in enumerate(zip(y_cuda, output)):
+                    for T, item_y, item_out in zip(N_frames, y_dyn, out_dyn):
+                        loss += hp.weight_dyn_loss[i_dyn] / int(T) \
+                            * norm_iv(item_out[:, :, :T - 4 * i_dyn]
+                                      - item_y[:, :, :T - 4 * i_dyn],
+                                      parts=norm_parts
+                                      ).sum(dim=1)
 
+                # snr_seg
+
+                # norm_y[i_iter] = [None] * len(N_frames)
+                # norm_err[i_iter] = [None] * len(N_frames)
+                # for i_b, (T, item_out, item_y) \
+                #         in enumerate(zip(N_frames, out_denorm, y_denorm)):
+                #     norm_y[i_iter][i_b] = norm_iv(
+                #         item_y[:, :T, :],
+                #         keep_freq_axis=True, parts=norm_parts
+                #     )
+                #     norm_err[i_iter][i_b] = norm_iv(
+                #         item_out[:, :T, :] - item_y[:, :T, :],
+                #         keep_freq_axis=True, parts=norm_parts
+                #     )
+                #
+                # norm_y[i_iter] = torch.cat(norm_y[i_iter], dim=-1)
+                # norm_err[i_iter] = torch.cat(norm_err[i_iter], dim=-1)
+                snr_seg = torch.zeros(len(norm_parts)).cuda(OUT_CUDA_DEV)
+                for i_b, (T, item_out, item_y) \
+                        in enumerate(zip(N_frames, out_denorm, y_denorm)):
+                    norm_y = norm_iv(item_y[:, :T, :], parts=norm_parts)
+                    norm_err = norm_iv(
+                        item_out[:, :T, :] - item_y[:, :T, :], parts=norm_parts
+                    )
+                    snr_seg += torch.log10(norm_y / norm_err).mean(dim=1)
+                snr_seg *= 10
             else:
-                # 3 x t
-                norm_normalized = norm_iv(output - y_cuda, parts=norm_parts)
-                loss = norm_normalized.sum(dim=1)
+                for y_dyn, out_dyn in zip(y_cuda, output):
+                    loss += hp.weight_dyn_loss[i_dyn] / y_dyn.shape[-2] \
+                        * criterion(out_dyn, y_dyn)
                 # 3 x f x t
-                # if y_denorm.shape[-1] < N_frames:
-                #     F.pad(y_denorm, (0, N_frames - y_denorm.shape[-1]))
-                norm_frames[iteration] = norm_iv(y_denorm,
-                                                 keep_freq_axis=True,
-                                                 parts=norm_parts,
-                                                 )
-                norm_errors[iteration] = norm_iv(out_denorm - y_denorm,
-                                                 keep_freq_axis=True,
-                                                 parts=norm_parts,
-                                                 )
+                # norm_y[i_iter] = norm_iv(y_denorm,
+                #                               keep_freq_axis=True,
+                #                               parts=norm_parts,
+                #                               )
+                # norm_err[i_iter] = norm_iv(out_denorm - y_denorm,
+                #                               keep_freq_axis=True,
+                #                               parts=norm_parts,
+                #                               )
+                norm_y = norm_iv(y_denorm, parts=norm_parts)
+                norm_err = norm_iv(out_denorm - y_denorm, parts=norm_parts)
+                snr_seg = 10 * torch.log10(norm_y / norm_err).mean(dim=1)
 
-            if not eval_model.sum_N_frames:
-                sum_N_frames += sum(N_frames)
+            # if not eval_model.sum_N_frames:
+            #     sum_N_frames += N_frames.sum()
             avg_loss += loss
-
-            sum_frames = norm_frames[iteration].sum(dim=-2)
-            sum_errors = norm_errors[iteration].sum(dim=-2)
-            snr_seg += 10 * torch.log10(sum_frames / sum_errors).sum(dim=1)
+            avg_snr_seg += snr_seg
 
             # Save IV Result
             if FNAME and not dict_to_save:
+                x = x.permute(0, -2, -1, -3)
                 x = loader.dataset.denormalize_(x, 'x')
-                if type(N_frames) == list:
-                    x = x[0, :, :, :N_frames[0]]
-                    y_denorm = y_denorm[0, :, :, :N_frames[0]]
-                    out_denorm = out_denorm[0, :, :, :N_frames[0]]
+                if type(N_frames) == np.ndarray:
+                    x = x[0, :, :data['T_xs'][0], :]
+                    y_denorm = y_denorm[0, :, :N_frames[0], :]
+                    out_denorm = out_denorm[0, :, :N_frames[0], :]
 
                 dict_to_save = {
                     'IV_free': y_denorm.cpu().numpy(),
@@ -349,24 +410,25 @@ def eval_model(loader: DataLoader=None, FNAME='',
                 }
                 scio.savemat(FNAME, dict_to_save)
 
-            print_progress(iteration+1, len(loader),
-                           f'{"eval":<9}: {loss[-1]/sum(N_frames):.1e}'
-                           )
+            loss = loss[-1] / len(N_frames)
+            print_progress(i_iter + 1, len(loader), f'{"eval":<9}: {loss:.1e}')
 
-        if not eval_model.sum_N_frames:
-            eval_model.sum_N_frames = sum_N_frames
-        avg_loss /= eval_model.sum_N_frames
-        snr_seg /= eval_model.sum_N_frames
+        # if not eval_model.sum_N_frames:
+        #     eval_model.sum_N_frames = int(sum_N_frames)
+        # avg_loss /= eval_model.sum_N_frames
+        # snr_seg /= eval_model.sum_N_frames
+        avg_loss /= len(loader.dataset)
+        avg_snr_seg /= len(loader.dataset)
 
         # if FNAME:
-        #     norm_frames = np.concatenate(norm_frames, axis=1)
-        #     norm_errors = np.concatenate(norm_errors, axis=1)
+        #     norm_y = np.concatenate(norm_y, axis=1)
+        #     norm_err = np.concatenate(norm_err, axis=1)
         #
-        #     dict_to_save['norm_frames'] = norm_frames[2, :, :]
-        #     dict_to_save['norm_errors'] = norm_errors[2, :, :]
+        #     dict_to_save['norm_y'] = norm_y[2, :, :]
+        #     dict_to_save['norm_err'] = norm_err[2, :, :]
         #     scio.savemat(FNAME, dict_to_save)
         model.train()
-    return avg_loss.cpu().numpy(), snr_seg.cpu().numpy()
+    return avg_loss.cpu().numpy(), avg_snr_seg.cpu().numpy()
 
 
 def run():
@@ -374,10 +436,10 @@ def run():
         train()
     else:
         loss_test, snr_seg_test \
-            = eval_model(FNAME=f'MLP_result_{ARGS.test_epoch}_test.mat')
-        print(f'Test Loss: {arr2str(loss_test)}\t'
-              f'Test SNRseg (dB): {arr2str(snr_seg_test)}')
-        quit()
+            = eval_model(FNAME=f'MLP_result_{ARGS.test_epoch}_test.mat',
+                         norm_parts=('I', 'a', 'all'))
+        print(f'Test Loss: {arr2str(loss_test, n_decimal=4)}\t'
+              f'Test SNRseg (dB): {arr2str(snr_seg_test, n_decimal=4)}')
 
 
 if __name__ == '__main__':
