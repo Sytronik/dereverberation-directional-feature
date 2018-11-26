@@ -63,17 +63,17 @@ def arr2str(a, n_decimal=2):
 
 
 def print_progress(iteration: int, total: int, prefix='', suffix='',
-                   decimals=1, barLength=0):
+                   decimals=1, len_bar=0):
     """
     Print Progress Bar
     """
     percent = f'{100 * iteration / total:>{decimals+4}.{decimals}f}'
-    if barLength == 0:
-        barLength = min(os.get_terminal_size().columns, 80) \
+    if len_bar == 0:
+        len_bar = min(os.get_terminal_size().columns, 80) \
             - len(prefix) - len(percent) - len(suffix) - 11
 
-    filledLength = barLength * iteration // total
-    bar = '#' * filledLength + '-' * (barLength - filledLength)
+    len_filled = len_bar * iteration // total
+    bar = '#' * len_filled + '-' * (len_bar - len_filled)
 
     print(f'{prefix} |{bar}| {percent}% {suffix}', end='\r')
     if iteration == total:

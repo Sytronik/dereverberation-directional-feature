@@ -46,11 +46,11 @@ def main():
         parser.add_argument(*arg_for_path, nargs='*', metavar='PATH')
     parser.add_argument('--no-duplicate', '--nd', action='store_true')
 
-    ARGS = parser.parse_args()
-    convert.duplicate = not ARGS.no_duplicate
-    del ARGS.no_duplicate
+    args = parser.parse_args()
+    convert.duplicate = not args.no_duplicate
+    del args.no_duplicate
 
-    for to, paths in ARGS.__dict__.items():
+    for to, paths in args.__dict__.items():
         convert.to = to
         if not paths:
             continue

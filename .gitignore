@@ -18,3 +18,4 @@ __pycache__/
 
 .ropeproject/
 .mypy_cache/
+.flake8

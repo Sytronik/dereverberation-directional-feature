@@ -54,12 +54,12 @@ class NormalizationBase(dd.util.Saveable, metaclass=ABCMeta):
 
     @staticmethod
     def calc_per_file(tup: Tuple) -> Tuple:
-        fname, XNAME, YNAME, list_func, args_x, args_y = tup
+        fname, xname, yname, list_func, args_x, args_y = tup
         try:
             data_dict = dd.io.load(fname)
         except:  # noqa: E722
             raise Exception(fname)
-        x, y = data_dict[XNAME], data_dict[YNAME]
+        x, y = data_dict[xname], data_dict[yname]
         result_x = {f: f(x, arg)
                     for f, arg in zip(list_func, args_x)}
         result_y = {f: f(y, arg)
@@ -131,11 +131,11 @@ class MeanStdNormalization(NormalizationBase):
         return ((a - mean_a)**2).sum(axis=1, keepdims=True)
 
     @classmethod
-    def create(cls, all_files: List[str], XNAME: str, YNAME: str):
+    def create(cls, all_files: List[str], xname: str, yname: str):
         # Calculate summation & size (parallel)
         pool = mp.Pool(mp.cpu_count())
         result = pool.map(cls.calc_per_file,
-                          [(fname, XNAME, YNAME,
+                          [(fname, xname, yname,
                             (np.size,), (None,), (None,))
                            for fname in all_files])
         print()
@@ -153,7 +153,7 @@ class MeanStdNormalization(NormalizationBase):
 
         # Calculate squared deviation (parallel)
         result = pool.map(cls.calc_sq_dev,
-                          [(fname, XNAME, YNAME,
+                          [(fname, xname, yname,
                             (cls.sq_dev_log,), (mean_x,), (mean_y,))
                            for fname in all_files])
         pool.close()
@@ -216,11 +216,11 @@ class MinMaxNormalization(NormalizationBase):
         )
 
     @classmethod
-    def create(cls, all_files: List[str], XNAME: str, YNAME: str):
+    def create(cls, all_files: List[str], xname: str, yname: str):
         # Calculate summation & no. of total frames (parallel)
         pool = mp.Pool(mp.cpu_count())
         result = pool.map(cls.calc_minmax,
-                          [(fname, XNAME, YNAME,
+                          [(fname, xname, yname,
                             (np.min, np.max), (None, None), (None, None))
                            for fname in all_files])
         pool.close()
@@ -269,14 +269,12 @@ class MinMaxNormalization(NormalizationBase):
 class LogMeanStdNormalization(MeanStdNormalization):
     EPS = 1
     signs = {
-        (torch, torch.device('cpu')): (
-            torch.tensor((1.,), dtype=torch.float32),
-            torch.tensor((-1.,), dtype=torch.float32)
-        ),
-        np: (
-            np.array((1,), dtype=np.int8),
-            np.array((-1,), dtype=np.int8)
-        ),
+        (torch, torch.device('cpu')):
+            (torch.tensor((1.,), dtype=torch.float32),
+             torch.tensor((-1.,), dtype=torch.float32)),
+        np:
+            (np.array((1,), dtype=np.int8),
+             np.array((-1,), dtype=np.int8)),
     }
 
     @classmethod

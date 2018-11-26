@@ -14,7 +14,7 @@ from torch.nn.utils.rnn import pad_sequence
 import generic as gen
 from generic import TensArr
 import mypath
-from normalize import LogMeanStdNormalization as cls_normalize
+from normalize import LogMeanStdNormalization as NormalizationClass
 
 
 SUFFIX = 'log'
@@ -33,11 +33,11 @@ class IVDataset(Dataset):
     _all_files
     """
 
-    def __init__(self, kind_data: str, XNAME: str, YNAME: str,
+    def __init__(self, kind_data: str, xname: str, yname: str,
                  N_file=-1, doNormalize=True):
         self.PATH = mypath.path(f'iv_{kind_data}')
-        self.XNAME = XNAME
-        self.YNAME = YNAME
+        self.XNAME = xname
+        self.YNAME = yname
 
         # fname_list: The name of the file
         # that has information about data file list, mean, std, ...
@@ -60,19 +60,17 @@ class IVDataset(Dataset):
 
         if doNormalize:
             if normconst:
-                self.__normconst = cls_normalize.load_from_dict(normconst)
+                self.__normconst = NormalizationClass.load_from_dict(normconst)
             else:
-                self.__normconst \
-                    = cls_normalize.create(self._all_files, XNAME, YNAME)
+                self.__normconst = NormalizationClass.create(self._all_files, xname, yname)
         else:
             self.__normconst = None
 
         if shouldsave:
             dd.io.save(
-                fname_list,
-                (self._all_files,
-                 self.__normconst.save_to_dict() if self.__normconst else None,
-                 )
+                fname_list, (self._all_files,
+                             self.__normconst.save_to_dict() if self.__normconst else None,
+                             )
             )
 
         print(self.__normconst)
@@ -113,11 +111,12 @@ class IVDataset(Dataset):
         T_ys = np.array([batch[idx]['T_y'] for idx in idxs_sorted])
 
         x = [batch[idx]['x'].permute(-2, -3, -1) for idx in idxs_sorted]
-        x = pad_sequence(x, batch_first=True)
-        x = x.permute(0, -2, -3, -1)
-
         y = [batch[idx]['y'].permute(-2, -3, -1) for idx in idxs_sorted]
+
+        x = pad_sequence(x, batch_first=True)
         y = pad_sequence(y, batch_first=True)
+
+        x = x.permute(0, -2, -3, -1)
         y = y.permute(0, -2, -3, -1)
 
         # fnames = [i1tem['fname'] for item in batch]
@@ -126,7 +125,7 @@ class IVDataset(Dataset):
                 # 'fnames': fnames,
                 }
 
-    def normalizeOnLike(self, other):
+    def normalize_on_like(self, other):
         self.__normconst = other.__normconst
 
     def denormalize(self, a: TensArr, xy: str) -> TensArr:
@@ -151,8 +150,7 @@ class IVDataset(Dataset):
         mask = (ratio == -1)
         ratio[np.where(mask)] = 0
         if mask.sum() > 1:
-            raise Exception("Only one element of the parameter 'ratio' "
-                            "can have the value of -1")
+            raise Exception("Only one element of the parameter 'ratio' can have the value of -1")
         if ratio.sum() >= 1:
             raise Exception('The sum of elements of ratio must be 1')
         if mask.sum() == 1:
@@ -173,9 +171,10 @@ class IVDataset(Dataset):
 def delta(a, axis: int, L=2, tplz_mat=None):
     if axis < 0:
         axis += gen.ndim(a)
-    str_axes = ''.join([chr(ord('a') + i) for i in range(gen.ndim(a))])
-    str_new_axes = ''.join([chr(ord('a') + i) if i != axis else 'i'
-                            for i in range(gen.ndim(a))])
+    str_axes = ''.join([chr(ord('a') + i)
+                        for i in range(gen.ndim(a))])
+    str_new_axes = ''.join([chr(ord('a') + i)
+                            if i != axis else 'i' for i in range(gen.ndim(a))])
     einexp = f'ij,{str_axes}->{str_new_axes}'
 
     if tplz_mat is None:
@@ -193,8 +192,7 @@ def delta(a, axis: int, L=2, tplz_mat=None):
             if a.device == torch.device('cpu'):
                 tplz_mat = gen.convert(tplz_mat, torch.Tensor)
             else:
-                tplz_mat \
-                    = gen.convert(tplz_mat, torch.Tensor).cuda(device=a.device)
+                tplz_mat = gen.convert(tplz_mat, torch.Tensor).cuda(device=a.device)
 
     a = gen.einsum(einexp, (tplz_mat, a))
 
@@ -206,29 +204,24 @@ DICT_IDX = {
     'a': range(3, 4),
     'all': range(0, 4),
 }
-DICT_EINEXP = {
-    # key: (dim, keep_freq_axis)
-    (4, True): 'bftc,bftc->bft',
-    (4, False): 'bftc,bftc->bt',
-    (3, True): 'ftc,ftc->ft',
-    (3, False): 'ftc,ftc->t',
-}
 
 
-def norm_iv(data: TensArr, keep_freq_axis=False,
+def norm_iv(data: TensArr, reduced_axis=(-3, -1),
             parts: Union[str, Iterable[str]]='all') -> TensArr:
     dim = gen.ndim(data)
     if dim != 3 and dim != 4:
         raise f'Dimension Mismatch: {dim}'
 
     parts = [parts] if type(parts) == str else parts
+    base_expr = 'bftc' if dim == 4 else 'ftc'
+    result_expr = ''.join([base_expr[a] for a in reduced_axis])
 
-    einexp = DICT_EINEXP[(dim, keep_freq_axis)]
+    ein_expr = f'{base_expr},{base_expr}->{result_expr}'
 
     result = []
     for part in parts:
         if part in DICT_IDX.keys():
-            norm = gen.einsum(einexp, (data[..., DICT_IDX[part]],) * 2)
+            norm = gen.einsum(ein_expr, (data[..., DICT_IDX[part]],) * 2)
             result.append(norm)
         else:
             raise ValueError('"parts" should be "I", "a", or "all" '
