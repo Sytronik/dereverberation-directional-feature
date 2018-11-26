@@ -23,19 +23,17 @@ python convert_db.py [--no-duplicate]
 * "--no-duplicate option" is applied to all files.
 * Avaiable types of original file: .mat, .h5, .npy, .pt
 """
+from argparse import ArgumentParser
+from glob import glob
+import multiprocessing as mp
+import os
 
-import pdb  # noqa: F401
+import deepdish as dd
 
 import numpy as np
 import scipy.io as scio
-import deepdish as dd
+
 import torch
-
-from argparse import ArgumentParser
-import os
-from glob import glob
-
-import multiprocessing as mp
 
 from utils import static_vars
 

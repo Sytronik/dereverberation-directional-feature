@@ -9,8 +9,8 @@ class ContextLSTM(nn.Module):
         super().__init__()
         self.T_context = T_output - T_input
         self.T_input = T_input
-        self.input_size = T_input * L_feature
-        self.output_size = T_output * L_feature
+        self.input_size = T_input*L_feature
+        self.output_size = T_output*L_feature
         self.lstm = nn.LSTMCell(self.input_size, self.output_size, bias=bias)
 
     def forward(self, pad_seq, T_samples=None, n_batches=None):
@@ -32,8 +32,7 @@ class ContextLSTM(nn.Module):
         c = torch.zeros(self.input_size)
         h = torch.zeros(self.input_size)
         for i, b in enumerate(n_batches):
-            y[:b, i], c = self.lstm(pad_seq[:b, i:i+self.T_input].view(b, -1),
-                                    (h, c))
+            y[:b, i], c = self.lstm(pad_seq[:b, i:i+self.T_input].view(b, -1), (h, c))
             h = y[:b, i]
 
         return y, n_batches
@@ -42,8 +41,8 @@ class ContextLSTM(nn.Module):
 class MyLSTM(nn.Module):
     def __init__(self, L_feature, T_input, T_hidden, T_output):
         super(MyLSTM, self).__init__()
-        self.lstm1 = ContextLSTM(L_feature * T_input, L_feature * T_hidden)
-        self.lstm2 = ContextLSTM(L_feature * T_hidden, L_feature * T_output)
+        self.lstm1 = ContextLSTM(L_feature*T_input, L_feature*T_hidden)
+        self.lstm2 = ContextLSTM(L_feature*T_hidden, L_feature*T_output)
         self.T_context = T_input - T_output
 
     def forward(self, pad_seq, T_samples):

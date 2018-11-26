@@ -3,6 +3,7 @@ import multiprocessing as mp
 from typing import Tuple, List, Dict
 
 import deepdish as dd
+
 import numpy as np
 
 import torch
@@ -144,8 +145,8 @@ class MeanStdNormalization(NormalizationBase):
         sum_size_x = np.sum([item[0][np.size] for item in result])
         sum_size_y = np.sum([item[1][np.size] for item in result])
 
-        # mean_x = sum_x[..., :3] / (sum_size_x // sum_x[..., :3].size)
-        # mean_y = sum_y[..., :3] / (sum_size_y // sum_y[..., :3].size)
+        # mean_x = sum_x[..., :3]/(sum_size_x // sum_x[..., :3].size)
+        # mean_y = sum_y[..., :3]/(sum_size_y // sum_y[..., :3].size)
         mean_x = 0.
         mean_y = 0.
         print('Calculated Mean')
@@ -161,8 +162,8 @@ class MeanStdNormalization(NormalizationBase):
         sum_sq_dev_x = np.sum([item[0][cls.sq_dev] for item in result], axis=0)
         sum_sq_dev_y = np.sum([item[1][cls.sq_dev] for item in result], axis=0)
 
-        std_x = np.sqrt(sum_sq_dev_x / (sum_size_x//sum_sq_dev_x.size) + 1e-5)
-        std_y = np.sqrt(sum_sq_dev_y / (sum_size_y//sum_sq_dev_y.size) + 1e-5)
+        std_x = np.sqrt(sum_sq_dev_x/(sum_size_x//sum_sq_dev_x.size) + 1e-5)
+        std_y = np.sqrt(sum_sq_dev_y/(sum_size_y//sum_sq_dev_y.size) + 1e-5)
         print('Calculated Std')
 
         return cls(mean_x, mean_y, std_x, std_y)
@@ -172,7 +173,7 @@ class MeanStdNormalization(NormalizationBase):
         b = gen.copy(a)
         # b[..., :3] -= mean
         b /= std
-        return (a - mean) / std
+        return (a - mean)/std
 
     def normalize_(self, a: TensArr, xy: str) -> TensArr:
         mean, std = self._get_consts_like(a)[xy]
@@ -183,7 +184,7 @@ class MeanStdNormalization(NormalizationBase):
 
     def denormalize(self, a: TensArr, xy: str) -> TensArr:
         mean, std = self._get_consts_like(a)[xy]
-        b = a * std
+        b = a*std
         # b[..., :3] += mean
         b += mean
         return b
@@ -234,20 +235,20 @@ class MinMaxNormalization(NormalizationBase):
 
     def normalize(self, a: TensArr, xy: str) -> TensArr:
         min_, max_ = self._get_consts_like(a)[xy]
-        # return (a - mean) / std - min_
-        return (a - min_) / (max_ - min_)
+        # return (a - mean)/std - min_
+        return (a - min_)/(max_ - min_)
 
     def normalize_(self, a: TensArr, xy: str) -> TensArr:
         min_, max_ = self._get_consts_like(a)[xy]
-        # return (a - mean) / std - min_
+        # return (a - mean)/std - min_
         a -= min_
         a /= (max_ - min_)
         return a
 
     def denormalize(self, a: TensArr, xy: str) -> TensArr:
         min_, max_ = self._get_consts_like(a)[xy]
-        # return (a + min_) * std + mean
-        return a * (max_ - min_) + min_
+        # return (a + min_)*std + mean
+        return a*(max_ - min_) + min_
 
     def denormalize_(self, a: TensArr, xy: str) -> TensArr:
         min_, max_ = self._get_consts_like(a)[xy]
@@ -290,45 +291,45 @@ class LogMeanStdNormalization(MeanStdNormalization):
             return cls.signs[np]
 
     @classmethod
-    def log(cls, a: gen.TensArr) -> gen.TensArr:
+    def log(cls, a: TensArr) -> TensArr:
         pkg = gen.dict_package[type(a)]
         plus, minus = cls.sign_like(a)
 
         b = pkg.zeros_like(a)
         b[..., :3] = (pkg.where(a[..., :3] > 0, plus, minus)
-                      * pkg.log10((pkg.abs(a[..., :3]) + cls.EPS) / cls.EPS))
-        b[..., 3] = pkg.log10((a[..., 3] + cls.EPS) / cls.EPS)
+                      * pkg.log10((pkg.abs(a[..., :3]) + cls.EPS)/cls.EPS))
+        b[..., 3] = pkg.log10((a[..., 3] + cls.EPS)/cls.EPS)
         return b
 
     @classmethod
-    def log_(cls, a: gen.TensArr) -> gen.TensArr:
+    def log_(cls, a: TensArr) -> TensArr:
         pkg = gen.dict_package[type(a)]
         plus, minus = cls.sign_like(a)
 
         a[..., :3] = (pkg.where(a[..., :3] > 0, plus, minus)
-                      * pkg.log10((pkg.abs(a[..., :3]) + cls.EPS) / cls.EPS))
-        a[..., 3] = pkg.log10((a[..., 3] + cls.EPS) / cls.EPS)
+                      * pkg.log10((pkg.abs(a[..., :3]) + cls.EPS)/cls.EPS))
+        a[..., 3] = pkg.log10((a[..., 3] + cls.EPS)/cls.EPS)
         return a
 
     @classmethod
-    def exp(cls, a: gen.TensArr) -> gen.TensArr:
+    def exp(cls, a: TensArr) -> TensArr:
         pkg = gen.dict_package[type(a)]
         plus, minus = cls.sign_like(a)
 
         b = pkg.zeros_like(a)
         b[..., :3] = (pkg.where(a[..., :3] > 0, plus, minus)
-                      * cls.EPS * (10.**pkg.abs(a[..., :3]) - 1))
-        b[..., 3] = cls.EPS * (10.**a[..., 3] - 1)
+                      * cls.EPS*(10.**pkg.abs(a[..., :3]) - 1))
+        b[..., 3] = cls.EPS*(10.**a[..., 3] - 1)
         return b
 
     @classmethod
-    def exp_(cls, a: gen.TensArr) -> gen.TensArr:
+    def exp_(cls, a: TensArr) -> TensArr:
         pkg = gen.dict_package[type(a)]
         plus, minus = cls.sign_like(a)
 
         a[..., :3] = (pkg.where(a[..., :3] > 0, plus, minus)
-                      * cls.EPS * (10.**pkg.abs(a[..., :3]) - 1))
-        a[..., 3] = cls.EPS * (10.**a[..., 3] - 1)
+                      * cls.EPS*(10.**pkg.abs(a[..., :3]) - 1))
+        a[..., 3] = cls.EPS*(10.**a[..., 3] - 1)
         return a
 
     @classmethod
