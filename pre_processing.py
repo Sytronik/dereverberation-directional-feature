@@ -18,7 +18,6 @@ import soundfile as sf
 
 import mypath
 
-
 NDArray = TypeVar('NDArray', np.ndarray, cp.ndarray)
 
 
@@ -33,13 +32,13 @@ class SFTData(NamedTuple):
     Vv: NDArray
 
     def get_triags(self) -> Tuple:
-        return (self.Wnv, self.Wpv, self.Vv)
+        return self.Wnv, self.Wpv, self.Vv
 
 
-def search_all_files(DIR_WAVFILE: str, ID: str) -> List[str]:
+def search_all_files(directory: str, id_: str) -> List[str]:
     result = []
-    for folder, _, _ in os.walk(DIR_WAVFILE):
-        files = glob(os.path.join(folder, ID))
+    for folder, _, _ in os.walk(directory):
+        files = glob(os.path.join(folder, id_))
         if files:
             result += files
 
@@ -112,16 +111,17 @@ def process():
     max_n_pool -= 1
 
     # The index of the first wave file that have to be processed
-    idx_start = len(glob(os.path.join(DIR_IV, f'*_{RIRs.shape[0]-1:02d}.h5'))) + 1
+    idx_start = len(glob(os.path.join(DIR_IV, f'*_{RIRs.shape[0] - 1:02d}.h5'))) + 1
     print(f'Start processing from the {idx_start}-th wave file')
 
     pools = []
+    t_start = 0
     for fname in all_files:
         if N_wavfile < idx_start - 1:
             N_wavfile += 1
             continue
 
-        if (N_wavfile - idx_start) % max_n_pool == max_n_pool - 1:
+        if (N_wavfile - idx_start)%max_n_pool == max_n_pool - 1:
             t_start = time.time()
 
         # File Open (& Resample)
@@ -139,7 +139,7 @@ def process():
 
         # print(fname)
         N_frame_free = int(np.ceil(data.shape[0]/L_hop) - 1)
-        N_frame_room = int(np.ceil((data.shape[0] + L_RIR-1)/L_hop) - 1)
+        N_frame_room = int(np.ceil((data.shape[0] + L_RIR - 1)/L_hop) - 1)
 
         # logger = mp.log_to_stderr()  # debugging subprocess
         # logger.setLevel(mp.SUBDEBUG)  # debugging subprocess
@@ -152,7 +152,7 @@ def process():
             else:
                 break
             pools[-1].apply_async(
-                save_IV, (i_proc % N_CUDA_DEV,
+                save_IV, (i_proc%N_CUDA_DEV,
                           data, N_frame_free, N_frame_room,
                           range_loc,
                           FORM, N_wavfile + 1)
@@ -174,7 +174,7 @@ def process():
         #                  range_loc,
         #                  FORM, N_wavfile+1)
 
-        if (N_wavfile - idx_start) % max_n_pool == max_n_pool - 2:
+        if (N_wavfile - idx_start)%max_n_pool == max_n_pool - 2:
             for pool in pools:
                 pool.join()
             print(f'{time.time() - t_start:.3f} sec')
@@ -193,7 +193,7 @@ def process():
 def save_IV(i_dev: int,
             data_np: NDArray, N_frame_free: int, N_frame_room: int,
             range_loc: iter,
-            FORM: str, *args):
+            form: str, *args):
     global win, Ys, L_frame, N_fft, sftdata
     """
     Save IV files.
@@ -211,8 +211,8 @@ def save_IV(i_dev: int,
     Ys_cp = cp.array(Ys)
     sftdata_cp = SFTData(*[cp.array(item) for item in sftdata])
     data = cp.array(
-        np.append(data_np, np.zeros(L_hop - data_np.shape[0] % L_hop))
-    ) if data_np.shape[0] % L_hop else cp.array(data_np)
+        np.append(data_np, np.zeros(L_hop - data_np.shape[0]%L_hop))
+    ) if data_np.shape[0]%L_hop else cp.array(data_np)
 
     for i_loc in range_loc:
         # RIR Filtering
@@ -222,9 +222,9 @@ def save_IV(i_dev: int,
         data_room = scsig.fftconvolve(data_np.reshape(1, -1), RIRs[i_loc])
         data_room = cp.array(
             np.append(data_room,
-                      np.zeros((data_room.shape[0], L_hop - data_room.shape[1] % L_hop)),
+                      np.zeros((data_room.shape[0], L_hop - data_room.shape[1]%L_hop)),
                       axis=1)
-        ) if data_room.shape[1] % L_hop else cp.array(data_room)
+        ) if data_room.shape[1]%L_hop else cp.array(data_room)
 
         # Energy using 0-th Order RIR
         # iv_0 = cp.zeros((N_freq, N_frame_room, 4))
@@ -273,28 +273,29 @@ def save_IV(i_dev: int,
         # iv_room /= iv_room[:, :, 3].mean()
 
         # Save
-        dict_to_save = {'IV_free': cp.asnumpy(iv_free),
-                        'IV_room': cp.asnumpy(iv_room),
-                        # 'IV_0': cp.asnumpy(iv_0),
-                        # 'data': cp.asnumpy(data),
-                        # 'norm_factor_free': norm_factor_free,
-                        # 'norm_factor_room': norm_factor_room,
-                        }
-        FNAME = FORM % (*args, i_loc)
-        dd.io.save(os.path.join(DIR_IV, FNAME), dict_to_save, compression=None)
+        dict_to_save = dict(IV_free=cp.asnumpy(iv_free),
+                            IV_room=cp.asnumpy(iv_room),
+                            # IV_0=cp.asnumpy(iv_0),
+                            # data=cp.asnumpy(data),
+                            # norm_factor_free=norm_factor_free,
+                            # norm_factor_room=norm_factor_room
+                            )
+        fname = form % (*args, i_loc)
+        dd.io.save(os.path.join(DIR_IV, fname), dict_to_save, compression=None)
 
-        print(FORM % (*args, i_loc))
+        print(fname)
 
 
+# noinspection PyShadowingNames
 def seltriag(Ain: NDArray, nrord: int, shft: Tuple[int, int]) -> NDArray:
     xp = cp.get_array_module(Ain)
     N_freq = 1 if Ain.ndim == 1 else Ain.shape[1]
-    N = int(np.ceil(np.sqrt(Ain.shape[0]))-1)
+    N = int(np.ceil(np.sqrt(Ain.shape[0])) - 1)
     idx = 0
     len_new = (N - nrord + 1)**2
 
     Aout = xp.zeros((len_new, N_freq), dtype=Ain.dtype)
-    for ii in range(N-nrord + 1):
+    for ii in range(N - nrord + 1):
         for jj in range(-ii, ii + 1):
             n, m = shft[0] + ii, shft[1] + jj
             idx_from = m + n*(n + 1)
@@ -304,6 +305,7 @@ def seltriag(Ain: NDArray, nrord: int, shft: Tuple[int, int]) -> NDArray:
     return Aout
 
 
+# noinspection PyShadowingNames
 def calc_intensity(Asv: NDArray,
                    Wnv: NDArray, Wpv: NDArray, Vv: NDArray) -> NDArray:
     """
@@ -336,15 +338,15 @@ def print_save_info():
           f'Number of source location: {N_LOC}\n'
           )
 
-    metadata = {'N_wavfile': N_wavfile,
-                'Fs': Fs,
-                # 'N_fft': N_fft,
-                'N_freq': N_freq,
-                'L_frame': L_frame,
-                'L_hop': L_hop,
-                'N_LOC': N_LOC,
-                'path_wavfiles': all_files,
-                }
+    metadata = dict(N_wavfile=N_wavfile,
+                    Fs=Fs,
+                    # N_fft=N_fft,
+                    N_freq=N_freq,
+                    L_frame=L_frame,
+                    L_hop=L_hop,
+                    N_LOC=N_LOC,
+                    path_wavfiles=all_files,
+                    )
 
     dd.io.save(os.path.join(DIR_IV, 'metadata.h5'), metadata)
 

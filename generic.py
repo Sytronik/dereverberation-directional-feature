@@ -1,7 +1,7 @@
 """
 Generic type & functions for torch.Tensor and np.ndarray
 """
-from typing import Union, TypeVar, Iterable
+from typing import Union, TypeVar, Sequence
 
 import numpy as np
 from numpy import ndarray
@@ -11,6 +11,8 @@ from torch import Tensor
 
 
 TensArr = TypeVar('TensArr', Tensor, ndarray)
+TensArrOrSeq = Union[TensArr, Sequence[TensArr]]
+
 dict_package = {Tensor: torch, ndarray: np}
 dict_cat_stack_fn = {(Tensor, 'cat'): torch.cat,
                      (ndarray, 'cat'): np.concatenate,
@@ -52,7 +54,7 @@ def ndim(a: TensArr) -> int:
         raise TypeError
 
 
-def transpose(a: TensArr, axes: Union[int, Iterable[int]]=None) -> TensArr:
+def transpose(a: TensArr, axes: Union[int, Sequence[int]]=None) -> TensArr:
     if type(a) == Tensor:
         if not axes:
             if a.dim() >= 2:
@@ -72,8 +74,8 @@ def transpose(a: TensArr, axes: Union[int, Iterable[int]]=None) -> TensArr:
 
 
 def einsum(subscripts: str,
-           operands: Iterable[TensArr],
-           astype: type=None) -> TensArr:
+           operands: Sequence[TensArr],
+           astype: type = None) -> TensArr:
     if not astype:
         astype = type(operands[0])
         if astype != Tensor and astype != ndarray:
@@ -90,7 +92,7 @@ def einsum(subscripts: str,
 
 
 def _cat_stack(fn: str,
-               a: Iterable[TensArr],
+               a: Sequence[TensArr],
                axis=0,
                astype: type = None) -> TensArr:
     types = [type(item) for item in a]

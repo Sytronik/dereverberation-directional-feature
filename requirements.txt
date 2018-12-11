@@ -1,8 +1,0 @@
-python==3.6.6
-numpy==1.15.0
-scipy==1.1.0
-typing==3.6.4
-matplotlib==2.2.2
-cupy==4.3.0
-soundfile==0.10.2
-torch==0.4.1.post2
