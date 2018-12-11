@@ -1,32 +1,36 @@
 # full assembly of the sub-parts to form the complete net
 
+import torch
 import torch.nn as nn
-from .unet_parts import inconv, down, up, outconv
+from .unet_parts import InConv, DownAndConv, UpAndConv, OutConvMap
 
 
 class UNet(nn.Module):
-    def __init__(self, n_channels, n_classes):
+    def __init__(self, ch_in, ch_out, ch_base=64):
         super(UNet, self).__init__()
-        self.inc = inconv(n_channels, 64)
-        self.down1 = down(64, 128)
-        self.down2 = down(128, 256)
-        self.down3 = down(256, 512)
-        self.down4 = down(512, 512)
-        self.up1 = up(1024, 256)
-        self.up2 = up(512, 128)
-        self.up3 = up(256, 64)
-        self.up4 = up(128, 64)
-        self.outc = outconv(64, n_classes)
+        self.inc = InConv(ch_in, ch_base)
+
+        self.downs = nn.ModuleList(
+            [DownAndConv(ch_base*(2**ii), ch_base*(2**(ii + 1))) for ii in range(0, 4, 1)]
+        )
+        self.ups = nn.ModuleList(
+            [UpAndConv(ch_base*(2**ii), ch_base*(2**(ii - 1))) for ii in range(4, 0, -1)]
+        )
+
+        # self.outc = OutConv(ch_base, ch_out)
+        self.outc = OutConvMap(ch_base, ch_out)
 
     def forward(self, xin):
-        x1 = self.inc(xin)
-        x2 = self.down1(x1)
-        x3 = self.down2(x2)
-        x4 = self.down3(x3)
-        x5 = self.down4(x4)
-        x = self.up1(x5, x4)
-        x = self.up2(x, x3)
-        x = self.up3(x, x2)
-        x = self.up4(x, x1)
-        x = self.outc(x, xin)
+        x_skip = [torch.Tensor]*4
+        x_skip[0] = self.inc(xin)
+
+        for idx, down in enumerate(self.downs[:-1]):
+            x_skip[idx+1] = down(x_skip[idx])
+
+        x = self.downs[-1](x_skip[-1])
+
+        for idx, up in zip(range(3, -1, -1), self.ups):
+            x = up(x, x_skip[idx])
+
+        x = self.outc(x)
         return x
