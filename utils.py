@@ -26,6 +26,12 @@ class MultipleOptimizer(object):
         for op in self._optimizers:
             op.step()
 
+    def state_dict(self):
+        return [op.state_dict() for op in self._optimizers]
+
+    def load_state_dict(self, state_dicts):
+        return [op.load_state_dict(st) for op, st in zip(self._optimizers, state_dicts)]
+
     def __len__(self):
         return len(self._optimizers)
 
