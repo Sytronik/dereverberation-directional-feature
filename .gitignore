@@ -6,6 +6,7 @@
 .ftpconfig
 .ftpignore
 
+*.mp3
 *.png
 *.fig
 
