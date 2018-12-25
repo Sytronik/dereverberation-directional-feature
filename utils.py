@@ -61,10 +61,10 @@ class MultipleScheduler(object):
         return self._schedulers[idx]
 
 
-def arr2str(a, n_decimal=2):
+def arr2str(a, format_='e', n_decimal=2):
     return np.array2string(
         a,
-        formatter={'float_kind': lambda x: f'{x:.{n_decimal}e}'}
+        formatter={'float_kind': lambda x: f'{x:.{n_decimal}{format_}}'}
     )
 
 
@@ -75,8 +75,8 @@ def print_progress(iteration: int, total: int, prefix='', suffix='',
     """
     percent = f'{100 * iteration / total:>{decimals+4}.{decimals}f}'
     if len_bar == 0:
-        len_bar = min(os.get_terminal_size().columns, 80) \
-            - len(prefix) - len(percent) - len(suffix) - 11
+        len_bar = (min(os.get_terminal_size().columns, 80)
+                   - len(prefix) - len(percent) - len(suffix) - 11)
 
     len_filled = len_bar * iteration // total
     bar = '#' * len_filled + '-' * (len_bar - len_filled)
