@@ -30,12 +30,12 @@ def copy(a: TensArr, requires_grad=True) -> TensArr:
         raise TypeError
 
 
-def convert(a: TensArr, astype: type) -> TensArr:
+def convert(a: TensArr, astype: type, device: Union[int, torch.device] = None) -> TensArr:
     if astype == Tensor:
         if type(a) == Tensor:
-            return a
+            return a.to(device)
         else:
-            return torch.as_tensor(a, dtype=torch.float32)
+            return torch.as_tensor(a, dtype=torch.float32, device=device)
     elif astype == ndarray:
         if type(a) == Tensor:
             return a.cpu().numpy()
