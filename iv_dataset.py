@@ -13,7 +13,7 @@ from torch.utils.data import Dataset
 import generic as gen
 import mypath
 from generic import TensArr, TensArrOrSeq
-from normalize import LogMinMaxNormalization as NormalizationClass
+from normalize import LogMeanStdNormalization as NormalizationClass
 
 SUFFIX = 'log_meanstd'
 # ------determined by IV files------
@@ -21,7 +21,7 @@ NAME = dict(x='/IV_room', y='/IV_free',
             x_phase='/phase_room', y_phase='/phase_free',
             fname_wav='/fname_wav')
 SEL_CH = {'all': dd.aslice[:, :, :],
-          'alpha': dd.aslice[:, :, 3:4],
+          'alpha': dd.aslice[:, :, -1:],
           True: None,
           }
 
@@ -109,9 +109,7 @@ class IVDataset(Dataset):
         for k, v in self.__needs.items():
             if v:
                 data = dd.io.load(self._all_files[idx], group=NAME[k], sel=SEL_CH[v])
-                if type(data) == np.ndarray:
-                    data = gen.convert(data, astype=torch.Tensor)
-                elif type(data) == np.str_:
+                if type(data) == np.str_:
                     data = str(data)
                 sample[k] = data
 
@@ -131,7 +129,7 @@ class IVDataset(Dataset):
         result['T_xs'], result['T_ys'] = T_xs, T_ys
 
         for key, value in batch[0].items():
-            if type(value) != torch.Tensor:
+            if type(value) == str:
                 list_data = [batch[idx][key] for idx in idxs_sorted]
                 set_data = set(list_data)
                 if len(set_data) == 1:
@@ -140,10 +138,10 @@ class IVDataset(Dataset):
                     result[key] = list_data
             else:
                 # B, T, F, C
-                data = [batch[idx][key].permute(-2, -3, -1) for idx in idxs_sorted]
+                data = [gen.transpose(batch[idx][key], (-2, -3, -1)) for idx in idxs_sorted]
                 data = pad_sequence(data, batch_first=True)
                 # B, F, T, C
-                data = data.permute(0, -2, -3, -1)
+                data = gen.permute(data, (0, -2, -3, -1))
 
                 result[key] = data
 
@@ -222,47 +220,6 @@ class IVDataset(Dataset):
 #     a = sum(diffs) / (sum([l**2 for l in range(1, L+1)]) * 2)
 #     a = a.permute(dims)
 #     return a
-
-
-def delta(*data: TensArr, axis: int, L=2) -> TensArrOrSeq:
-    dim = gen.ndim(data[0])
-    if axis < 0:
-        axis += dim
-
-    max_len = max([item.shape[axis] for item in data])
-
-    # Einsum expression
-    # ex) if the member of a has the dim (b,c,f,t), (thus, axis=3)
-    # einxp: ij,abcd -> abci
-    str_axes = ''.join([chr(ord('a') + i) for i in range(dim)])
-    str_new_axes = ''.join([chr(ord('a') + i) if i != axis else 'i'
-                            for i in range(dim)])
-    ein_expr = f'ij,{str_axes}->{str_new_axes}'
-
-    # Create Toeplitz Matrix (T-2L, T)
-    col = np.zeros(max_len - 2 * L, dtype=np.float32)
-    col[0] = -L
-
-    row = np.zeros(max_len, dtype=np.float32)
-    row[:2 * L + 1] = range(-L, L + 1)
-
-    denominator = np.sum([ll**2 for ll in range(1, L + 1)])
-    tplz_mat = toeplitz(col, row) / (2 * denominator)
-
-    # Convert to Tensor
-    if type(data[0]) == torch.Tensor:
-        if data[0].device == torch.device('cpu'):
-            tplz_mat = torch.from_numpy(tplz_mat)
-        else:
-            tplz_mat = torch.tensor(tplz_mat, device=data[0].device)
-
-    # Calculate
-    result = [type(data[0])] * len(data)
-    for idx, item in enumerate(data):
-        length = item.shape[axis]
-        result[idx] = gen.einsum(ein_expr, (tplz_mat[:length - 2 * L, :length], item))
-
-    return result if len(result) > 1 else result[0]
 
 
 DICT_IDX = {
