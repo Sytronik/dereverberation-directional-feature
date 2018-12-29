@@ -14,10 +14,9 @@ from torch.utils.data import DataLoader
 
 import mypath
 from adamwr import AdamW, CosineLRWithRestarts
-from iv_dataset import (delta,
-                        IVDataset,
-                        )
-from models import UNet  # noqa: F401
+from iv_dataset import IVDataset
+from audio_utils import delta, reconstruct_wave, Measurement
+from models import UNet
 from utils import (arr2str,
                    MultipleOptimizer,
                    MultipleScheduler,
@@ -30,6 +29,7 @@ OUT_CUDA_DEV = 1
 CHANNELS = dict(x='all', y='alpha',
                 fname_wav=False,
                 )
+CH_VALID = dict(**CHANNELS, x_phase=True, y_phase=True)
 
 MODEL_NAME = 'UNet'
 DIR_RESULT = mypath.path(MODEL_NAME)
@@ -117,9 +117,11 @@ if __name__ == '__main__':
     # Training + Validation Set
     dataset = IVDataset('train', n_file=hp.n_file, **CHANNELS)
     dataset_train, dataset_valid = IVDataset.split(dataset, (0.7, -1))
+    dataset_valid.set_needs(CH_VALID)
 
     # Test Set
-    dataset_test = IVDataset('test', n_file=hp.n_file // 4, do_normalize=False, **CHANNELS)
+    dataset_test = IVDataset('test', n_file=hp.n_file // 4,
+                             random_sample=True, do_normalize=False, **CHANNELS)
     dataset_test.normalize_on_like(dataset)
     del dataset
 
@@ -211,8 +213,8 @@ def calc_loss(y_cuda, output, T_ys):
 
 def pre(x, y, dataset: IVDataset):
     # B, F, T, C
-    x_cuda = x.cuda(device=0)
-    y_cuda = y.cuda(device=OUT_CUDA_DEV)
+    x_cuda = torch.tensor(x, dtype=torch.float32, device=0)
+    y_cuda = torch.tensor(y, dtype=torch.float32, device=OUT_CUDA_DEV)
 
     x_cuda = dataset.normalize(x_cuda, 'x')
     y_cuda = dataset.normalize(y_cuda, 'y')
@@ -299,6 +301,7 @@ def train():
     print(f'\nTest Loss: {arr2str(loss_test, n_decimal=4)}')
 
 
+# TODO: Measurement print
 def validate(fname='', loader: DataLoader = None) -> np.ndarray:
     """
     Evaluate the performance of the model.
@@ -314,7 +317,7 @@ def validate(fname='', loader: DataLoader = None) -> np.ndarray:
         saved = False
         avg_loss = torch.zeros(1).cuda(OUT_CUDA_DEV)
 
-        print_progress(0, len(loader), 'eval:')
+        print_progress(0, len(loader), f'{"validate":<9}: ')
         for i_iter, data in enumerate(loader):
             # =======================get data============================
             x, y = data['x'], data['y']  # B, F, T, C
@@ -332,17 +335,28 @@ def validate(fname='', loader: DataLoader = None) -> np.ndarray:
             # Save IV Result
             if (not saved) and fname:
                 # F, T, C
-                x_one = x[0, :, :data['T_xs'][0], :].numpy()
-                y_one = y[0, :, :T_ys[0], :].numpy()
+                x_one = x[0, :, :data['T_xs'][0], :]
+                x_ph_one = data['x_phase'][0, :, :data['T_xs'][0], :]
+                y_one = y[0, :, :T_ys[0], :]
+                y_ph_one = data['y_phase'][0, :, :T_ys[0], :]
 
                 out_one = output[0, :, :, :T_ys[0]].permute(1, 2, 0)
                 out_one = loader.dataset.denormalize(out_one, 'y')
                 out_one = out_one.cpu().numpy()
 
+                Measurement.calc_snrseg(y_one, out_one)
+
+                # x_wav_one = reconstruct_wave(x_one, x_ph_one)
+                y_wav_one = reconstruct_wave(y_one, y_ph_one)
+                out_wav_one = reconstruct_wave(out_one, x_ph_one, do_griffin_lim=True)
+
+                Measurement.calc_pesq_stoi(y_wav_one, out_wav_one)
+
                 scio.savemat(fname, dict(IV_free=y_one,
                                          IV_room=x_one,
                                          IV_estimated=out_one,
                                          ))
+
                 saved = True
 
             loss = loss[-1] / len(T_ys)
