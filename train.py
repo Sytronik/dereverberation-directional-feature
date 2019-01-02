@@ -1,21 +1,22 @@
+import matlab.engine
+import atexit
 import os
 import time
 from argparse import ArgumentParser
-from glob import glob
-from multiprocessing import cpu_count
+from multiprocessing import cpu_count, Process
 from typing import NamedTuple, Tuple
 
 import deepdish as dd
 import numpy as np
-import scipy.io as scio
 import torch
+from tensorboardX import SummaryWriter
 from torch import nn
 from torch.utils.data import DataLoader
 
 import mypath
 from adamwr import AdamW, CosineLRWithRestarts
+from audio_utils import delta, draw_spectrogram, Measurement, reconstruct_wave, bnkr_equalize_
 from iv_dataset import IVDataset
-from audio_utils import delta, reconstruct_wave, Measurement
 from models import UNet
 from utils import (arr2str,
                    MultipleOptimizer,
@@ -33,9 +34,9 @@ CH_VALID = dict(**CHANNELS, x_phase=True, y_phase=True)
 
 MODEL_NAME = 'UNet'
 DIR_RESULT = mypath.path(MODEL_NAME)
-# DIR_RESULT = './result/Deeplab'
 if not os.path.isdir(DIR_RESULT):
     os.makedirs(DIR_RESULT)
+F_SUMMARY = DIR_RESULT[:]
 DIR_RESULT = os.path.join(DIR_RESULT, f'{MODEL_NAME}_')
 
 
@@ -48,7 +49,7 @@ class HyperParameters(NamedTuple):
     UNet: Tuple
 
     n_epochs = 310
-    batch_size = 4 * 8
+    batch_size = 4 * 9
     learning_rate = 5e-4
     n_file = 20 * 500
 
@@ -78,52 +79,59 @@ class HyperParameters(NamedTuple):
 
 
 metadata = dd.io.load(os.path.join(mypath.path('iv_train'), 'metadata.h5'))
+Fs = metadata['Fs']
 ch_in = 4 if CHANNELS['x'] == 'all' else 1
 ch_out = 4 if CHANNELS['y'] == 'all' else 1
 hp = HyperParameters(n_per_frame=metadata['N_freq'] * 4, UNet=(ch_in, ch_out, 32))
 PERIOD_SAVE_STATE = hp.CosineLRWithRestarts['restart_period'] // 2
 del metadata
 
+FIRST_EPOCH = 0
+writer = None
 
 if __name__ == '__main__':
     # ------determined by sys argv------
     parser = ArgumentParser()
-    parser.add_argument('--from', type=int, nargs=1, dest='train_epoch', metavar='EPOCH')
-    parser.add_argument('--test', type=int, nargs=1, dest='test_epoch', metavar='EPOCH')
-    parser.add_argument('--debug', '-d', dest='num_workers',
-                        action='store_const', const=0, default=cpu_count())
+    parser.add_argument(
+        '--from', type=int, nargs=1, dest='train_epoch', metavar='EPOCH',
+        default=(-1,)
+    )
+    parser.add_argument(
+        '--test', type=int, nargs=1, dest='test_epoch', metavar='EPOCH'
+    )
+    parser.add_argument(
+        '--debug', '-d', dest='num_workers', action='store_const', const=0,
+        default=cpu_count()
+    )
     ARGS = parser.parse_args()
+    if ARGS.test_epoch and ARGS.train_epoch[0] > -1:
+        raise ValueError
     N_WORKERS = ARGS.num_workers  # number of cpu threads for dataloaders
 
-    FIRST_EPOCH = 0
-    if ARGS.train_epoch:
-        F_STATE_DICT = f'{DIR_RESULT}{ARGS.train_epoch[0]}.pt'
-        FIRST_EPOCH = ARGS.train_epoch[0] + 1
-    elif ARGS.test_epoch:
+    if ARGS.test_epoch:
         F_STATE_DICT = f'{DIR_RESULT}{ARGS.test_epoch[0]}.pt'
     else:
-        F_STATE_DICT = ''
+        FIRST_EPOCH = ARGS.train_epoch[0] + 1
+        F_STATE_DICT = f'{DIR_RESULT}{ARGS.train_epoch[0]}.pt' if FIRST_EPOCH else ''
+        writer = SummaryWriter(F_SUMMARY, purge_step=FIRST_EPOCH)
+        atexit.register(writer.close)
 
     if F_STATE_DICT and not os.path.isfile(F_STATE_DICT):
         raise FileNotFoundError
-
-    f_loss_list = glob(f'{DIR_RESULT}loss_*.mat')
-    F_LOSS = f_loss_list[-1] if f_loss_list else ''
-    del f_loss_list
 
     dd.io.save(f'{DIR_RESULT}hparams.h5', dict(hp._asdict()))
 
     # Dataset
     # Training + Validation Set
-    dataset = IVDataset('train', n_file=hp.n_file, **CHANNELS)
-    dataset_train, dataset_valid = IVDataset.split(dataset, (0.7, -1))
-    dataset_valid.set_needs(CH_VALID)
+    dataset_temp = IVDataset('train', n_file=hp.n_file, **CHANNELS)
+    dataset_train, dataset_valid = IVDataset.split(dataset_temp, (0.7, -1))
+    dataset_valid.set_needs(**CH_VALID)
 
     # Test Set
     dataset_test = IVDataset('test', n_file=hp.n_file // 4,
                              random_sample=True, do_normalize=False, **CHANNELS)
-    dataset_test.normalize_on_like(dataset)
-    del dataset
+    dataset_test.normalize_on_like(dataset_temp)
+    del dataset_temp
 
     # DataLoader
     loader_train = DataLoader(dataset_train,
@@ -211,7 +219,8 @@ def calc_loss(y_cuda, output, T_ys):
     return loss
 
 
-def pre(x, y, dataset: IVDataset):
+def pre(x: np.ndarray, y: np.ndarray,
+        dataset: IVDataset) -> Tuple[torch.Tensor, torch.Tensor]:
     # B, F, T, C
     x_cuda = torch.tensor(x, dtype=torch.float32, device=0)
     y_cuda = torch.tensor(y, dtype=torch.float32, device=OUT_CUDA_DEV)
@@ -227,14 +236,7 @@ def pre(x, y, dataset: IVDataset):
 
 
 def train():
-    loss_train = np.zeros(hp.n_epochs)
-    loss_valid = np.zeros(hp.n_epochs)
-    if F_LOSS:
-        dict_loss = scio.loadmat(F_LOSS, squeeze_me=True)
-        loss_train[:FIRST_EPOCH] = dict_loss['loss_train'][:FIRST_EPOCH]
-        loss_valid[:FIRST_EPOCH] = dict_loss['loss_valid'][:FIRST_EPOCH]
-
-        del dict_loss
+    avg_loss = torch.zeros(1, device=OUT_CUDA_DEV)
 
     # Start Training
     for epoch in range(FIRST_EPOCH, hp.n_epochs):
@@ -254,7 +256,8 @@ def train():
             output = model(x_cuda)[..., :y_cuda.shape[-1]]  # B, C, F, T
 
             loss = calc_loss(y_cuda, output, T_ys)
-            loss_train[epoch] += loss.item()
+            avg_loss += loss.item()
+            # writer.add_histogram()
 
             # ===================backward====================
             optimizer.zero_grad()
@@ -266,24 +269,13 @@ def train():
             loss = (loss / len(T_ys)).item()
             print_progress(i_iter + 1, len(loader_train), f'epoch {epoch:3d}: {loss:.1e}')
 
-        loss_train[epoch] /= len(dataset_train)
-        print(f'Training Loss: {loss_train[epoch]:.2e}')
+        avg_loss /= len(dataset_train)
+        writer.add_scalar('train/loss', avg_loss, epoch)
 
         # ==================Validation=========================
-        loss_valid[epoch] = validate(fname=f'{DIR_RESULT}IV_{epoch}.mat')
-        print(f'Validation Loss: {loss_valid[epoch]:.2e}')
+        validate(epoch)
 
         # ================= save loss & model ======================
-        try:
-            os.remove(f'{DIR_RESULT}loss_{epoch - 1}.mat')
-        except FileNotFoundError:
-            pass
-        scio.savemat(
-            f'{DIR_RESULT}loss_{epoch}.mat',
-            dict(loss_train=loss_train[:epoch + 1].squeeze(),
-                 loss_valid=loss_valid[:epoch + 1].squeeze(),
-                 )
-        )
         if epoch % PERIOD_SAVE_STATE == PERIOD_SAVE_STATE - 1:
             torch.save(
                 (model.state_dict(),
@@ -301,8 +293,60 @@ def train():
     print(f'\nTest Loss: {arr2str(loss_test, n_decimal=4)}')
 
 
-# TODO: Measurement print
-def validate(fname='', loader: DataLoader = None) -> np.ndarray:
+def write_one(x_one, y_one, x_ph_one, y_ph_one, out_one, epoch):
+    x_one, x_ph_one = bnkr_equalize_(x_one, x_ph_one)
+    y_one, y_ph_one = bnkr_equalize_(y_one, y_ph_one)
+    out_one = bnkr_equalize_(out_one)
+
+    snrseg = Measurement.calc_snrseg(y_one, out_one)
+
+    np.maximum(out_one, 0, out=out_one)
+
+    x_wav_one = reconstruct_wave(x_one, x_ph_one)
+    y_wav_one = reconstruct_wave(y_one, y_ph_one)
+    out_wav_one = reconstruct_wave(out_one, x_ph_one[:, :out_one.shape[1], :],
+                                   do_griffin_lim=True)
+    out_wav_y_phase = reconstruct_wave(out_one, y_ph_one)
+
+    pesq, stoi = Measurement.calc_pesq_stoi(y_wav_one, out_wav_one)
+
+    x_wav_one = torch.from_numpy(x_wav_one)
+    y_wav_one = torch.from_numpy(y_wav_one)
+    out_wav_one = torch.from_numpy(out_wav_one)
+    out_wav_y_phase = torch.from_numpy(out_wav_y_phase)
+
+    pad_one = np.ones(
+        (y_one.shape[0], x_one.shape[1] - y_one.shape[1], y_one.shape[2])
+    )
+
+    fig_x = draw_spectrogram(x_one)
+    fig_y = draw_spectrogram(np.append(y_one, y_one.min()*pad_one, axis=1))
+    fig_out = draw_spectrogram(np.append(out_one, out_one.min()*pad_one, axis=1))
+
+    group = 'validation'
+    writer.add_scalar(f'{group}/SNRseg', snrseg, epoch)
+    writer.add_scalar(f'{group}/pesq', pesq, epoch)
+    writer.add_scalar(f'{group}/stoi', stoi, epoch)
+
+    writer.add_figure(f'{group}/1. Anechoic Spectrum', fig_y, epoch)
+    writer.add_figure(f'{group}/2. Reverberant Spectrum', fig_x, epoch)
+    writer.add_figure(f'{group}/3. Estimated Anechoic Spectrum', fig_out, epoch)
+
+    writer.add_audio(
+        f'{group}/1. Anechoic Wave', y_wav_one, epoch, sample_rate=Fs
+    )
+    writer.add_audio(
+        f'{group}/2. Reverberant Wave', x_wav_one, epoch, sample_rate=Fs
+    )
+    writer.add_audio(
+        f'{group}/3. Estimated Anechoic Wave', out_wav_one, epoch, sample_rate=Fs
+    )
+    writer.add_audio(
+        f'{group}/4. Estimated Wave with Anechoic Phase', out_wav_y_phase, epoch, sample_rate=Fs
+    )
+
+
+def validate(epoch=FIRST_EPOCH, loader: DataLoader = None):
     """
     Evaluate the performance of the model.
     loader: DataLoader to use.
@@ -314,7 +358,7 @@ def validate(fname='', loader: DataLoader = None) -> np.ndarray:
     with torch.no_grad():
         model.eval()
 
-        saved = False
+        wrote = False if writer else True
         avg_loss = torch.zeros(1).cuda(OUT_CUDA_DEV)
 
         print_progress(0, len(loader), f'{"validate":<9}: ')
@@ -332,50 +376,54 @@ def validate(fname='', loader: DataLoader = None) -> np.ndarray:
             loss = calc_loss(y_cuda, output, T_ys)
             avg_loss += loss
 
-            # Save IV Result
-            if (not saved) and fname:
-                # F, T, C
-                x_one = x[0, :, :data['T_xs'][0], :]
-                x_ph_one = data['x_phase'][0, :, :data['T_xs'][0], :]
-                y_one = y[0, :, :T_ys[0], :]
-                y_ph_one = data['y_phase'][0, :, :T_ys[0], :]
-
-                out_one = output[0, :, :, :T_ys[0]].permute(1, 2, 0)
-                out_one = loader.dataset.denormalize(out_one, 'y')
-                out_one = out_one.cpu().numpy()
-
-                Measurement.calc_snrseg(y_one, out_one)
-
-                # x_wav_one = reconstruct_wave(x_one, x_ph_one)
-                y_wav_one = reconstruct_wave(y_one, y_ph_one)
-                out_wav_one = reconstruct_wave(out_one, x_ph_one, do_griffin_lim=True)
-
-                Measurement.calc_pesq_stoi(y_wav_one, out_wav_one)
-
-                scio.savemat(fname, dict(IV_free=y_one,
-                                         IV_room=x_one,
-                                         IV_estimated=out_one,
-                                         ))
-
-                saved = True
-
             loss = loss[-1] / len(T_ys)
             print_progress(i_iter + 1, len(loader), f'{"validate":<9}: {loss:.1e}')
 
+            # ======================write summary=============================
+            if not wrote:
+                # F, T, C
+                one_sample = IVDataset.decollate_padded(data, 0)
+
+                out_one = output[0, :, :, :T_ys[0]].permute(1, 2, 0)
+                out_one = loader.dataset.denormalize_(out_one, 'y')
+                out_one = out_one.cpu().numpy()
+
+                IVDataset.save_IV(f'{DIR_RESULT}IV_{epoch}',
+                                  **one_sample, out=out_one)
+
+                x_one = one_sample['x'][..., -1:]
+                x_ph_one = one_sample['x_phase'][..., -1:]
+                y_one = one_sample['y'][..., -1:]
+                y_ph_one = one_sample['y_phase'][..., -1:]
+                out_one = out_one[..., -1:]
+
+                wrote = True
+
+                # Process(
+                #     target=write_one,
+                #     args=(x_one, y_one, x_ph_one, y_ph_one, out_one, epoch)
+                # ).start()
+                write_one(x_one, y_one, x_ph_one, y_ph_one, out_one, epoch)
+
         avg_loss /= len(loader.dataset)
+        if writer:
+            writer.add_scalar('validation/loss', avg_loss.item(), epoch)
 
         model.train()
-    return avg_loss.cpu().numpy()
+
+        return avg_loss.item()
 
 
 def run():
-    if not F_STATE_DICT or ARGS.train_epoch:
-        train()
-    elif ARGS.test_epoch:
-        loss_test = validate(f'{DIR_RESULT}IV_test.mat', loader=loader_test)
+    if ARGS.test_epoch:
+        loss_test = validate(loader=loader_test)
 
         print(f'Test Loss: {arr2str(loss_test, n_decimal=4)}')
+    else:
+        train()
 
 
 if __name__ == '__main__':
     run()
+    if writer:
+        writer.close()
