@@ -1,6 +1,5 @@
 *.mat
 *.npy
-*.asv
 *.h5
 
 .ftpconfig
@@ -10,13 +9,11 @@
 *.png
 *.fig
 
-pre_processing_gpu_beta실험.py
-
 # Python
 __pycache__/
 **.py[cod]
 **$py.class
 
-.ropeproject/
-.mypy_cache/
 .flake8
+
+.idea/
