@@ -1,3 +1,4 @@
+import atexit
 import io
 from datetime import datetime
 from typing import Dict
@@ -12,6 +13,7 @@ class PESQ_STOI:
         self.eng = matlab.engine.start_matlab('-nojvm')
         self.eng.addpath(self.eng.genpath('.'))
         self.strio = io.StringIO()
+        atexit.register(self._exit)
 
     def __call__(self, clean: np.ndarray, noisy: np.ndarray, fs: int) -> Dict[str, float]:
         clean = matlab.double(clean.tolist())
@@ -21,7 +23,7 @@ class PESQ_STOI:
 
         return dict(PESQ=pesq, STOI=stoi)
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def _exit(self):
         self.eng.quit()
 
         with io.open(
