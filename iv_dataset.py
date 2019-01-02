@@ -7,6 +7,7 @@ import deepdish as dd
 import numpy as np
 import torch
 from scipy.linalg import toeplitz
+import scipy.io as scio
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
@@ -138,14 +139,35 @@ class IVDataset(Dataset):
                     result[key] = list_data
             else:
                 # B, T, F, C
-                data = [gen.transpose(batch[idx][key], (-2, -3, -1)) for idx in idxs_sorted]
+                data = [torch.from_numpy(batch[idx][key]).permute(-2, -3, -1)
+                        for idx in idxs_sorted]
                 data = pad_sequence(data, batch_first=True)
                 # B, F, T, C
-                data = gen.permute(data, (0, -2, -3, -1))
+                data = data.permute(0, -2, -3, -1).numpy()
 
                 result[key] = data
 
         return result
+
+    @staticmethod
+    def decollate_padded(batch: Dict, idx: int) -> Dict:
+        result = dict()
+        for key, value in batch.items():
+            if type(value) == str:
+                result[key] = value
+            elif type(value) == list:
+                result[key] = value[key]
+            elif not key.startswith('T_'):
+                T_xy = 'T_xs' if 'x' in key else 'T_ys'
+                result[key] = value[idx, :, :batch[T_xy][idx], :]
+        return result
+
+    @staticmethod
+    def save_IV(fname, **kwargs):
+        scio.savemat(fname, dict(IV_free=kwargs['y'],
+                                 IV_room=kwargs['x'],
+                                 IV_estimated=kwargs['out'],
+                                 ))
 
     def normalize_on_like(self, other):
         self.__normconst = other.__normconst
@@ -175,7 +197,7 @@ class IVDataset(Dataset):
 
     # noinspection PyProtectedMember
     @classmethod
-    def split(cls, dataset, ratio: Sequence[float]) -> Tuple:
+    def split(cls, dataset, ratio: Sequence[float]) -> Sequence:
         """
         Split datasets.
         The sum of elements of ratio must be 1,
@@ -207,7 +229,7 @@ class IVDataset(Dataset):
         for ii in range(n_split):
             result[ii]._all_files = dataset._all_files[idx_data[ii]:idx_data[ii + 1]]
 
-        return tuple(result)
+        return result
 
 
 # def delta_no_tplz(a, axis: int, L=2):
