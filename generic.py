@@ -21,6 +21,24 @@ dict_cat_stack_fn = {(Tensor, 'cat'): torch.cat,
                      }
 
 
+def convert_dtype(dtype: type, pkg) -> type:
+    i_first = str(dtype).find('\'')
+    if i_first == -1:
+        if pkg == torch:
+            return dtype
+        else:
+            str_dtype = str(dtype).split('.')[-1]
+            return eval(f'np.{str_dtype}')
+    else:
+        if pkg == torch:
+            i_last = str(dtype).rfind('\'')
+            str_dtype = str(dtype)[i_first + 1:i_last]
+            str_dtype = str_dtype.split('.')[-1]
+            return eval(f'torch.{str_dtype}')
+        else:
+            return dtype
+
+
 def copy(a: TensArr, requires_grad=True) -> TensArr:
     if type(a) == Tensor:
         return a.clone() if requires_grad else torch.tensor(a)
@@ -54,7 +72,7 @@ def ndim(a: TensArr) -> int:
         raise TypeError
 
 
-def transpose(a: TensArr, axes: Union[int, Sequence[int]]=None) -> TensArr:
+def transpose(a: TensArr, axes: Union[int, Sequence[int]] = None) -> TensArr:
     if type(a) == Tensor:
         if not axes:
             if a.dim() >= 2:
