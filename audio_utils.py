@@ -1,33 +1,28 @@
+import matlab.engine
 import os
 from collections import OrderedDict as ODict
-from typing import Sequence, Union
+from typing import Sequence, Union, Tuple
 
 import deepdish as dd
 import librosa
 import numpy as np
 import scipy.io as scio
+from scipy.linalg import toeplitz
 import torch
+from matplotlib import pyplot as plt
 
+from normalize import LogInterface as LogModule
 import generic as gen
 import mypath
 from matlab_lib import PESQ_STOI
 from pystoi.stoi import stoi
 from utils import arr2str
 
+
 # ---------manually selected---------
 N_GRIFFIN_LIM = 20
 
-MODEL_NAME = 'UNet'
-DIR_MODEL = mypath.path(MODEL_NAME)
-if not os.path.isdir(DIR_MODEL):
-    os.makedirs(DIR_MODEL)
-DIR_EVAL = f'{DIR_MODEL}_eval'
-if not os.path.isdir(DIR_EVAL):
-    os.makedirs(DIR_EVAL)
-DIR_MODEL = os.path.join(DIR_MODEL, f'{MODEL_NAME}_')
-
-f_metadata = os.path.join(DIR_IV, 'metadata.h5')
-metadata = dd.io.load(os.path.join(DIR_IV, 'metadata.h5'))
+metadata = dd.io.load(os.path.join(mypath.path('iv_train'), 'metadata.h5'))
 # all_files = metadata['path_wavfiles']
 L_hop = int(metadata['L_hop'])
 N_freq = int(metadata['N_freq'])
@@ -36,11 +31,11 @@ Fs = int(metadata['Fs'])
 N_fft = L_hop * 2
 
 # STFT/iSTFT arguments
-kwargs_common = dict(hop_length=L_hop, window='hann', center=False)
+kwargs_common = dict(hop_length=L_hop, window='hann', center=True)
 kwargs_stft = dict(**kwargs_common, n_fft=N_fft, dtype=np.complex128)
 kwargs_istft = dict(**kwargs_common, dtype=np.float64)
 
-del f_metadata, metadata
+del metadata
 
 # bEQspec
 DIR_DATA = mypath.path('root')
@@ -123,7 +118,7 @@ class Measurement:
 
     @classmethod
     def calc_pesq_stoi(cls, y_clean: np.ndarray, y_est: np.ndarray,
-                       *args) -> np.ndarray:
+                       *args) -> Tuple[np.float64, np.float64]:
         if y_clean.ndim == 1:
             y_clean = y_clean[np.newaxis, ...]
             y_est = y_est[np.newaxis, ...]
@@ -133,7 +128,7 @@ class Measurement:
             temp = cls.pesq_stoi_module(item_clean, item_est, Fs)
             sum_result += np.array([temp['PESQ'], temp['STOI']])
 
-        return sum_result
+        return sum_result[0], sum_result[1]
 
     @staticmethod
     def calc_stoi(y_clean: np.ndarray, y_est: np.ndarray):
@@ -192,15 +187,11 @@ class Measurement:
 
 def reconstruct_wave(power: np.ndarray, phase: np.ndarray,
                      *, n_sample=-1, do_griffin_lim=False) -> np.ndarray:
-    # clip negative values
-    np.maximum(power, 0, out=power)
+    power = power.squeeze()
+    phase = phase.squeeze()
 
     # power to mag
     mag = np.sqrt(power, out=power)
-
-    # bnkr equalization
-    mag *= bEQf0_mag
-    phase += bEQf0_angle
 
     if do_griffin_lim:
         wave = griffin_lim(mag, phase, n_sample=n_sample, n_iter=N_GRIFFIN_LIM)
@@ -209,13 +200,16 @@ def reconstruct_wave(power: np.ndarray, phase: np.ndarray,
         if n_sample != -1:
             wave = wave[:n_sample]
 
+    max_amplitude = np.max(np.abs(wave))
+    if max_amplitude > 1:
+        wave /= max_amplitude
+        print(f'wave is scaled by {max_amplitude} to prevent clipping.')
+
     return wave
 
 
 def griffin_lim(mag: np.ndarray, phase: np.ndarray,
                 *, n_iter: int, n_sample=-1) -> np.ndarray:
-    mag = mag.squeeze()
-    phase = phase.squeeze()
     # wave = scsig.istft(mag*np.exp(1j*phase), **kwargs_stft)[-1]
     for _ in range(n_iter - 1):
         wave = librosa.core.istft(mag * np.exp(1j * phase), **kwargs_istft)
@@ -234,7 +228,7 @@ def griffin_lim(mag: np.ndarray, phase: np.ndarray,
 
 def delta(*data: gen.TensArr, axis: int, L=2) -> gen.TensArrOrSeq:
     dim = gen.ndim(data[0])
-    dtype = data[0].dtype
+    dtype = gen.convert_dtype(data[0].dtype, np)
     if axis < 0:
         axis += dim
 
@@ -269,6 +263,37 @@ def delta(*data: gen.TensArr, axis: int, L=2) -> gen.TensArrOrSeq:
     result = [type(data[0])] * len(data)
     for idx, item in enumerate(data):
         length = item.shape[axis]
-        result[idx] = gen.einsum(ein_expr, (tplz_mat[:length - 2 * L, :length], item))
+        result[idx] = gen.einsum(ein_expr,
+                                 (tplz_mat[:length - 2 * L, :length], item))
 
     return result if len(result) > 1 else result[0]
+
+
+def draw_spectrogram(data: gen.TensArr, power=True, show=False):
+    scale_factor = 10 if power else 20
+    data = LogModule.log(data)
+    data = data.squeeze()
+    data *= scale_factor
+    data = gen.convert(data, astype=np.ndarray)
+
+    fig = plt.figure()
+    plt.imshow(data,
+               cmap=plt.get_cmap('CMRmap'),
+               extent=(0, data.shape[1], 0, Fs//2),
+               origin='lower', aspect='auto')
+    plt.xlabel('Frame Index')
+    plt.ylabel('Frequency (Hz)')
+    plt.colorbar()
+    if show:
+        plt.show()
+
+    return fig
+
+
+def bnkr_equalize_(mag, phase=None):
+    mag *= bEQf0_mag
+    if phase is not None:
+        phase += bEQf0_angle
+        return mag, phase
+    else:
+        return mag
