@@ -168,23 +168,23 @@ class MeanStdNormalization(NormalizationBase):
     def normalize(self, a: TensArr, xy: str) -> TensArr:
         mean, std = self._get_consts_like(a, xy)
 
-        return (a - mean) / (2*std)
+        return (a - mean) / (2 * std)
 
     def normalize_(self, a: TensArr, xy: str) -> TensArr:
         mean, std = self._get_consts_like(a, xy)
         a -= mean
-        a /= (2*std)
+        a /= (2 * std)
         return a
 
     def denormalize(self, a: TensArr, xy: str) -> TensArr:
         mean, std = self._get_consts_like(a, xy)
 
-        return a * (2*std) + mean
+        return a * (2 * std) + mean
 
     def denormalize_(self, a: TensArr, xy: str) -> TensArr:
         mean, std = self._get_consts_like(a, xy)
 
-        a *= (2*std)
+        a *= (2 * std)
         a += mean
         return a
 
@@ -248,36 +248,17 @@ class MinMaxNormalization(NormalizationBase):
 
 
 class LogInterface:
-    signs = {
-        (torch, torch.device('cpu')):
-            (torch.tensor((1.,), dtype=torch.float32),
-             torch.tensor((-1.,), dtype=torch.float32)),
-        np:
-            (np.array((1,), dtype=np.int8),
-             np.array((-1,), dtype=np.int8)),
-    }
-
-    @classmethod
-    def sign_like(cls, a: TensArr) -> Tuple[TensArr, TensArr]:
-        if type(a) == torch.Tensor:
-            if (torch, a.device) not in cls.signs:
-                cls.signs[(torch, a.device)] = (
-                    torch.tensor((1.,), dtype=torch.float32, device=a.device),
-                    torch.tensor((-1.,), dtype=torch.float32, device=a.device)
-                )
-            return cls.signs[(torch, a.device)]
-        else:
-            return cls.signs[np]
+    KWARGS_SUM = {np: dict(keepdims=True), torch: dict(keepdim=True)}
 
     @classmethod
     def log(cls, a: TensArr) -> TensArr:
         pkg = gen.dict_package[type(a)]
-        plus, minus = cls.sign_like(a)
 
         b = pkg.empty_like(a)
         if a.shape[-1] == 4:
-            b[..., :3] = (pkg.where(a[..., :3] > 0, plus, minus)
-                          * pkg.log10((pkg.abs(a[..., :3]) + EPS) / EPS))
+            r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
+            log_r = pkg.log10((r + EPS) / EPS)
+            b[..., :3] = a[..., :3] * log_r / (r+EPS)
             b[..., 3] = pkg.log10((a[..., 3] + EPS) / EPS)
         else:
             b = pkg.log10((a + EPS) / EPS)
@@ -286,25 +267,26 @@ class LogInterface:
     @classmethod
     def log_(cls, a: TensArr) -> TensArr:
         pkg = gen.dict_package[type(a)]
-        plus, minus = cls.sign_like(a)
 
         if a.shape[-1] == 4:
-            a[..., :3] = (pkg.where(a[..., :3] > 0, plus, minus)
-                          * pkg.log10((pkg.abs(a[..., :3]) + EPS) / EPS))
+            r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
+            log_r = pkg.log10((r + EPS) / EPS)
+            a[..., :3] *= log_r
+            a[..., :3] /= (r+EPS)
             a[..., 3] = pkg.log10((a[..., 3] + EPS) / EPS)
         else:
-            a = pkg.log10((a + EPS) / EPS)
+            pkg.log10((a + EPS) / EPS, out=a)
         return a
 
     @classmethod
     def exp(cls, a: TensArr) -> TensArr:
         pkg = gen.dict_package[type(a)]
-        plus, minus = cls.sign_like(a)
 
         b = pkg.empty_like(a)
         if a.shape[-1] == 4:
-            b[..., :3] = (pkg.where(a[..., :3] > 0, plus, minus)
-                          * EPS * (10.**pkg.abs(a[..., :3]) - 1))
+            r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
+            exp_r = EPS * (10.**r - 1)
+            b[..., :3] = a[..., :3] * exp_r / (r+EPS)
             b[..., 3] = EPS * (10.**a[..., 3] - 1)
         else:
             b = EPS * (10.**a - 1)
@@ -313,11 +295,12 @@ class LogInterface:
     @classmethod
     def exp_(cls, a: TensArr) -> TensArr:
         pkg = gen.dict_package[type(a)]
-        plus, minus = cls.sign_like(a)
 
         if a.shape[-1] == 4:
-            a[..., :3] = (pkg.where(a[..., :3] > 0, plus, minus)
-                          * EPS * (10.**pkg.abs(a[..., :3]) - 1))
+            r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
+            exp_r = EPS * (10.**r - 1)
+            a[..., :3] *= exp_r
+            a[..., :3] /= (r+EPS)
             a[..., 3] = EPS * (10.**a[..., 3] - 1)
         else:
             a = EPS * (10.**a - 1)
