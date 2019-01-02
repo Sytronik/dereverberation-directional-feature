@@ -43,8 +43,12 @@ class ConvBNAct(nn.Module):
 
 
 class ResNeXtBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, act_fn, hidden_ch, *, groups, last_act_fn=True):
+    def __init__(self, in_ch, out_ch, act_fn, hidden_ch=-1, *, groups=-1, last_act_fn=True):
         super().__init__()
+        if hidden_ch == -1:
+            hidden_ch = out_ch // 2
+        if groups == -1:
+            groups = out_ch // 8
         self.skipcba = ConvBNAct(in_ch, out_ch, None, kernel_size=(1, 1), padding=(0, 0))
 
         self.incba = ConvBNAct(in_ch, hidden_ch, act_fn, kernel_size=(1, 1), padding=(0, 0))
@@ -203,9 +207,9 @@ class OutConvMap(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.conv1 = nn.Conv2d(in_ch, out_ch, (3, 3), padding=(1, 1))
-        self.act_alpha = nn.Tanh()
+        self.act_fn = nn.Tanh()
 
     def forward(self, x):
         x = self.conv1(x)
-        x = self.act_alpha(x)
+        x = 2*self.act_fn(x)
         return x
