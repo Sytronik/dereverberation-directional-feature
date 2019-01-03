@@ -1,6 +1,7 @@
 from argparse import ArgumentParser
 from glob import glob
-import logging  # noqa: F401
+# noinspection PyUnresolvedReferences
+import logging
 import multiprocessing as mp
 import os
 import time
@@ -16,13 +17,13 @@ import scipy.signal as scsig
 
 import soundfile as sf
 
-import mypath
+import config as cfg
 
 NDArray = TypeVar('NDArray', np.ndarray, cp.ndarray)
 
 
 # manually select
-N_CUDA_DEV = 4
+N_CUDA_DEV = len(cfg.CUDA_DEVICES)
 FORM = '%04d_%02d.h5'
 L_WIN_MS = 32.
 HOP_RATIO = 0.5
@@ -123,12 +124,12 @@ if __name__ == '__main__':
     parser.add_argument('--init', action='store_true')
     ARGS = parser.parse_args()
 
-    # determined by mypath
-    DIR_DATA = mypath.path('root')
-    DIR_IV = mypath.path(f'iv_{ARGS.kind_data.lower()}')
+    # Paths
+    DIR_DATA = cfg.DICT_PATH['root']
+    DIR_IV = cfg.DICT_PATH[f'iv_{ARGS.kind_data.lower()}']
     if not os.path.exists(DIR_IV):
         os.makedirs(DIR_IV)
-    DIR_WAVFILE = mypath.path(f'wav_{ARGS.kind_data.lower()}')
+    DIR_WAVFILE = cfg.DICT_PATH[f'wav_{ARGS.kind_data.lower()}']
 
     # RIR Data
     transfer_dict = scio.loadmat(os.path.join(DIR_DATA, 'RIR_Ys.mat'), squeeze_me=True)

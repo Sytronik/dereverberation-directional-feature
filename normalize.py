@@ -9,9 +9,7 @@ import torch
 
 import generic as gen
 from generic import TensArr
-
-EPS = 1e-10
-USE_ONLY_X = False
+import config as cfg
 
 
 class NormalizationBase(dd.util.Saveable, metaclass=ABCMeta):
@@ -47,7 +45,7 @@ class NormalizationBase(dd.util.Saveable, metaclass=ABCMeta):
 
     def _get_consts_like(self, a: TensArr, xy: str):
         assert xy == 'x' or xy == 'y'
-        shft = int(xy == 'y') if not USE_ONLY_X else 0
+        shft = int(xy == 'y') if not cfg.NORM_USING_ONLY_X else 0
 
         ch = range(3, 4) if a.shape[-1] == 1 else range(0, 4)
 
@@ -249,6 +247,7 @@ class MinMaxNormalization(NormalizationBase):
 
 class LogInterface:
     KWARGS_SUM = {np: dict(keepdims=True), torch: dict(keepdim=True)}
+    EPS = cfg.EPS_FOR_LOG
 
     @classmethod
     def log(cls, a: TensArr) -> TensArr:
@@ -257,11 +256,11 @@ class LogInterface:
         b = pkg.empty_like(a)
         if a.shape[-1] == 4:
             r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
-            log_r = pkg.log10((r + EPS) / EPS)
-            b[..., :3] = a[..., :3] * log_r / (r+EPS)
-            b[..., 3] = pkg.log10((a[..., 3] + EPS) / EPS)
+            log_r = pkg.log10((r + cls.EPS) / cls.EPS)
+            b[..., :3] = a[..., :3] * log_r / (r+cls.EPS)
+            b[..., 3] = pkg.log10((a[..., 3] + cls.EPS) / cls.EPS)
         else:
-            b = pkg.log10((a + EPS) / EPS)
+            b = pkg.log10((a + cls.EPS) / cls.EPS)
         return b
 
     @classmethod
@@ -270,12 +269,12 @@ class LogInterface:
 
         if a.shape[-1] == 4:
             r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
-            log_r = pkg.log10((r + EPS) / EPS)
+            log_r = pkg.log10((r + cls.EPS) / cls.EPS)
             a[..., :3] *= log_r
-            a[..., :3] /= (r+EPS)
-            a[..., 3] = pkg.log10((a[..., 3] + EPS) / EPS)
+            a[..., :3] /= (r+cls.EPS)
+            a[..., 3] = pkg.log10((a[..., 3] + cls.EPS) / cls.EPS)
         else:
-            pkg.log10((a + EPS) / EPS, out=a)
+            pkg.log10((a + cls.EPS) / cls.EPS, out=a)
         return a
 
     @classmethod
@@ -285,11 +284,11 @@ class LogInterface:
         b = pkg.empty_like(a)
         if a.shape[-1] == 4:
             r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
-            exp_r = EPS * (10.**r - 1)
-            b[..., :3] = a[..., :3] * exp_r / (r+EPS)
-            b[..., 3] = EPS * (10.**a[..., 3] - 1)
+            exp_r = cls.EPS * (10.**r - 1)
+            b[..., :3] = a[..., :3] * exp_r / (r+cls.EPS)
+            b[..., 3] = cls.EPS * (10.**a[..., 3] - 1)
         else:
-            b = EPS * (10.**a - 1)
+            b = cls.EPS * (10.**a - 1)
         return b
 
     @classmethod
@@ -298,12 +297,12 @@ class LogInterface:
 
         if a.shape[-1] == 4:
             r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
-            exp_r = EPS * (10.**r - 1)
+            exp_r = cls.EPS * (10.**r - 1)
             a[..., :3] *= exp_r
-            a[..., :3] /= (r+EPS)
-            a[..., 3] = EPS * (10.**a[..., 3] - 1)
+            a[..., :3] /= (r+cls.EPS)
+            a[..., 3] = cls.EPS * (10.**a[..., 3] - 1)
         else:
-            a = EPS * (10.**a - 1)
+            a = cls.EPS * (10.**a - 1)
         return a
 
 

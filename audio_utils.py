@@ -1,54 +1,18 @@
-import matlab.engine
-import os
 from collections import OrderedDict as ODict
 from typing import Sequence, Union, Tuple
 
-import deepdish as dd
 import librosa
 import numpy as np
-import scipy.io as scio
 from scipy.linalg import toeplitz
 import torch
 from matplotlib import pyplot as plt
 
 from normalize import LogInterface as LogModule
 import generic as gen
-import mypath
 from matlab_lib import PESQ_STOI
 from pystoi.stoi import stoi
 from utils import arr2str
-
-
-# ---------manually selected---------
-N_GRIFFIN_LIM = 20
-
-metadata = dd.io.load(os.path.join(mypath.path('iv_train'), 'metadata.h5'))
-# all_files = metadata['path_wavfiles']
-L_hop = int(metadata['L_hop'])
-N_freq = int(metadata['N_freq'])
-N_LOC = int(metadata['N_LOC'])
-Fs = int(metadata['Fs'])
-N_fft = L_hop * 2
-
-# STFT/iSTFT arguments
-kwargs_common = dict(hop_length=L_hop, window='hann', center=True)
-kwargs_stft = dict(**kwargs_common, n_fft=N_fft, dtype=np.complex128)
-kwargs_istft = dict(**kwargs_common, dtype=np.float64)
-
-del metadata
-
-# bEQspec
-DIR_DATA = mypath.path('root')
-sft_dict = scio.loadmat(
-    os.path.join(DIR_DATA, 'sft_data.mat'),
-    variable_names=('bEQf',),
-    squeeze_me=True
-)
-bEQf0 = sft_dict['bEQf'][:, 0][:, np.newaxis, np.newaxis]  # F, T, C
-bEQf0_mag = np.abs(bEQf0)
-bEQf0_angle = np.angle(bEQf0)
-# bEQspec0 = torch.tensor(bEQspec0, dtype=torch.float32, device=OUT_DEVICE)
-del sft_dict, bEQf0
+import config as cfg
 
 
 # class SNRseg(nn.Module):
@@ -125,7 +89,7 @@ class Measurement:
 
         sum_result = np.zeros(2)
         for item_clean, item_est in zip(y_clean, y_est):
-            temp = cls.pesq_stoi_module(item_clean, item_est, Fs)
+            temp = cls.pesq_stoi_module(item_clean, item_est, cfg.Fs)
             sum_result += np.array([temp['PESQ'], temp['STOI']])
 
         return sum_result[0], sum_result[1]
@@ -134,7 +98,7 @@ class Measurement:
     def calc_stoi(y_clean: np.ndarray, y_est: np.ndarray):
         sum_result = 0.
         for item_clean, item_est in zip(y_clean, y_est):
-            sum_result += stoi(item_clean, item_est, Fs)
+            sum_result += stoi(item_clean, item_est, cfg.Fs)
         return sum_result
 
     def __init__(self, *metrics):
@@ -186,7 +150,7 @@ class Measurement:
 
 
 def reconstruct_wave(power: np.ndarray, phase: np.ndarray,
-                     *, n_sample=-1, do_griffin_lim=False) -> np.ndarray:
+                     *, n_sample=-1, do_griffin_lim=False) -> Tuple[np.ndarray, int]:
     power = power.squeeze()
     phase = phase.squeeze()
 
@@ -194,9 +158,9 @@ def reconstruct_wave(power: np.ndarray, phase: np.ndarray,
     mag = np.sqrt(power, out=power)
 
     if do_griffin_lim:
-        wave = griffin_lim(mag, phase, n_sample=n_sample, n_iter=N_GRIFFIN_LIM)
+        wave = griffin_lim(mag, phase, n_sample=n_sample, n_iter=cfg.N_GRIFFIN_LIM)
     else:
-        wave = librosa.core.istft(mag * np.exp(1j * phase), **kwargs_istft)
+        wave = librosa.core.istft(mag * np.exp(1j * phase), **cfg.KWARGS_ISTFT)
         if n_sample != -1:
             wave = wave[:n_sample]
 
@@ -205,20 +169,20 @@ def reconstruct_wave(power: np.ndarray, phase: np.ndarray,
         wave /= max_amplitude
         print(f'wave is scaled by {max_amplitude} to prevent clipping.')
 
-    return wave
+    return wave, cfg.Fs
 
 
 def griffin_lim(mag: np.ndarray, phase: np.ndarray,
                 *, n_iter: int, n_sample=-1) -> np.ndarray:
     # wave = scsig.istft(mag*np.exp(1j*phase), **kwargs_stft)[-1]
     for _ in range(n_iter - 1):
-        wave = librosa.core.istft(mag * np.exp(1j * phase), **kwargs_istft)
+        wave = librosa.core.istft(mag * np.exp(1j * phase), **cfg.KWARGS_ISTFT)
 
-        spec = librosa.core.stft(wave, **kwargs_stft)
+        spec = librosa.core.stft(wave, **cfg.KWARGS_STFT)
         phase = np.angle(spec)
 
     kwarg_len = dict(length=n_sample) if n_sample != -1 else dict()
-    wave = librosa.core.istft(mag * np.exp(1j * phase), **kwargs_istft, **kwarg_len)
+    wave = librosa.core.istft(mag * np.exp(1j * phase), **cfg.KWARGS_ISTFT, **kwarg_len)
     # wave = stft_module.inverse(mag, phase)[..., :n_sample]
     # for _ in range(n_iter - 1):
     #     _, phase = stft_module.transform(wave)
@@ -279,7 +243,7 @@ def draw_spectrogram(data: gen.TensArr, power=True, show=False):
     fig = plt.figure()
     plt.imshow(data,
                cmap=plt.get_cmap('CMRmap'),
-               extent=(0, data.shape[1], 0, Fs//2),
+               extent=(0, data.shape[1], 0, cfg.Fs//2),
                origin='lower', aspect='auto')
     plt.xlabel('Frame Index')
     plt.ylabel('Frequency (Hz)')
@@ -291,9 +255,9 @@ def draw_spectrogram(data: gen.TensArr, power=True, show=False):
 
 
 def bnkr_equalize_(mag, phase=None):
-    mag *= bEQf0_mag
+    mag *= cfg.bEQf0_mag
     if phase is not None:
-        phase += bEQf0_angle
+        phase += cfg.bEQf0_angle
         return mag, phase
     else:
         return mag

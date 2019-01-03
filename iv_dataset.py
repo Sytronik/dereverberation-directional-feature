@@ -1,30 +1,18 @@
 import os
 from copy import copy
 from os import path
-from typing import Dict, List, Sequence, Tuple, Union
+from typing import Dict, List, Sequence, Tuple
 
 import deepdish as dd
 import numpy as np
 import torch
-from scipy.linalg import toeplitz
 import scipy.io as scio
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
-import generic as gen
-import mypath
-from generic import TensArr, TensArrOrSeq
-from normalize import LogMeanStdNormalization as NormalizationClass
-
-SUFFIX = 'log_meanstd'
-# ------determined by IV files------
-NAME = dict(x='/IV_room', y='/IV_free',
-            x_phase='/phase_room', y_phase='/phase_free',
-            fname_wav='/fname_wav')
-SEL_CH = {'all': dd.aslice[:, :, :],
-          'alpha': dd.aslice[:, :, -1:],
-          True: None,
-          }
+from generic import TensArr
+import config as cfg
+import normalize
 
 
 class IVDataset(Dataset):
@@ -42,27 +30,27 @@ class IVDataset(Dataset):
     __slots__ = ('__PATH', '__needs', '__normconst', '_all_files')
 
     def __init__(self, kind_data: str,
-                 n_file=-1, random_sample=True, do_normalize=True, **kwargs):
-        self.__PATH = mypath.path(f'iv_{kind_data}')
-        self.__needs = dict(x='all', y='alpha', x_phase=False, y_phase=False, fname_wav=True)
+                 n_file=-1, random_sample=True, norm_class=None, **kwargs):
+        self.__PATH = cfg.DICT_PATH[f'iv_{kind_data}']
+        self.__needs = dict(x='all', y='alpha',
+                            x_phase=False, y_phase=False,
+                            fname_wav=True)
         self.set_needs(**kwargs)
 
         # fname_list: The name of the file
         # that has information about data file list, mean, std, ...
         self._all_files: List[str]
-        fname_list = path.join(self.__PATH, f'list_files_{n_file}_{SUFFIX}.h5')
+        fname_list = path.join(self.__PATH, cfg.F_NORMCONST.format(n_file))
 
         if path.isfile(fname_list):
             self._all_files, normconst = dd.io.load(fname_list)
-            shouldsave = False
+            # shouldsave = False
+            self._all_files = [item.replace('IV_new', 'IV') for item in self._all_files]
+            shouldsave = True
 
         else:
             # search all data files
-            self._all_files = [f.path
-                               for f in os.scandir(self.__PATH)
-                               if f.name.endswith('.h5')
-                               and not f.name.startswith('metadata')
-                               and not f.name.startswith('list_files_')]
+            self._all_files = [f.path for f in os.scandir(self.__PATH) if cfg.isIVfile(f)]
             self._all_files = sorted(self._all_files)
             if n_file != -1:
                 if random_sample:
@@ -71,7 +59,8 @@ class IVDataset(Dataset):
             shouldsave = True
             normconst = None
 
-        if do_normalize:
+        if norm_class:
+            norm_class = eval(f'normalize.{norm_class}')
             if not shouldsave:
                 # if not normconst.get('consts'):
                 #     normconst = dict(constnames=('mean', 'std'),
@@ -81,10 +70,11 @@ class IVDataset(Dataset):
                 #                              normconst['std_y'])
                 #                      )
                 #     shouldsave = True
-                self.__normconst = NormalizationClass.load_from_dict(normconst)
+                self.__normconst = norm_class.load_from_dict(normconst)
             else:
-                self.__normconst = NormalizationClass.create(self._all_files,
-                                                             NAME['x'], NAME['y'])
+                self.__normconst = norm_class.create(
+                    self._all_files, cfg.IV_DATA_NAME['x'], cfg.IV_DATA_NAME['y']
+                )
         else:
             self.__normconst = None
 
@@ -94,9 +84,10 @@ class IVDataset(Dataset):
 
         if shouldsave:
             dd.io.save(
-                fname_list, (self._all_files,
-                             self.__normconst.save_to_dict() if self.__normconst else None,
-                             )
+                fname_list,
+                (self._all_files,
+                 self.__normconst.save_to_dict() if self.__normconst else None,
+                 )
             )
 
         print(self.__normconst)
@@ -109,7 +100,9 @@ class IVDataset(Dataset):
         sample = dict()
         for k, v in self.__needs.items():
             if v:
-                data = dd.io.load(self._all_files[idx], group=NAME[k], sel=SEL_CH[v])
+                data = dd.io.load(self._all_files[idx],
+                                  group=cfg.IV_DATA_NAME[k],
+                                  sel=cfg.CH_SLICES[v])
                 if type(data) == np.str_:
                     data = str(data)
                 sample[k] = data
@@ -175,12 +168,15 @@ class IVDataset(Dataset):
     def set_needs(self, **kwargs):
         """
 
-        :param kwargs: dict(x: str, y: str, x_denorm: str, y_denorm: str, x_phase: str, y_phase: str)
+        :param kwargs: dict(x: str, y: str,
+                            x_denorm: str, y_denorm: str,
+                            x_phase: str, y_phase: str)
         :return:
         """
         for k in self.__needs:
             if k in kwargs:
-                assert kwargs[k] == 'all' or kwargs[k] == 'alpha' or type(kwargs[k]) == bool
+                assert (kwargs[k] == 'all' or kwargs[k] == 'alpha'
+                        or type(kwargs[k]) == bool)
                 self.__needs[k] = kwargs[k]
 
     def normalize(self, a: TensArr, xy: str) -> TensArr:
@@ -244,36 +240,36 @@ class IVDataset(Dataset):
 #     return a
 
 
-DICT_IDX = {
-    'I': range(0, 3),
-    'a': range(-1, 0),
-    'all': range(0, 4),
-}
-
-
-def norm_iv(data: TensArr,
-            reduced_axis=(-3, -1),
-            parts: Union[str, Sequence[str]] = 'all') -> TensArr:
-    dim = gen.ndim(data)
-    assert dim == 3 or dim == 4
-
-    if data.shape[-1] == 1:
-        parts = ('a',)
-    else:
-        parts = (parts,) if type(parts) == str else parts
-
-    for part in parts:
-        assert part in DICT_IDX
-
-    str_axes = 'bftc' if dim == 4 else 'ftc'
-    str_new_axes = str_axes
-    for a in reduced_axis:
-        str_new_axes = str_new_axes.replace(str_axes[a], '')
-
-    ein_expr = f'{str_axes},{str_axes}->{str_new_axes}'
-
-    result = [type(data)] * len(parts)
-    for idx, part in enumerate(parts):
-        result[idx] = gen.einsum(ein_expr, (data[..., DICT_IDX[part]],) * 2)
-
-    return gen.stack(result)
+# DICT_IDX = {
+#     'I': range(0, 3),
+#     'a': range(-1, 0),
+#     'all': range(0, 4),
+# }
+#
+#
+# def norm_iv(data: TensArr,
+#             reduced_axis=(-3, -1),
+#             parts: Union[str, Sequence[str]] = 'all') -> TensArr:
+#     dim = gen.ndim(data)
+#     assert dim == 3 or dim == 4
+#
+#     if data.shape[-1] == 1:
+#         parts = ('a',)
+#     else:
+#         parts = (parts,) if type(parts) == str else parts
+#
+#     for part in parts:
+#         assert part in DICT_IDX
+#
+#     str_axes = 'bftc' if dim == 4 else 'ftc'
+#     str_new_axes = str_axes
+#     for a in reduced_axis:
+#         str_new_axes = str_new_axes.replace(str_axes[a], '')
+#
+#     ein_expr = f'{str_axes},{str_axes}->{str_new_axes}'
+#
+#     result = [type(data)] * len(parts)
+#     for idx, part in enumerate(parts):
+#         result[idx] = gen.einsum(ein_expr, (data[..., DICT_IDX[part]],) * 2)
+#
+#     return gen.stack(result)
