@@ -1,6 +1,5 @@
 import os
 from copy import copy
-from os import path
 from typing import Dict, List, Sequence, Tuple
 
 import deepdish as dd
@@ -12,6 +11,7 @@ from torch.utils.data import Dataset
 
 from generic import TensArr
 import config as cfg
+# noinspection PyUnresolvedReferences
 import normalize
 
 
@@ -27,7 +27,7 @@ class IVDataset(Dataset):
     _all_files
     """
 
-    __slots__ = ('__PATH', '__needs', '__normconst', '_all_files')
+    __slots__ = ('__PATH', '__needs', '_normconst', '_all_files')
 
     def __init__(self, kind_data: str,
                  n_file=-1, random_sample=True, norm_class=None, **kwargs):
@@ -37,17 +37,14 @@ class IVDataset(Dataset):
                             fname_wav=True)
         self.set_needs(**kwargs)
 
-        # fname_list: The name of the file
+        # f_normconst: The name of the file
         # that has information about data file list, mean, std, ...
         self._all_files: List[str]
-        fname_list = path.join(self.__PATH, cfg.F_NORMCONST.format(n_file))
+        f_normconst = os.path.join(self.__PATH, cfg.F_NORMCONST.format(n_file))
 
-        if path.isfile(fname_list):
-            self._all_files, normconst = dd.io.load(fname_list)
-            # shouldsave = False
-            self._all_files = [item.replace('IV_new', 'IV') for item in self._all_files]
-            shouldsave = True
-
+        if os.path.isfile(f_normconst):
+            self._all_files, normconst = dd.io.load(f_normconst)
+            shouldsave = False
         else:
             # search all data files
             self._all_files = [f.path for f in os.scandir(self.__PATH) if cfg.isIVfile(f)]
@@ -62,21 +59,13 @@ class IVDataset(Dataset):
         if norm_class:
             norm_class = eval(f'normalize.{norm_class}')
             if not shouldsave:
-                # if not normconst.get('consts'):
-                #     normconst = dict(constnames=('mean', 'std'),
-                #                      consts=(normconst['mean_x'],
-                #                              normconst['mean_y'],
-                #                              normconst['std_x'],
-                #                              normconst['std_y'])
-                #                      )
-                #     shouldsave = True
-                self.__normconst = norm_class.load_from_dict(normconst)
+                self._normconst = norm_class.load_from_dict(normconst)
             else:
-                self.__normconst = norm_class.create(
+                self._normconst = norm_class.create(
                     self._all_files, cfg.IV_DATA_NAME['x'], cfg.IV_DATA_NAME['y']
                 )
         else:
-            self.__normconst = None
+            self._normconst = None
 
         # if self._all_files[0].startswith('./Data'):
         #     self._all_files = [fname.replace('./Data', './data') for fname in self._all_files]
@@ -84,14 +73,19 @@ class IVDataset(Dataset):
 
         if shouldsave:
             dd.io.save(
-                fname_list,
+                f_normconst,
                 (self._all_files,
-                 self.__normconst.save_to_dict() if self.__normconst else None,
+                 self._normconst.save_to_dict() if self._normconst else None,
                  )
             )
+            scio.savemat(
+                f_normconst.replace('.h5', '.mat'),
+                {f'const_{idx}': const.squeeze()
+                 for idx, const in enumerate(self._normconst.consts)}
+            )
 
-        print(self.__normconst)
-        print(f'{n_file} files prepared from {path.basename(self.__PATH)}.')
+        print(self._normconst)
+        print(f'{n_file} files prepared from {os.path.basename(self.__PATH)}.')
 
     def __len__(self):
         return len(self._all_files)
@@ -157,13 +151,19 @@ class IVDataset(Dataset):
 
     @staticmethod
     def save_IV(fname, **kwargs):
-        scio.savemat(fname, dict(IV_free=kwargs['y'],
-                                 IV_room=kwargs['x'],
-                                 IV_estimated=kwargs['out'],
-                                 ))
+
+        scio.savemat(fname,
+                     {cfg.IV_DATA_NAME[k][1:]: v
+                      for k, v in kwargs.items() if k in cfg.IV_DATA_NAME}
+                     )
 
     def normalize_on_like(self, other):
-        self.__normconst = other.__normconst
+        """
+
+        :type other: IVDataset
+        :return:
+        """
+        self._normconst = other._normconst
 
     def set_needs(self, **kwargs):
         """
@@ -180,16 +180,16 @@ class IVDataset(Dataset):
                 self.__needs[k] = kwargs[k]
 
     def normalize(self, a: TensArr, xy: str) -> TensArr:
-        return self.__normconst.normalize(a, xy)
+        return self._normconst.normalize(a, xy)
 
     def normalize_(self, a: TensArr, xy: str) -> TensArr:
-        return self.__normconst.normalize_(a, xy)
+        return self._normconst.normalize_(a, xy)
 
     def denormalize(self, a: TensArr, xy: str) -> TensArr:
-        return self.__normconst.denormalize(a, xy)
+        return self._normconst.denormalize(a, xy)
 
     def denormalize_(self, a: TensArr, xy: str) -> TensArr:
-        return self.__normconst.denormalize_(a, xy)
+        return self._normconst.denormalize_(a, xy)
 
     # noinspection PyProtectedMember
     @classmethod
