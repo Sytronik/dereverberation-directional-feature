@@ -23,16 +23,14 @@ python convert_db.py [--no-duplicate]
 * "--no-duplicate option" is applied to all files.
 * Avaiable types of original file: .mat, .h5, .npy, .pt
 """
-from argparse import ArgumentParser
-from glob import glob
 import multiprocessing as mp
 import os
+from argparse import ArgumentParser
+from glob import glob
 
 import deepdish as dd
-
 import numpy as np
 import scipy.io as scio
-
 import torch
 
 from utils import static_vars
@@ -88,10 +86,32 @@ def open_npy(fname: str):
 
 
 def open_pt(fname: str):
-    contents = torch.load(fname, map_location=torch.device('cpu'))
+    def construct_dict(data):
+        if hasattr(data, 'items'):
+            if len(data) == 1:
+                data = construct_dict(data.popitem()[1])
+            else:
+                keytype = type(list(data.keys())[0])
+                if keytype != str:
+                    def fieldname(key):
+                        return f'{keytype.__name__}{key}'.replace('.', '_')
+                else:
+                    def fieldname(key):
+                        return key.replace('.', '_')
+                data = {fieldname(key): construct_dict(value)
+                        for key, value in data.items()}
+        elif type(data) == torch.Tensor:
+            data = data.numpy()
+        elif hasattr(data, '__len__'):
+            if len(data) == 1:
+                data = construct_dict(data[0])
+            else:
+                data = [construct_dict(item) for item in data]
 
-    contents = {key.replace('.', '_'): value.numpy()
-                for key, value in contents.items()}
+        return data
+
+    contents = torch.load(fname, map_location=torch.device('cpu'))
+    contents = construct_dict(contents)
 
     return contents
 
@@ -99,7 +119,7 @@ def open_pt(fname: str):
 def save_mat(fname: str, contents):
     if type(contents) != dict:  # make contents dict
         contents = {os.path.basename(fname).replace('.mat', ''): contents}
-    scio.savemat(fname, contents)
+    scio.savemat(fname, contents, long_field_names=True)
 
 
 def save_h5(fname: str, contents):
