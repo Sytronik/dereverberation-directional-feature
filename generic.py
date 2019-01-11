@@ -1,14 +1,12 @@
 """
 Generic type & functions for torch.Tensor and np.ndarray
 """
-from typing import Union, TypeVar, Sequence
+from typing import Sequence, TypeVar, Union
 
 import numpy as np
-from numpy import ndarray
-
 import torch
+from numpy import ndarray
 from torch import Tensor
-
 
 TensArr = TypeVar('TensArr', Tensor, ndarray)
 TensArrOrSeq = Union[TensArr, Sequence[TensArr]]
@@ -22,19 +20,14 @@ dict_cat_stack_fn = {(Tensor, 'cat'): torch.cat,
 
 
 def convert_dtype(dtype: type, pkg) -> type:
-    i_first = str(dtype).find('\'')
-    if i_first == -1:
-        if pkg == torch:
+    if hasattr(dtype, '__name__'):
+        if pkg == np:
             return dtype
         else:
-            str_dtype = str(dtype).split('.')[-1]
-            return eval(f'np.{str_dtype}')
+            return eval(f'torch.{dtype.__name__}')
     else:
-        if pkg == torch:
-            i_last = str(dtype).rfind('\'')
-            str_dtype = str(dtype)[i_first + 1:i_last]
-            str_dtype = str_dtype.split('.')[-1]
-            return eval(f'torch.{str_dtype}')
+        if pkg == np:
+            return eval(f'np.{str(dtype).split(".")[-1]}')
         else:
             return dtype
 

@@ -7,9 +7,9 @@ import deepdish as dd
 import numpy as np
 import torch
 
+import config as cfg
 import generic as gen
 from generic import TensArr
-import config as cfg
 
 
 class NormalizationBase(dd.util.Saveable, metaclass=ABCMeta):
