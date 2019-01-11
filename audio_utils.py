@@ -1,18 +1,18 @@
 from collections import OrderedDict as ODict
-from typing import Sequence, Union, Tuple
+from typing import Sequence, Tuple, Union
 
 import librosa
 import numpy as np
-from scipy.linalg import toeplitz
 import torch
 from matplotlib import pyplot as plt
+from scipy.linalg import toeplitz
 
-from normalize import LogInterface as LogModule
+import config as cfg
 import generic as gen
 from matlab_lib import PESQ_STOI
+from normalize import LogInterface as LogModule
 from pystoi.stoi import stoi
 from utils import arr2str
-import config as cfg
 
 
 # class SNRseg(nn.Module):
@@ -49,14 +49,15 @@ class Measurement:
                      PESQ_STOI='Measurement.calc_pesq_stoi',
                      )
 
-    pesq_stoi_module = PESQ_STOI()
+    pesq_stoi_module = None
 
     @staticmethod
     def calc_snrseg(y_clean: np.ndarray, y_est: np.ndarray,
-                    T_ys: Sequence[int] = (1,)) -> np.ndarray:
+                    T_ys: Sequence[int] = (0,)) -> np.ndarray:
         LIM_UPPER = 35. / 10.  # clip at 35 dB
         LIM_LOWER = -10. / 10.  # clip at -10 dB
         if len(T_ys) == 1 and y_clean.shape[0] != 1:
+            T_ys = (y_clean.shape[0],)
             y_clean = y_clean[np.newaxis, ...]
             y_est = y_est[np.newaxis, ...]
 
@@ -65,14 +66,14 @@ class Measurement:
             # T
             norm_clean = np.einsum(
                 'ftc,ftc->t',
-                *([item_clean[:, :T, :]] * 2)
+                *((item_clean[:, :T, :],) * 2)
             )
             norm_err = np.einsum(
                 'ftc,ftc->t',
-                *([item_est[:, :T, :] - item_clean[:, :T, :]] * 2)
+                *((item_est[:, :T, :] - item_clean[:, :T, :],) * 2)
             ) + np.finfo(np.float64).eps
 
-            snrseg = np.log10(norm_clean / norm_err + 1e-10)
+            snrseg = np.log10(norm_clean / norm_err + np.finfo(np.float64).eps)
             np.minimum(snrseg, LIM_UPPER, out=snrseg)
             np.maximum(snrseg, LIM_LOWER, out=snrseg)
             sum_result += snrseg.mean()
@@ -83,6 +84,8 @@ class Measurement:
     @classmethod
     def calc_pesq_stoi(cls, y_clean: np.ndarray, y_est: np.ndarray,
                        *args) -> Tuple[np.float64, np.float64]:
+        if not cls.pesq_stoi_module:
+            cls.pesq_stoi_module = PESQ_STOI()
         if y_clean.ndim == 1:
             y_clean = y_clean[np.newaxis, ...]
             y_est = y_est[np.newaxis, ...]
@@ -116,7 +119,11 @@ class Measurement:
     # def __getitem__(self, idx):
     #     return [self.__seq_values[metric][idx] for metric in self.__METRICS]
 
-    def average(self) -> 'ODict[str, torch.Tensor]':
+    def average(self):
+        """
+
+        :rtype: OrderedDict[str, torch.Tensor]
+        """
         return ODict([(metric, sum_ / self.__len)
                       for metric, sum_ in self.__sum_values.items()])
 
@@ -149,13 +156,10 @@ class Measurement:
     # measure_wav = Measurement('PESQ_STOI')
 
 
-def reconstruct_wave(power: np.ndarray, phase: np.ndarray,
-                     *, n_sample=-1, do_griffin_lim=False) -> Tuple[np.ndarray, int]:
-    power = power.squeeze()
+def reconstruct_wave(mag: np.ndarray, phase: np.ndarray,
+                     *, n_sample=-1, do_griffin_lim=False) -> np.ndarray:
+    mag = mag.squeeze()
     phase = phase.squeeze()
-
-    # power to mag
-    mag = np.sqrt(power, out=power)
 
     if do_griffin_lim:
         wave = griffin_lim(mag, phase, n_sample=n_sample, n_iter=cfg.N_GRIFFIN_LIM)
@@ -169,7 +173,7 @@ def reconstruct_wave(power: np.ndarray, phase: np.ndarray,
         wave /= max_amplitude
         print(f'wave is scaled by {max_amplitude} to prevent clipping.')
 
-    return wave, cfg.Fs
+    return wave
 
 
 def griffin_lim(mag: np.ndarray, phase: np.ndarray,
@@ -233,8 +237,17 @@ def delta(*data: gen.TensArr, axis: int, L=2) -> gen.TensArrOrSeq:
     return result if len(result) > 1 else result[0]
 
 
-def draw_spectrogram(data: gen.TensArr, power=True, show=False):
-    scale_factor = 10 if power else 20
+def draw_spectrogram(data: gen.TensArr, is_power=False, show=False, **kwargs):
+    """
+    
+    :param data: 
+    :param is_power: 
+    :param show: 
+    :param kwargs: vmin, vmax
+    :return: 
+    """
+
+    scale_factor = 10 if is_power else 20
     data = LogModule.log(data)
     data = data.squeeze()
     data *= scale_factor
@@ -244,7 +257,7 @@ def draw_spectrogram(data: gen.TensArr, power=True, show=False):
     plt.imshow(data,
                cmap=plt.get_cmap('CMRmap'),
                extent=(0, data.shape[1], 0, cfg.Fs//2),
-               origin='lower', aspect='auto')
+               origin='lower', aspect='auto', **kwargs)
     plt.xlabel('Frame Index')
     plt.ylabel('Frequency (Hz)')
     plt.colorbar()
