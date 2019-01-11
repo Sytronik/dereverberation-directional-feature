@@ -3,8 +3,6 @@ import io
 from datetime import datetime
 from typing import Dict
 
-import matlab
-import matlab.engine
 import numpy as np
 
 import shutil
@@ -12,6 +10,8 @@ import shutil
 
 class PESQ_STOI:
     def __init__(self):
+        import matlab
+        import matlab.engine
         self.eng = matlab.engine.start_matlab('-nojvm')
         self.eng.addpath(self.eng.genpath('.'))
         self.strio = io.StringIO()
