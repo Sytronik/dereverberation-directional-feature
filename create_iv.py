@@ -1,29 +1,25 @@
-from argparse import ArgumentParser
-from glob import glob
 # noinspection PyUnresolvedReferences
 import logging
 import multiprocessing as mp
 import os
 import time
-from typing import Tuple, NamedTuple, TypeVar, List
+from argparse import ArgumentParser
+from glob import glob
+from typing import List, NamedTuple, Tuple, TypeVar
 
 import cupy as cp
-
 import deepdish as dd
-
 import numpy as np
 import scipy.io as scio
 import scipy.signal as scsig
-
 import soundfile as sf
 
-import config as cfg
+from mypath import DICT_PATH
 
 NDArray = TypeVar('NDArray', np.ndarray, cp.ndarray)
 
-
 # manually select
-N_CUDA_DEV = len(cfg.CUDA_DEVICES)
+N_CUDA_DEV = 4
 FORM = '%04d_%02d.h5'
 L_WIN_MS = 32.
 HOP_RATIO = 0.5
@@ -110,11 +106,13 @@ def calc_intensity(Asv: NDArray,
     aug4 = (bn_sel_4_0 * seltriag(Vv, 1, (0, 0)) * seltriag(Asv, 1, (-1, 0))
             + bn_sel_4_1 * seltriag(Vv, 1, (1, 0)) * seltriag(Asv, 1, (1, 0)))
 
-    dx = (aug1.conj() * (aug2 + aug3) / 2).sum(axis=0)
-    dy = (aug1.conj() * (aug2 - aug3) / 2j).sum(axis=0)
-    dz = (aug1.conj() * aug4).sum(axis=0)
+    aug1 = aug1.conj()
+    intensity = xp.empty((aug1.shape[1], 3))
+    intensity[:, 0] = xp.real(xp.einsum('mf,mf->f', aug1, aug2 + aug3) / 2)
+    intensity[:, 1] = xp.real(xp.einsum('mf,mf->f', aug1, aug2 - aug3) / 2j)
+    intensity[:, 2] = xp.real(xp.einsum('mf,mf->f', aug1, aug4))
 
-    return 0.5 * xp.real(xp.stack((dx, dy, dz), axis=1))
+    return 0.5 * intensity
 
 
 if __name__ == '__main__':
@@ -125,17 +123,19 @@ if __name__ == '__main__':
     ARGS = parser.parse_args()
 
     # Paths
-    DIR_DATA = cfg.DICT_PATH['root']
-    DIR_IV = cfg.DICT_PATH[f'iv_{ARGS.kind_data.lower()}']
+    DIR_DATA = DICT_PATH['root']
+    DIR_IV = DICT_PATH[f'iv_{ARGS.kind_data.lower()}']
     if not os.path.exists(DIR_IV):
         os.makedirs(DIR_IV)
-    DIR_WAVFILE = cfg.DICT_PATH[f'wav_{ARGS.kind_data.lower()}']
+    DIR_WAVFILE = DICT_PATH[f'wav_{ARGS.kind_data.lower()}']
 
     # RIR Data
     transfer_dict = scio.loadmat(os.path.join(DIR_DATA, 'RIR_Ys.mat'), squeeze_me=True)
     RIRs = transfer_dict[f'RIR_{ARGS.kind_data}'].transpose((2, 0, 1))
     N_LOC, N_MIC, L_RIR = RIRs.shape
     Ys = transfer_dict[f'Ys_{ARGS.kind_data}'].T
+
+    t_peak = np.round(RIRs.argmax(axis=2).mean(axis=1)).astype(int)
 
     # RIRs_0 = scio.loadmat(os.path.join(DIR_DATA, 'RIR_0_order.mat'),
     #                       variable_names='RIR_'+ARGS.kind_data)
@@ -144,23 +144,21 @@ if __name__ == '__main__':
     # SFT Data
     sft_dict = scio.loadmat(
         os.path.join(DIR_DATA, 'sft_data.mat'),
-        variable_names=('bmn_ka', 'bEQf', 'Yenc', 'Wnv', 'Wpv', 'Vv'),
+        variable_names=('bmn_ka', 'Yenc', 'Wnv', 'Wpv', 'Vv'),
         squeeze_me=True
     )
-
-    bEQf = sft_dict['bEQf'].T
     bnkr = sft_dict['bmn_ka'].T
     N_fft = (bnkr.shape[1] - 1) * 2
     N_freq = bnkr.shape[1]
 
-    bn_sel2_0 = seltriag(bEQf, 1, (1, -1)) * seltriag(bnkr, 1, (0, 0))
-    bn_sel2_1 = seltriag(bEQf, 1, (-1, -1)) * seltriag(bnkr, 1, (0, 0))
+    bn_sel2_0 = seltriag(1. / bnkr, 1, (1, -1)) * seltriag(bnkr, 1, (0, 0))
+    bn_sel2_1 = seltriag(1. / bnkr, 1, (-1, -1)) * seltriag(bnkr, 1, (0, 0))
 
-    bn_sel3_0 = seltriag(bEQf, 1, (-1, 1)) * seltriag(bnkr, 1, (0, 0))
-    bn_sel3_1 = seltriag(bEQf, 1, (1, 1)) * seltriag(bnkr, 1, (0, 0))
+    bn_sel3_0 = seltriag(1. / bnkr, 1, (-1, 1)) * seltriag(bnkr, 1, (0, 0))
+    bn_sel3_1 = seltriag(1. / bnkr, 1, (1, 1)) * seltriag(bnkr, 1, (0, 0))
 
-    bn_sel_4_0 = seltriag(bEQf, 1, (-1, 0)) * seltriag(bnkr, 1, (0, 0))
-    bn_sel_4_1 = seltriag(bEQf, 1, (1, 0)) * seltriag(bnkr, 1, (0, 0))
+    bn_sel_4_0 = seltriag(1. / bnkr, 1, (-1, 0)) * seltriag(bnkr, 1, (0, 0))
+    bn_sel_4_1 = seltriag(1. / bnkr, 1, (1, 0)) * seltriag(bnkr, 1, (0, 0))
 
     Yenc = sft_dict['Yenc'].T
     Wnv = sft_dict['Wnv'].astype(complex)
@@ -172,7 +170,7 @@ if __name__ == '__main__':
         bn_sel2_0, bn_sel2_1, bn_sel3_0, bn_sel3_1, bn_sel_4_0, bn_sel_4_1
     )
 
-    del (sft_dict, bEQf, Yenc, Wnv, Wpv, Vv, bnkr,
+    del (sft_dict, Yenc, Wnv, Wpv, Vv, bnkr,
          bn_sel2_0, bn_sel2_1, bn_sel3_0, bn_sel3_1, bn_sel_4_0, bn_sel_4_1)
 
     f_metadata = os.path.join(DIR_IV, 'metadata.h5')
@@ -185,7 +183,7 @@ if __name__ == '__main__':
 def process():
     global Fs, N_freq, L_hop, win, N_wavfile, L_frame, N_fft
 
-    N_CORES = N_LOC if N_LOC < mp.cpu_count() else mp.cpu_count() // 4
+    N_CORES = N_LOC if N_LOC < mp.cpu_count() else mp.cpu_count() // N_CUDA_DEV
     n_loc_per_core = int(np.ceil(N_LOC // N_CORES))
 
     max_n_pool = 1
@@ -224,13 +222,6 @@ def process():
         else:
             data, _ = sf.read(fname)
 
-        if data.shape[0] % L_hop:
-            data = np.append(data, np.zeros(L_hop - data.shape[0] % L_hop))
-
-        # print(fname)
-        N_frame_free = data.shape[0] // L_hop - 1
-        N_frame_room = int(np.ceil((data.shape[0] + L_RIR - 1) / L_hop) - 1)
-
         # logger = mp.log_to_stderr()  # debugging subprocess
         # logger.setLevel(mp.SUBDEBUG)  # debugging subprocess
         pools.append(mp.Pool(N_CORES))
@@ -242,10 +233,8 @@ def process():
             range_loc = range(start_idx, end_idx)
 
             pools[-1].apply_async(
-                save_IV, (i_proc % N_CUDA_DEV,
-                          data, N_frame_free, N_frame_room,
-                          range_loc,
-                          fname, N_wavfile + 1)
+                save_IV,
+                (i_proc % N_CUDA_DEV, data, range_loc, fname, N_wavfile + 1)
             )
 
         pools[-1].close()
@@ -254,15 +243,12 @@ def process():
         # for i_proc in range(N_CORES):
         #     if (i_proc + 1) * n_loc_per_core <= N_LOC:
         #         range_loc = range(i_proc * n_loc_per_core,
-        #                           (i_proc+1) * n_loc_per_core)
+        #                           (i_proc + 1) * n_loc_per_core)
         #     elif i_proc * n_loc_per_core < N_LOC:
         #         range_loc = range(i_proc * n_loc_per_core, N_LOC)
         #     else:
         #         break
-        #     save_IV(i_proc % N_CUDA_DEV,
-        #             data, N_frame_free, N_frame_room,
-        #             range_loc,
-        #             fname, N_wavfile + 1)
+        #     save_IV(i_proc % N_CUDA_DEV, data, range_loc, fname, N_wavfile + 1)
 
         if (N_wavfile - idx_start) % max_n_pool == max_n_pool - 2:
             for pool in pools:
@@ -280,28 +266,27 @@ def process():
     print_save_info()
 
 
-def save_IV(i_dev: int,
-            data_np: NDArray, N_frame_free: int, N_frame_room: int,
-            range_loc: iter,
-            fname_wav: str, *args):
-    global win, Ys, L_frame, N_fft, sftdata, N_freq, FORM
-    """
-    Save IV files.
+def save_IV(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *args):
+    """ Save IV files.
 
-    i_dev: GPU Device No.
-    data_np: original wave data
-    N_frame_free / N_frame_room: Total number of frames
-    range_loc: RIR Index Range(S/M Location Index Range)
-    args: format string arguments
+    :param i_dev: GPU Device No.
+    :param data_np: original wave data
+    :param range_loc: RIR Index Range(S/M Location Index Range)
+    :param fname_wav: the file path of the original wave(data_np)
+    :param args: format string arguments
 
-    return: None
+    :return: None
     """
-    # CUDA Ready
+
+    global win, Ys, L_frame, N_fft, sftdata, N_freq, FORM, L_RIR, L_hop, t_peak
+    # Ready CUDA
     cp.cuda.Device(i_dev).use()
     win_cp = cp.array(win)
     Ys_cp = cp.array(Ys)
     sftdata_cp = SFTData(*[cp.array(item) for item in sftdata])
-    data = cp.array(data_np)
+    # data = cp.array(data_np)
+
+    N_frame_room = int(np.ceil((data_np.shape[0] + L_RIR - 1) / L_hop) - 1)
 
     for i_loc in range_loc:
         # RIR Filtering
@@ -312,12 +297,18 @@ def save_IV(i_dev: int,
                 np.zeros((data_room.shape[0], L_hop - data_room.shape[1] % L_hop)),
                 axis=1
             )
-
         # fname = '%04d_%02d_room.wav' % (*args, i_loc)
         # sf.write(os.path.join(DIR_IV, fname), data_room.T, Fs)
         # print(fname)
-
         data_room = cp.array(data_room)
+
+        # Time shift
+        data = np.append(np.zeros(t_peak[i_loc]), data_np)
+        if data.shape[0] % L_hop:
+            data = np.append(data, np.zeros(L_hop - data.shape[0] % L_hop))
+        data = cp.array(data)
+
+        N_frame_free = data.shape[0] // L_hop - 1
 
         # data_0 \
         #     = cp.array(scsig.fftconvolve(cp.asnumpy(data.reshape(1, -1)),
@@ -343,13 +334,12 @@ def save_IV(i_dev: int,
         phase_free = cp.empty((N_freq, N_frame_free, 1))
         for i_frame in range(N_frame_free):
             interval = i_frame * L_hop + np.arange(L_frame)
-            anm = cp.fft.rfft(anm_time[:, interval] * win_cp, n=N_fft)
+            anm = cp.fft.fft(anm_time[:, interval] * win_cp, n=N_fft)[:, :N_freq]
             pnm = anm * sftdata_cp.bnkr
 
             iv_free[:, i_frame, :3] = calc_intensity(
                 pnm, *sftdata_cp.get_for_intensity()
             )
-            # iv_free[:, i_frame, 3] = cp.sum(cp.abs(pnm[:, :N_freq])**2, axis=0)
             iv_free[:, i_frame, 3] = cp.abs(pnm[0])**2
             phase_free[:, i_frame, 0] = cp.angle(pnm[0])
 
@@ -360,7 +350,7 @@ def save_IV(i_dev: int,
         phase_room = cp.empty((N_freq, N_frame_room, 1))
         for i_frame in range(N_frame_room):
             interval = i_frame * L_hop + np.arange(L_frame)
-            pnm = cp.fft.rfft(pnm_time[:, interval] * win_cp, n=N_fft)
+            pnm = cp.fft.fft(pnm_time[:, interval] * win_cp, n=N_fft)[:, :N_freq]
 
             iv_room[:, i_frame, :3] = calc_intensity(
                 pnm, *sftdata_cp.get_for_intensity()
@@ -395,7 +385,7 @@ def print_save_info():
 
     metadata = dict(N_wavfile=N_wavfile,
                     Fs=Fs,
-                    # N_fft=N_fft,
+                    N_fft=N_fft,
                     N_freq=N_freq,
                     L_frame=L_frame,
                     L_hop=L_hop,
