@@ -40,9 +40,12 @@ model_name = ARGS.model_name[0]
 DIR_TRAIN = os.path.join(cfg.DICT_PATH[model_name], 'train')
 if not os.path.isdir(DIR_TRAIN):
     os.makedirs(DIR_TRAIN)
-DIR_TEST = os.path.join(DIR_TRAIN, ARGS.test)
-if not os.path.isdir(DIR_TEST):
-    os.makedirs(DIR_TEST)
+if ARGS.test:
+    DIR_TEST = os.path.join(cfg.DICT_PATH[model_name], ARGS.test)
+    if not os.path.isdir(DIR_TEST):
+        os.makedirs(DIR_TEST)
+else:
+    DIR_TEST = ''
 
 # epoch, state dict
 FIRST_EPOCH = ARGS.epoch[0] + 1
@@ -94,7 +97,7 @@ trainer = Trainer('UNet')
 if ARGS.train:
     # noinspection PyProtectedMember
     dd.io.save(os.path.join(DIR_TRAIN, cfg.F_HPARAMS), dict(cfg.hp._asdict()))
-    trainer.train(loader_train, loader_valid, FIRST_EPOCH, F_STATE_DICT)
+    trainer.train(loader_train, loader_valid, DIR_TRAIN, FIRST_EPOCH, F_STATE_DICT)
 elif ARGS.test:
     loader = loader_valid if ARGS.test == 'valid' else loader_test
     trainer.test(loader, DIR_TEST, F_STATE_DICT)

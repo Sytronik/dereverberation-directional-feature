@@ -82,7 +82,7 @@ class Trainer:
                                           item_y[:, :, :T - 4 * i_dyn]))
         return loss
 
-    def train(self, loader_train: DataLoader, loader_valid: DataLoader, dir_result,
+    def train(self, loader_train: DataLoader, loader_valid: DataLoader, dir_result: str,
               first_epoch=0, f_state_dict=''):
         f_prefix = os.path.join(dir_result, f'{self.model_name}_')
         # Optimizer
@@ -147,11 +147,10 @@ class Trainer:
                 # ===================backward====================
                 optimizer.zero_grad()
                 loss.backward()
-                # grads = torch.cat([p.grad.view(-1) for p in self.model.parameters()])
-                # self.writer.add_histogram('grad',
-                #                           grads, epoch*len(loader_train)+i_iter,
-                #                           bins='auto')
-                # del grads
+                if epoch == 0:
+                    gradnorm = nn.utils.clip_grad_norm_(self.model.parameters(), 10**5)
+                    self.writer.add_scalar('grad', gradnorm, epoch*len(loader_train)+i_iter)
+                    del gradnorm
 
                 optimizer.step()
                 scheduler.batch_step()
@@ -362,7 +361,7 @@ class Trainer:
             return avg_loss.item()
 
     def test(self, loader: DataLoader, dir_result: str, f_state_dict: str):
-        self.model.load_state_dict(torch.load(f_state_dict)[0])
+        self.model.module.load_state_dict(torch.load(f_state_dict)[0])
         self.writer = SummaryWriter(dir_result)
         group = os.path.basename(dir_result)
         atexit.register(self.writer.close)
@@ -402,7 +401,8 @@ class Trainer:
                 measure = self.write_one(i_iter, out_one, group=group, **one_sample)
                 avg_measure += measure
 
-                print(f'{(i_iter + 1)/len(loader)*100}: {arr2str(measure)}')
+                str_measure = arr2str(measure).replace('\t', '\n')
+                print(f'{np.round((i_iter + 1)/len(loader)*100, 1)}: {str_measure}')
 
             self.model.train()
 
@@ -417,4 +417,4 @@ class Trainer:
 
         print(time.strftime('%H h %M m', time.gmtime(time.time() - t_start)))
         print()
-        print(arr2str(avg_measure))
+        print(arr2str(avg_measure).replace('\t', '\n'))

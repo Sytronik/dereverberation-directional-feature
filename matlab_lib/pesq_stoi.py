@@ -1,3 +1,6 @@
+import matlab
+import matlab.engine
+
 import atexit
 import io
 from datetime import datetime
@@ -10,8 +13,6 @@ import shutil
 
 class PESQ_STOI:
     def __init__(self):
-        import matlab
-        import matlab.engine
         self.eng = matlab.engine.start_matlab('-nojvm')
         self.eng.addpath(self.eng.genpath('.'))
         self.strio = io.StringIO()
