@@ -80,8 +80,11 @@ class IVDataset(Dataset):
             )
             scio.savemat(
                 f_normconst.replace('.h5', '.mat'),
-                {f'const_{idx}': const.squeeze()
-                 for idx, const in enumerate(self._normconst.consts)}
+                dict(all_files=self._all_files,
+                     **(self._normconst.save_to_dict(only_consts=True)
+                        if self._normconst else dict()
+                        )
+                     )
             )
 
         print(self._normconst)

@@ -63,11 +63,15 @@ class NormalizationBase(dd.util.Saveable, metaclass=ABCMeta):
 
         return [c[..., ch] if c.shape else c for c in islice(result, shft, None, 2)]
 
-    def save_to_dict(self) -> Dict:
+    def save_to_dict(self, only_consts=False) -> Dict:
         # return {k: a for k, a in self.__dict__.items()
         #         if not k.startswith('_')}
-        return {s: getattr(self, s) for s in self.__slots__
-                if hasattr(self, s) and not s.startswith('_')}
+        if only_consts:
+            return {f'const_{idx}': const.squeeze()
+                    for idx, const in enumerate(self.consts)}
+        else:
+            return {s: getattr(self, s) for s in self.__slots__
+                    if hasattr(self, s) and not s.startswith('_')}
 
     @classmethod
     def load_from_dict(cls, d: Dict):
@@ -257,7 +261,8 @@ class LogInterface:
         if a.shape[-1] == 4:
             r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
             log_r = pkg.log10((r + cls.EPS) / cls.EPS)
-            b[..., :3] = a[..., :3] * log_r / (r+cls.EPS)
+            b[..., :3] = a[..., :3] * log_r / (r + cls.EPS)
+
             b[..., 3] = pkg.log10((a[..., 3] + cls.EPS) / cls.EPS)
         else:
             b = pkg.log10((a + cls.EPS) / cls.EPS)
@@ -271,7 +276,8 @@ class LogInterface:
             r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
             log_r = pkg.log10((r + cls.EPS) / cls.EPS)
             a[..., :3] *= log_r
-            a[..., :3] /= (r+cls.EPS)
+            a[..., :3] /= (r + cls.EPS)
+
             a[..., 3] = pkg.log10((a[..., 3] + cls.EPS) / cls.EPS)
         else:
             pkg.log10((a + cls.EPS) / cls.EPS, out=a)
@@ -285,7 +291,8 @@ class LogInterface:
         if a.shape[-1] == 4:
             r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
             exp_r = cls.EPS * (10.**r - 1)
-            b[..., :3] = a[..., :3] * exp_r / (r+cls.EPS)
+            b[..., :3] = a[..., :3] * exp_r / (r + cls.EPS)
+
             b[..., 3] = cls.EPS * (10.**a[..., 3] - 1)
         else:
             b = cls.EPS * (10.**a - 1)
@@ -299,7 +306,8 @@ class LogInterface:
             r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
             exp_r = cls.EPS * (10.**r - 1)
             a[..., :3] *= exp_r
-            a[..., :3] /= (r+cls.EPS)
+            a[..., :3] /= (r + cls.EPS)
+
             a[..., 3] = cls.EPS * (10.**a[..., 3] - 1)
         else:
             a = cls.EPS * (10.**a - 1)
