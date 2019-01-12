@@ -14,6 +14,7 @@ _*.py
 __pycache__/
 **.py[cod]
 **$py.class
+_[^_]*.py
 
 .flake8
 
