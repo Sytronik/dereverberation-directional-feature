@@ -120,20 +120,25 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('kind_data', choices=('TRAIN', 'train', 'TEST', 'test'))
     parser.add_argument('--init', action='store_true')
+    parser.add_argument('--seen', action='store_true')
     ARGS = parser.parse_args()
+    assert not (ARGS.kind_data.lower() == 'train' and ARGS.seen)
 
     # Paths
     DIR_DATA = DICT_PATH['root']
     DIR_IV = DICT_PATH[f'iv_{ARGS.kind_data.lower()}']
+    if ARGS.seen:
+        DIR_IV += '_Seen'
     if not os.path.exists(DIR_IV):
         os.makedirs(DIR_IV)
     DIR_WAVFILE = DICT_PATH[f'wav_{ARGS.kind_data.lower()}']
 
     # RIR Data
     transfer_dict = scio.loadmat(os.path.join(DIR_DATA, 'RIR_Ys.mat'), squeeze_me=True)
-    RIRs = transfer_dict[f'RIR_{ARGS.kind_data}'].transpose((2, 0, 1))
+    kind_RIR = 'TRAIN' if ARGS.seen else ARGS.kind_data.upper()
+    RIRs = transfer_dict[f'RIR_{kind_RIR}'].transpose((2, 0, 1))
     N_LOC, N_MIC, L_RIR = RIRs.shape
-    Ys = transfer_dict[f'Ys_{ARGS.kind_data}'].T
+    Ys = transfer_dict[f'Ys_{kind_RIR}'].T
 
     t_peak = np.round(RIRs.argmax(axis=2).mean(axis=1)).astype(int)
     amp_peak = RIRs.max(axis=2).mean(axis=1)
