@@ -3,6 +3,7 @@ import csv
 import numpy as np
 import json
 import os
+from collections import defaultdict
 from argparse import ArgumentParser
 
 parser = ArgumentParser()
@@ -22,19 +23,30 @@ print()
 
 step = None
 measures = dict()
-title = ''
 col_title = ''
 
+common = defaultdict(lambda: 0)
 for fname in files:
+    fname = os.path.basename(fname)
+    fname = fname.replace('.json', '')
+
+    if not col_title:
+        col_title = fname.split('_')[2]
+
+    for item in fname.split('_'):
+        if '.' not in item:
+            common[item] += 1
+
+col_names = [k for k, v in common.items() if v == 1]
+title = ARGS.tag[0]
+
+for fname, col_name in zip(files, col_names):
     with open(fname) as f:
         data = json.loads(f.read())
         data = np.array(data)
-    fname = fname.replace('.json', '')
     if not step:  # and ARGS.title1:
         step = data[:, 1].tolist()
-        title = fname.split('_')[1] if ARGS.tag[0] == 'Proposed' else ARGS.tag[0]
-        col_title = fname.split('_')[2]
-    measures[fname.split('_')[-1]] = data[:, 2]
+    measures[col_name] = data[:, 2]
 
 
 wb = openpyxl.Workbook()
