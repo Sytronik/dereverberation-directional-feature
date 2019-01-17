@@ -47,7 +47,7 @@ class IVDataset(Dataset):
             shouldsave = False
         else:
             # search all data files
-            self._all_files = [f.path for f in os.scandir(self.__PATH) if cfg.isIVfile(f)]
+            self._all_files = [f.path for f in os.scandir(self.__PATH) if cfg.is_ivfile(f)]
             self._all_files = sorted(self._all_files)
             if n_file != -1:
                 if random_sample:
@@ -66,10 +66,6 @@ class IVDataset(Dataset):
                 )
         else:
             self._normconst = None
-
-        # if self._all_files[0].startswith('./Data'):
-        #     self._all_files = [fname.replace('./Data', './data') for fname in self._all_files]
-        #     shouldsave = True
 
         if shouldsave:
             dd.io.save(
@@ -153,7 +149,7 @@ class IVDataset(Dataset):
         return result
 
     @staticmethod
-    def save_IV(fname, **kwargs):
+    def save_iv(fname, **kwargs):
 
         scio.savemat(fname,
                      {cfg.IV_DATA_NAME[k][1:]: v
@@ -229,50 +225,3 @@ class IVDataset(Dataset):
             result[ii]._all_files = dataset._all_files[idx_data[ii]:idx_data[ii + 1]]
 
         return result
-
-
-# def delta_no_tplz(a, axis: int, L=2):
-#     dims = list(range(a.dim()))
-#     dims[0], dims[axis] = dims[axis], dims[0]
-#     a = a.permute(dims)
-#
-#     diffs = [l*(a[2*l:] - a[:-2*l])[2*(L-l):len(a)-2*(L-l)]
-#              for l in range(1, L+1)]
-#     a = sum(diffs) / (sum([l**2 for l in range(1, L+1)]) * 2)
-#     a = a.permute(dims)
-#     return a
-
-
-# DICT_IDX = {
-#     'I': range(0, 3),
-#     'a': range(-1, 0),
-#     'all': range(0, 4),
-# }
-#
-#
-# def norm_iv(data: TensArr,
-#             reduced_axis=(-3, -1),
-#             parts: Union[str, Sequence[str]] = 'all') -> TensArr:
-#     dim = gen.ndim(data)
-#     assert dim == 3 or dim == 4
-#
-#     if data.shape[-1] == 1:
-#         parts = ('a',)
-#     else:
-#         parts = (parts,) if type(parts) == str else parts
-#
-#     for part in parts:
-#         assert part in DICT_IDX
-#
-#     str_axes = 'bftc' if dim == 4 else 'ftc'
-#     str_new_axes = str_axes
-#     for a in reduced_axis:
-#         str_new_axes = str_new_axes.replace(str_axes[a], '')
-#
-#     ein_expr = f'{str_axes},{str_axes}->{str_new_axes}'
-#
-#     result = [type(data)] * len(parts)
-#     for idx, part in enumerate(parts):
-#         result[idx] = gen.einsum(ein_expr, (data[..., DICT_IDX[part]],) * 2)
-#
-#     return gen.stack(result)

@@ -27,9 +27,10 @@ class HyperParameters(NamedTuple):
     CHANNELS = dict(x='all', y='alpha',
                     fname_wav=False,
                     )
+    CH_BASE = 32
 
     n_epochs = 310
-    batch_size = 4 * 9
+    batch_size = len(CUDA_DEVICES) * 9
     learning_rate = 5e-4
     n_file = 20 * 500
 
@@ -47,7 +48,7 @@ class HyperParameters(NamedTuple):
                                 eta_threshold=1.5,
                                 )
 
-    weight_decay = 1e-8  # Adam weight_decay
+    weight_decay = 1e-5  # Adam weight_decay
 
     weight_loss = (1, 0.7, 0.5)
 
@@ -60,7 +61,7 @@ class HyperParameters(NamedTuple):
     def get_for_UNet(self) -> Tuple:
         ch_in = 4 if self.CHANNELS['x'] == 'all' else 1
         ch_out = 4 if self.CHANNELS['y'] == 'all' else 1
-        return ch_in, ch_out
+        return ch_in, ch_out, self.CH_BASE
 
 
 hp = HyperParameters()
@@ -113,7 +114,7 @@ CH_SLICES = {'all': dd.aslice[:, :, :],
              }
 
 
-def isIVfile(f: os.DirEntry) -> bool:
+def is_ivfile(f: os.DirEntry) -> bool:
     return (f.name.endswith('.h5')
             and not f.name.startswith('metadata')
             and not f.name.startswith('normconst_'))

@@ -64,42 +64,41 @@ dataset_train, dataset_valid = IVDataset.split(dataset_temp, (0.7, -1))
 dataset_train.set_needs(**cfg.hp.CHANNELS)
 dataset_valid.set_needs(**cfg.CH_WITH_PHASE)
 
-# Test Set
-dataset_test = IVDataset('test', n_file=cfg.hp.n_file // 4,
-                         random_sample=True, **cfg.CH_WITH_PHASE)
-dataset_test.normalize_on_like(dataset_temp)
-del dataset_temp
-
-# DataLoader
-loader_train = DataLoader(dataset_train,
-                          batch_size=cfg.hp.batch_size,
-                          shuffle=True,
-                          num_workers=ARGS.num_workers,
-                          collate_fn=dataset_train.pad_collate,
-                          )
 loader_valid = DataLoader(dataset_valid,
                           batch_size=cfg.hp.batch_size if ARGS.train else 1,
                           shuffle=False,
                           num_workers=ARGS.num_workers,
                           collate_fn=dataset_valid.pad_collate,
                           )
-loader_test = DataLoader(dataset_test,
-                         batch_size=1,
-                         shuffle=False,
-                         num_workers=ARGS.num_workers,
-                         collate_fn=dataset_test.pad_collate,
-                         )
 
 # trainer
 trainer = Trainer('UNet')
 
 # run
 if ARGS.train:
+    loader_train = DataLoader(dataset_train,
+                              batch_size=cfg.hp.batch_size,
+                              shuffle=True,
+                              num_workers=ARGS.num_workers,
+                              collate_fn=dataset_train.pad_collate,
+                              )
     # noinspection PyProtectedMember
     dd.io.save(os.path.join(DIR_TRAIN, cfg.F_HPARAMS), dict(cfg.hp._asdict()))
     trainer.train(loader_train, loader_valid, DIR_TRAIN, FIRST_EPOCH, F_STATE_DICT)
 elif ARGS.test:
-    loader = loader_valid if ARGS.test == 'valid' else loader_test
+    if ARGS.test == 'valid':
+        loader = loader_valid
+    else:
+        # Test Set
+        dataset_test = IVDataset('test', n_file=cfg.hp.n_file // 4,
+                                 random_sample=True, **cfg.CH_WITH_PHASE)
+        dataset_test.normalize_on_like(dataset_temp)
+        loader = DataLoader(dataset_test,
+                            batch_size=1,
+                            shuffle=False,
+                            num_workers=ARGS.num_workers,
+                            collate_fn=dataset_test.pad_collate,
+                            )
     trainer.test(loader, DIR_TEST, F_STATE_DICT)
 else:
     raise ArgumentError
