@@ -136,6 +136,7 @@ if __name__ == '__main__':
     Ys = transfer_dict[f'Ys_{ARGS.kind_data}'].T
 
     t_peak = np.round(RIRs.argmax(axis=2).mean(axis=1)).astype(int)
+    amp_peak = RIRs.max(axis=2).mean(axis=1)
 
     # RIRs_0 = scio.loadmat(os.path.join(DIR_DATA, 'RIR_0_order.mat'),
     #                       variable_names='RIR_'+ARGS.kind_data)
@@ -302,8 +303,8 @@ def save_IV(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *a
         # print(fname)
         data_room = cp.array(data_room)
 
-        # Time shift
-        data = np.append(np.zeros(t_peak[i_loc]), data_np)
+        # Propagation
+        data = np.append(np.zeros(t_peak[i_loc]), data_np*amp_peak[i_loc])
         if data.shape[0] % L_hop:
             data = np.append(data, np.zeros(L_hop - data.shape[0] % L_hop))
         data = cp.array(data)
