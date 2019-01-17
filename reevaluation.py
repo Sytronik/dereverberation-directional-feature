@@ -61,7 +61,7 @@ for idx, file in enumerate(iv_files):
     tt = time.strftime('(%Ss)', time.gmtime(time.time() - t_start))
     print(f'{(idx + 1) / len(iv_files) * 100:5.2f}%: {str_measure}\t{tt}')
 
-    avg_measure /= len(iv_files)
+avg_measure /= len(iv_files)
 
 writer.add_text(f'{group}/Average Measure/Proposed', str(avg_measure[0]))
 writer.add_text(f'{group}/Average Measure/Reverberant', str(avg_measure[1]))
