@@ -1,30 +1,37 @@
-import matlab
-import matlab.engine
+try:
+    import matlab
+    import matlab.engine
+finally:
+    pass
 
 import atexit
 import io
+from collections import OrderedDict as ODict
 from datetime import datetime
+import shutil
 from typing import Dict
 
 import numpy as np
 
-import shutil
 
+class Evaluation:
+    exist_instance = False
 
-class PESQ_STOI:
     def __init__(self):
+        assert not self.exist_instance
         self.eng = matlab.engine.start_matlab('-nojvm')
         self.eng.addpath(self.eng.genpath('.'))
         self.strio = io.StringIO()
         atexit.register(self._exit)
+        self.exist_instance = True
 
-    def __call__(self, clean: np.ndarray, noisy: np.ndarray, fs: int) -> Dict[str, float]:
+    def __call__(self, clean: np.ndarray, noisy: np.ndarray, fs: int) -> ODict:
         clean = matlab.double(clean.tolist())
         noisy = matlab.double(noisy.tolist())
         fs = matlab.double([fs])
-        pesq, stoi = self.eng.se_eval(clean, noisy, fs, nargout=2, stdout=self.strio)
+        fwsegsnr, pesq, stoi = self.eng.se_eval(clean, noisy, fs, nargout=3, stdout=self.strio)
 
-        return dict(PESQ=pesq, STOI=stoi)
+        return ODict([('fwSegSNR', fwsegsnr), ('PESQ', pesq), ('STOI', stoi)])
 
     def _exit(self):
         self.eng.quit()

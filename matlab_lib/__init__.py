@@ -1,1 +1,1 @@
-from .pesq_stoi import PESQ_STOI
+from .eval import Evaluation
