@@ -20,7 +20,8 @@ parser.add_argument(
     '--train', action='store_true',
 )
 parser.add_argument(
-    '--test', type=str, nargs='?', const='test', metavar='DATASET',
+    '--test', type=str, nargs='?', const='unseen', choices=('valid', 'seen', 'unseen'),
+    metavar='DATASET'
 )
 parser.add_argument(
     '--from', type=int, nargs=1, default=(-1,),
@@ -31,6 +32,8 @@ parser.add_argument(
     dest='num_workers',
 )  # number of cpu threads for dataloaders
 ARGS = parser.parse_args()
+del parser
+
 if ARGS.epoch[0] < -1:
     raise ArgumentError
 
@@ -90,8 +93,8 @@ elif ARGS.test:
         loader = loader_valid
     else:
         # Test Set
-        dataset_test = IVDataset('test', n_file=cfg.hp.n_file // 4,
-                                 random_sample=True, **cfg.CH_WITH_PHASE)
+        dataset_test = IVDataset(ARGS.test, n_file=cfg.hp.n_file // 4,
+                                 random_by_utterance=False, **cfg.CH_WITH_PHASE)
         dataset_test.normalize_on_like(dataset_temp)
         loader = DataLoader(dataset_test,
                             batch_size=1,
@@ -99,6 +102,7 @@ elif ARGS.test:
                             num_workers=ARGS.num_workers,
                             collate_fn=dataset_test.pad_collate,
                             )
+
     trainer.test(loader, DIR_TEST, F_STATE_DICT)
 else:
     raise ArgumentError

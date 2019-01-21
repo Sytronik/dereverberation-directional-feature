@@ -15,13 +15,9 @@ OUT_CUDA_DEV = 1
 
 # Files
 F_HPARAMS = 'hparams.h5'
-F_NORMCONST = 'normconst_{}_log_meanstd.h5'
 
 
 class HyperParameters(NamedTuple):
-    """
-    Hyper Parameters of NN
-    """
     # n_per_frame: int
 
     CHANNELS = dict(x='all', y='alpha',
@@ -30,7 +26,7 @@ class HyperParameters(NamedTuple):
     CH_BASE = 32
 
     n_epochs = 310
-    batch_size = len(CUDA_DEVICES) * 9
+    batch_size = len(CUDA_DEVICES) * 5
     learning_rate = 5e-4
     n_file = 20 * 500
 
@@ -74,22 +70,39 @@ criterion = nn.MSELoss(reduction='sum')
 N_GRIFFIN_LIM = 20
 
 # metadata
-f_metadata = os.path.join(DICT_PATH['iv_train'], 'metadata.h5')
-if os.path.isfile(f_metadata):
-    metadata = dd.io.load(f_metadata)
+_f_metadata = os.path.join(DICT_PATH['iv_train'], 'metadata.h5')
+if os.path.isfile(_f_metadata):
+    metadata = dd.io.load(_f_metadata)
     # all_files = metadata['path_wavfiles']
     L_hop = int(metadata['L_hop'])
     # N_freq = int(metadata['N_freq'])
-    # N_LOC = int(metadata['N_LOC'])
+    _N_LOC_TRAIN = int(metadata['N_LOC'])
     Fs = int(metadata['Fs'])
     N_fft = L_hop * 2
-    del metadata
 
     # STFT/iSTFT arguments
     kwargs = dict(hop_length=L_hop, window='hann', center=True)
     KWARGS_STFT = dict(**kwargs, n_fft=N_fft, dtype=np.complex128)
     KWARGS_ISTFT = dict(**kwargs, dtype=np.float64)
     del kwargs
+
+_f_metadata = os.path.join(DICT_PATH['iv_seen'], 'metadata.h5')
+if os.path.isfile(_f_metadata):
+    metadata = dd.io.load(_f_metadata)
+    _N_LOC_SEEN = int(metadata['N_LOC'])
+
+_f_metadata = os.path.join(DICT_PATH['iv_unseen'], 'metadata.h5')
+if os.path.isfile(_f_metadata):
+    metadata = dd.io.load(_f_metadata)
+    _N_LOC_UNSEEN = int(metadata['N_LOC'])
+
+    del metadata
+
+try:
+    # noinspection PyUnboundLocalVariable
+    N_LOC = dict(train=_N_LOC_TRAIN, seen=_N_LOC_SEEN, unseen=_N_LOC_UNSEEN)
+except NameError:
+    print('Cannot get N_LOC')
 
 # bEQspec
 sft_dict = scio.loadmat(DICT_PATH['sft_data'],

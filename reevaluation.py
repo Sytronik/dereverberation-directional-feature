@@ -17,22 +17,11 @@ TITLE = f'iter{cfg.N_GRIFFIN_LIM}'
 
 parser = ArgumentParser()
 parser.add_argument(
-    '--test', action='store_true',
-)
-parser.add_argument(
-    '--valid', action='store_true',
+    'kind_data', type=str, nargs=1, choices=('valid', 'seen', 'unseen'),
 )
 ARGS = parser.parse_args()
-if ARGS.test:
-    if ARGS.valid:
-        raise ArgumentError
-    else:
-        group = 'test'
-else:
-    if ARGS.valid:
-        group = 'valid'
-    else:
-        group = 'test'
+del parser
+group = ARGS.kind_data[0]
 
 DIR_MODEL = './result/UNet 19-01-14 (amp fix)'
 DIR_ORIGINAL = os.path.join(DIR_MODEL, group)

@@ -17,44 +17,51 @@ import normalize
 
 class IVDataset(Dataset):
     """
-    <Instance Variable>
+    <Instance Variables>
     (not splitted)
-    __PATH
-    __needs
-    __normconst
+    _PATH
+    _needs
+    _normconst
 
     (to be splitted)
     _all_files
     """
 
-    __slots__ = ('__PATH', '__needs', '_normconst', '_all_files')
+    __slots__ = ('_PATH', '_needs', '_normconst', '_all_files')
 
     def __init__(self, kind_data: str,
-                 n_file=-1, random_sample=True, norm_class=None, **kwargs):
-        self.__PATH = cfg.DICT_PATH[f'iv_{kind_data}']
-        self.__needs = dict(x='all', y='alpha',
-                            x_phase=False, y_phase=False,
-                            fname_wav=True)
+                 n_file=-1, random_by_utterance=False, norm_class=None, **kwargs):
+        self._PATH = cfg.DICT_PATH[f'iv_{kind_data}']
+        self._needs = dict(x='all', y='alpha',
+                           x_phase=False, y_phase=False,
+                           fname_wav=True)
         self.set_needs(**kwargs)
 
         # f_normconst: The name of the file
         # that has information about data file list, mean, std, ...
-        self._all_files: List[str]
-        f_normconst = os.path.join(self.__PATH, cfg.F_NORMCONST.format(n_file))
+        f_normconst = cfg.DICT_PATH[f'normconst_{kind_data}'].format(n_file)
 
         if os.path.isfile(f_normconst):
-            self._all_files, normconst = dd.io.load(f_normconst)
+            _all_files, normconst = dd.io.load(f_normconst)
             shouldsave = False
         else:
             # search all data files
-            self._all_files = [f.path for f in os.scandir(self.__PATH) if cfg.is_ivfile(f)]
-            self._all_files = sorted(self._all_files)
+            _all_files = [f.name for f in os.scandir(self._PATH) if cfg.is_ivfile(f)]
+            _all_files = sorted(_all_files)
             if n_file != -1:
-                if random_sample:
-                    self._all_files = np.random.permutation(self._all_files)
-                self._all_files = self._all_files[:n_file]
+                if random_by_utterance:
+                    utterances = np.random.randint(len(_all_files) // cfg.N_LOC[kind_data],
+                                                   size=n_file // cfg.N_LOC[kind_data])
+                    utterances = [f'{u:4d}_' for u in utterances]
+                    _all_files = [f for f in _all_files if f.startswith(utterances)]
+                else:
+                    _all_files = np.random.permutation(_all_files)
+                    _all_files = _all_files[:n_file]
             shouldsave = True
             normconst = None
+
+        _all_files = [os.path.join(self._PATH, f) for f in _all_files]
+        self._all_files = [f for f in _all_files if os.path.isfile(f)]
 
         if norm_class:
             norm_class = eval(f'normalize.{norm_class}')
@@ -68,15 +75,16 @@ class IVDataset(Dataset):
             self._normconst = None
 
         if shouldsave:
+            basenames = [os.path.basename(f) for f in self._all_files]
             dd.io.save(
                 f_normconst,
-                (self._all_files,
+                (basenames,
                  self._normconst.save_to_dict() if self._normconst else None,
                  )
             )
             scio.savemat(
                 f_normconst.replace('.h5', '.mat'),
-                dict(all_files=self._all_files,
+                dict(all_files=basenames,
                      **(self._normconst.save_to_dict(only_consts=True)
                         if self._normconst else dict()
                         )
@@ -84,14 +92,14 @@ class IVDataset(Dataset):
             )
 
         print(self._normconst)
-        print(f'{n_file} files prepared from {os.path.basename(self.__PATH)}.')
+        print(f'{len(self._all_files)} files prepared from {kind_data.upper()}.')
 
     def __len__(self):
         return len(self._all_files)
 
     def __getitem__(self, idx: int):
         sample = dict()
-        for k, v in self.__needs.items():
+        for k, v in self._needs.items():
             if v:
                 data = dd.io.load(self._all_files[idx],
                                   group=cfg.IV_DATA_NAME[k],
@@ -172,11 +180,11 @@ class IVDataset(Dataset):
                             x_phase: str, y_phase: str)
         :return:
         """
-        for k in self.__needs:
+        for k in self._needs:
             if k in kwargs:
                 assert (kwargs[k] == 'all' or kwargs[k] == 'alpha'
                         or type(kwargs[k]) == bool)
-                self.__needs[k] = kwargs[k]
+                self._needs[k] = kwargs[k]
 
     def normalize(self, a: TensArr, xy: str) -> TensArr:
         return self._normconst.normalize(a, xy)
