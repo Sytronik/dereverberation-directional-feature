@@ -250,6 +250,10 @@ class Trainer:
         avg_loss = torch.zeros(1, device=cfg.OUT_CUDA_DEV)
 
         self.writer = CustomWriter(dir_result, purge_step=first_epoch)
+        # self.writer.add_graph(self.model.module.cpu(),
+        #                       torch.zeros(1, cfg.hp.get_for_UNet()[0], 256, 256),
+        #                       True,
+        #                       )
 
         # Start Training
         for epoch in range(first_epoch, cfg.hp.n_epochs):
