@@ -27,12 +27,16 @@ class CustomWriter(SummaryWriter):
         self.measure_x = dict()
         self.kwargs_fig = dict()
 
-    def write_one(self, step: int, out: np.ndarray = None, group='', **kwargs) -> np.ndarray:
+    def write_one(self, step: int, group='',
+                  out: np.ndarray = None, out_phase: np.ndarray = None,
+                  eval_with_y_ph=False, **kwargs) -> np.ndarray:
         """ write summary about one sample of output(and x and y optionally).
 
         :param step:
-        :param out:
         :param group:
+        :param out:
+        :param out_phase:
+        :param eval_with_y_ph:
         :param kwargs: dict(x, y, x_phase, y_phase)
         :return:
         """
@@ -110,11 +114,15 @@ class CustomWriter(SummaryWriter):
 
         snrseg = calc_snrseg(y, out)
 
-        out_wav = reconstruct_wave(out, x_phase[:, :out.shape[1], :],
-                                   n_iter=cfg.N_GRIFFIN_LIM)
+        if out_phase is None:
+            out_wav = reconstruct_wave(out, x_phase[:, :out.shape[1], :],
+                                       n_iter=cfg.N_GRIFFIN_LIM)
+        else:
+            out_wav = reconstruct_wave(out, out_phase)
         out_wav_y_ph = reconstruct_wave(out, y_phase)
 
-        odict_eval = calc_using_eval_module(y_wav, out_wav)
+        odict_eval = calc_using_eval_module(y_wav,
+                                            out_wav_y_ph if eval_with_y_ph else out_wav)
 
         out_wav = torch.from_numpy(
             wave_scale_fix(out_wav, message='out_wav')
