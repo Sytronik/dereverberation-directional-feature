@@ -14,12 +14,10 @@ parser.add_argument('--tag', nargs=1, type=str, default=('',))
 ARGS = parser.parse_args()
 files = [f.path
          for f in os.scandir(ARGS.path)
-         if f.name.endswith('.json') and ARGS.tag[0] in f.name]
+         if f.name.endswith('.json')]
 if not files:
     print('No files.')
     exit()
-print(files)
-print()
 
 step = None
 measures = dict()
@@ -28,14 +26,24 @@ col_title = ''
 common = defaultdict(lambda: 0)
 for fname in files:
     fname = os.path.basename(fname)
-    fname = fname.replace('.json', '')
+    fname_split = fname.replace('.json', '').split('_')
+    if ARGS.tag[0] not in fname_split:
+        continue
+
+    print(fname)
 
     if not col_title:
-        col_title = fname.split('_')[2]
+        col_title = fname_split[2]
 
-    for item in fname.split('_'):
+    for item in fname_split:
         if '.' not in item:
             common[item] += 1
+
+if not col_title:
+    print('No files.')
+    exit()
+
+print()
 
 col_names = [k for k, v in common.items() if v == 1]
 title = ARGS.tag[0]
@@ -51,11 +59,12 @@ for fname, col_name in zip(files, col_names):
 
 wb = openpyxl.Workbook()
 ws = wb.active
-cols = ['B', 'C', 'D']  # if step else ['A', 'B', 'C']
+# cols = ['B', 'C', 'D']  # if step else ['A', 'B', 'C']
+cols = [chr(ord('B')+i) for i in range(len(measures))]
 
 ws['A1'] = title
 ws[f'{cols[0]}1'] = col_title
-ws.merge_cells(f'{cols[0]}1:{cols[2]}1')
+ws.merge_cells(f'{cols[0]}1:{cols[-1]}1')
 
 ws['A2'] = 'Step' if step else ''
 for idx, (cell,) in enumerate(ws[f'A3:A{3 + len(step) - 1}']):
