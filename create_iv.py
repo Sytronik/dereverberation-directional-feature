@@ -44,6 +44,7 @@ class SFTData(NamedTuple):
     Wpv: NDArray
     Vv: NDArray
     bnkr: NDArray
+    bEQf: NDArray
     bn_sel2_0: NDArray
     bn_sel2_1: NDArray
     bn_sel3_0: NDArray
@@ -115,6 +116,47 @@ def calc_intensity(Asv: NDArray,
     return 0.5 * intensity
 
 
+def calc_real_coeffs(anm: NDArray) -> NDArray:
+    xp = cp.get_array_module(anm)
+    N = int(np.ceil(np.sqrt(anm.shape[0])) - 1)
+    trans = np.zeros(((N + 1)**2, (N + 1)**2), dtype=np.complex128)
+    trans[0, 0] = 1
+    if N > 0:
+        idxs = (np.arange(N + 1) + 1)**2
+
+        for n in range(1, N + 1):
+            m1 = np.arange(n)
+            diag = np.array([1j] * n + [0] + list(-(-1)**m1))
+
+            m2 = m1[::-1]
+            anti_diag = np.array(list(1j * (-1)**m2) + [0] + [1] * n)
+
+            block = (np.diagflat(diag) + np.diagflat(anti_diag)[:, ::-1]) / np.sqrt(2)
+            block[n, n] = 1.
+
+            trans[idxs[n - 1]:idxs[n], idxs[n - 1]:idxs[n]] = block
+
+    anm_real = (xp.asarray(trans.conj()) @ anm).real
+
+    return anm_real
+
+
+def calc_direction_vec(anm: NDArray) -> NDArray:
+    """ Calculate direciton vector in DirAC
+
+    using Complex Spherical Harmonics Coefficients
+
+    :param anm:
+    :return:
+    """
+    if anm.shape[0] > 4:
+        anm = anm[:4]
+    anm_real = calc_real_coeffs(anm)  # transform to real coefficient
+    v = anm_real[[3, 1, 2]]  # DirAC particle velocity vector
+
+    return (1 / np.sqrt(2) * anm_real[0] * v).T
+
+
 if __name__ == '__main__':
     # determined by sys argv
     parser = ArgumentParser()
@@ -127,6 +169,7 @@ if __name__ == '__main__':
     parser.add_argument('--dirac', action='store_true')
     parser.add_argument('--init', action='store_true')
     ARGS = parser.parse_args()
+    USE_DIRAC = ARGS.dirac
 
     # Paths
     DIR_DATA = DICT_PATH['root']
@@ -140,7 +183,9 @@ if __name__ == '__main__':
     kind_RIR = 'TEST' if ARGS.kind_data.lower() == 'unseen' else 'TRAIN'
     RIRs = transfer_dict[f'RIR_{kind_RIR}'].transpose((2, 0, 1))
     N_LOC, N_MIC, L_RIR = RIRs.shape
-    Ys = transfer_dict[f'Ys_{kind_RIR}'].T
+    Ys = transfer_dict[f'Ys_{kind_RIR}'].T  # N_LOC x Order
+    if USE_DIRAC:
+        Ys = Ys[:, :4]
 
     t_peak = np.round(RIRs.argmax(axis=2).mean(axis=1)).astype(int)
     amp_peak = RIRs.max(axis=2).mean(axis=1)
@@ -152,33 +197,48 @@ if __name__ == '__main__':
     # SFT Data
     sft_dict = scio.loadmat(
         os.path.join(DIR_DATA, 'sft_data.mat'),
-        variable_names=('bmn_ka', 'Yenc', 'Wnv', 'Wpv', 'Vv'),
+        variable_names=('bmn_ka', 'bEQf', 'Yenc', 'Wnv', 'Wpv', 'Vv'),
         squeeze_me=True
     )
-    bnkr = sft_dict['bmn_ka'].T
-    N_fft = (bnkr.shape[1] - 1) * 2
-    N_freq = bnkr.shape[1]
+    bEQf = sft_dict['bEQf'].T  # Order x N_freq
+    Yenc = sft_dict['Yenc'].T  # Order x N_MIC
 
-    bn_sel2_0 = seltriag(1. / bnkr, 1, (1, -1)) * seltriag(bnkr, 1, (0, 0))
-    bn_sel2_1 = seltriag(1. / bnkr, 1, (-1, -1)) * seltriag(bnkr, 1, (0, 0))
+    if USE_DIRAC:
+        bnkr = None
+        bEQf = bEQf[:4]
+        Yenc = Yenc[:4]
+        Wnv = None
+        Wpv = None
+        Vv = None
+        bn_sel2_0 = None
+        bn_sel2_1 = None
 
-    bn_sel3_0 = seltriag(1. / bnkr, 1, (-1, 1)) * seltriag(bnkr, 1, (0, 0))
-    bn_sel3_1 = seltriag(1. / bnkr, 1, (1, 1)) * seltriag(bnkr, 1, (0, 0))
+        bn_sel3_0 = None
+        bn_sel3_1 = None
 
-    bn_sel_4_0 = seltriag(1. / bnkr, 1, (-1, 0)) * seltriag(bnkr, 1, (0, 0))
-    bn_sel_4_1 = seltriag(1. / bnkr, 1, (1, 0)) * seltriag(bnkr, 1, (0, 0))
+        bn_sel_4_0 = None
+        bn_sel_4_1 = None
+    else:
+        bnkr = sft_dict['bmn_ka'].T  # Order x N_freq
+        Wnv = sft_dict['Wnv'].astype(complex)
+        Wpv = sft_dict['Wpv'].astype(complex)
+        Vv = sft_dict['Vv'].astype(complex)
 
-    Yenc = sft_dict['Yenc'].T
-    Wnv = sft_dict['Wnv'].astype(complex)
-    Wpv = sft_dict['Wpv'].astype(complex)
-    Vv = sft_dict['Vv'].astype(complex)
+        bn_sel2_0 = seltriag(1. / bnkr, 1, (1, -1)) * seltriag(bnkr, 1, (0, 0))
+        bn_sel2_1 = seltriag(1. / bnkr, 1, (-1, -1)) * seltriag(bnkr, 1, (0, 0))
+
+        bn_sel3_0 = seltriag(1. / bnkr, 1, (-1, 1)) * seltriag(bnkr, 1, (0, 0))
+        bn_sel3_1 = seltriag(1. / bnkr, 1, (1, 1)) * seltriag(bnkr, 1, (0, 0))
+
+        bn_sel_4_0 = seltriag(1. / bnkr, 1, (-1, 0)) * seltriag(bnkr, 1, (0, 0))
+        bn_sel_4_1 = seltriag(1. / bnkr, 1, (1, 0)) * seltriag(bnkr, 1, (0, 0))
 
     sftdata = SFTData(
-        Yenc, Wnv, Wpv, Vv, bnkr,
+        Yenc, Wnv, Wpv, Vv, bnkr, bEQf,
         bn_sel2_0, bn_sel2_1, bn_sel3_0, bn_sel3_1, bn_sel_4_0, bn_sel_4_1
     )
 
-    del (sft_dict, Yenc, Wnv, Wpv, Vv, bnkr,
+    del (sft_dict, Yenc, Wnv, Wpv, Vv, bnkr, bEQf,
          bn_sel2_0, bn_sel2_1, bn_sel3_0, bn_sel3_1, bn_sel_4_0, bn_sel_4_1)
 
     f_metadata = os.path.join(DIR_IV, 'metadata.h5')
@@ -286,12 +346,12 @@ def save_IV(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *a
     :return: None
     """
 
-    global win, Ys, L_frame, N_fft, sftdata, N_freq, FORM, L_RIR, L_hop, t_peak
+    global win, Ys, L_frame, N_fft, sftdata, N_freq, FORM, L_RIR, L_hop, t_peak, USE_DIRAC
     # Ready CUDA
     cp.cuda.Device(i_dev).use()
     win_cp = cp.array(win)
     Ys_cp = cp.array(Ys)
-    sftdata_cp = SFTData(*[cp.array(item) for item in sftdata])
+    sftdata_cp = SFTData(*[cp.array(item) if item is not None else None for item in sftdata])
     # data = cp.array(data_np)
 
     N_frame_room = int(np.ceil((data_np.shape[0] + L_RIR - 1) / L_hop) - 1)
@@ -343,13 +403,20 @@ def save_IV(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *a
         for i_frame in range(N_frame_free):
             interval = i_frame * L_hop + np.arange(L_frame)
             anm = cp.fft.fft(anm_time[:, interval] * win_cp, n=N_fft)[:, :N_freq]
-            pnm = anm * sftdata_cp.bnkr
 
-            iv_free[:, i_frame, :3] = calc_intensity(
-                pnm, *sftdata_cp.get_for_intensity()
-            )
-            iv_free[:, i_frame, 3] = cp.abs(pnm[0])**2
-            phase_free[:, i_frame, 0] = cp.angle(pnm[0])
+            if USE_DIRAC:
+                # DirAC and a00
+                iv_free[:, i_frame, :3] = calc_direction_vec(anm)
+                iv_free[:, i_frame, 3] = cp.abs(anm[0])**2
+                phase_free[:, i_frame, 0] = cp.angle(anm[0])
+            else:
+                # IV and p00
+                pnm = anm * sftdata_cp.bnkr
+                iv_free[:, i_frame, :3] = calc_intensity(
+                    pnm, *sftdata_cp.get_for_intensity()
+                )
+                iv_free[:, i_frame, 3] = cp.abs(pnm[0])**2
+                phase_free[:, i_frame, 0] = cp.angle(pnm[0])
 
         # Room Intensity Vector Image
         pnm_time = sftdata_cp.Yenc @ data_room
@@ -360,12 +427,19 @@ def save_IV(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *a
             interval = i_frame * L_hop + np.arange(L_frame)
             pnm = cp.fft.fft(pnm_time[:, interval] * win_cp, n=N_fft)[:, :N_freq]
 
-            iv_room[:, i_frame, :3] = calc_intensity(
-                pnm, *sftdata_cp.get_for_intensity()
-            )
-            # iv_room[:, i_frame, 3] = cp.sum(cp.abs(pnm[:, :N_freq])**2, axis=0)
-            iv_room[:, i_frame, 3] = cp.abs(pnm[0])**2
-            phase_room[:, i_frame, 0] = cp.angle(pnm[0])
+            if USE_DIRAC:
+                # DirAC and a00
+                anm = (pnm * sftdata_cp.bEQf)
+                iv_room[:, i_frame, :3] = calc_direction_vec(anm)
+                iv_room[:, i_frame, 3] = cp.abs(anm[0])**2
+                phase_room[:, i_frame, 0] = cp.angle(anm[0])
+            else:
+                # IV and p00
+                iv_room[:, i_frame, :3] = calc_intensity(
+                    pnm, *sftdata_cp.get_for_intensity()
+                )
+                iv_room[:, i_frame, 3] = cp.abs(pnm[0])**2
+                phase_room[:, i_frame, 0] = cp.angle(pnm[0])
 
         # Save
         dict_to_save = dict(fname_wav=fname_wav,
