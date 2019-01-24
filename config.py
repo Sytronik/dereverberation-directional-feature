@@ -23,10 +23,12 @@ class HyperParameters(NamedTuple):
     CHANNELS = dict(x='all', y='alpha',
                     fname_wav=False,
                     )
-    CH_BASE = 32
+    ch_base = 32
+    dflt_kernel_size = (3, 3)
+    dflt_pad = (1, 1)
 
     n_epochs = 310
-    batch_size = len(CUDA_DEVICES) * 5
+    batch_size = len(CUDA_DEVICES) * 8
     learning_rate = 5e-4
     n_file = 20 * 500
 
@@ -57,7 +59,7 @@ class HyperParameters(NamedTuple):
     def get_for_UNet(self) -> Tuple:
         ch_in = 4 if self.CHANNELS['x'] == 'all' else 1
         ch_out = 4 if self.CHANNELS['y'] == 'all' else 1
-        return ch_in, ch_out, self.CH_BASE
+        return ch_in, ch_out, self.ch_base
 
 
 hp = HyperParameters()
@@ -75,7 +77,7 @@ if os.path.isfile(_f_metadata):
     metadata = dd.io.load(_f_metadata)
     # all_files = metadata['path_wavfiles']
     L_hop = int(metadata['L_hop'])
-    # N_freq = int(metadata['N_freq'])
+    N_freq = int(metadata['N_freq'])
     _N_LOC_TRAIN = int(metadata['N_LOC'])
     Fs = int(metadata['Fs'])
     N_fft = L_hop * 2

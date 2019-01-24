@@ -7,11 +7,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import config as cfg
+
 
 def force_size_same(
         a: torch.Tensor, b: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-    diffX: int = a.shape[-2] - b.shape[-2]
-    diffY: int = a.shape[-1] - b.shape[-1]
+    diffX = a.shape[-2] - b.shape[-2]
+    diffY = a.shape[-1] - b.shape[-1]
 
     if diffY > 0:
         b = F.pad(b, [diffY // 2, int(np.ceil(diffY / 2)), 0, 0])
@@ -28,7 +30,8 @@ def force_size_same(
 
 class ConvBNAct(nn.Module):
     def __init__(self, in_ch, out_ch, act_fn, *,
-                 kernel_size=(3, 3), padding=(1, 1), groups=1, stride=(1, 1)):
+                 kernel_size=cfg.hp.dflt_kernel_size, padding=cfg.hp.dflt_pad,
+                 groups=1, stride=(1, 1)):
         super().__init__()
         self.cba = nn.Sequential(
             nn.Conv2d(in_ch, out_ch, kernel_size,
@@ -206,7 +209,8 @@ class UpAndConv(nn.Module):
 class OutConvMap(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_ch, out_ch, (3, 3), padding=(1, 1))
+        self.conv1 = nn.Conv2d(in_ch, out_ch, cfg.hp.dflt_kernel_size,
+                               padding=cfg.hp.dflt_pad)
         self.act_fn = nn.Tanh()
 
     def forward(self, x):
