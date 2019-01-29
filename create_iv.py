@@ -176,7 +176,11 @@ if __name__ == '__main__':
     DIR_IV = DICT_PATH[f'iv_{ARGS.kind_data.lower()}']
     if not os.path.exists(DIR_IV):
         os.makedirs(DIR_IV)
-    DIR_WAVFILE = DICT_PATH[f'wav_{ARGS.kind_data.lower()}']
+
+    if ARGS.kind_data.lower() == 'train':
+        DIR_WAVFILE = DICT_PATH['wav_train']
+    else:
+        DIR_WAVFILE = DICT_PATH['wav_test']
 
     # RIR Data
     transfer_dict = scio.loadmat(os.path.join(DIR_DATA, 'RIR_Ys.mat'), squeeze_me=True)
@@ -407,7 +411,7 @@ def save_IV(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *a
             if USE_DIRAC:
                 # DirAC and a00
                 iv_free[:, i_frame, :3] = calc_direction_vec(anm)
-                iv_free[:, i_frame, 3] = cp.abs(anm[0])**2
+                iv_free[:, i_frame, 3] = cp.abs(anm[0])
                 phase_free[:, i_frame, 0] = cp.angle(anm[0])
             else:
                 # IV and p00
@@ -415,7 +419,7 @@ def save_IV(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *a
                 iv_free[:, i_frame, :3] = calc_intensity(
                     pnm, *sftdata_cp.get_for_intensity()
                 )
-                iv_free[:, i_frame, 3] = cp.abs(pnm[0])**2
+                iv_free[:, i_frame, 3] = cp.abs(pnm[0])
                 phase_free[:, i_frame, 0] = cp.angle(pnm[0])
 
         # Room Intensity Vector Image
@@ -431,14 +435,14 @@ def save_IV(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *a
                 # DirAC and a00
                 anm = (pnm * sftdata_cp.bEQf)
                 iv_room[:, i_frame, :3] = calc_direction_vec(anm)
-                iv_room[:, i_frame, 3] = cp.abs(anm[0])**2
+                iv_room[:, i_frame, 3] = cp.abs(anm[0])
                 phase_room[:, i_frame, 0] = cp.angle(anm[0])
             else:
                 # IV and p00
                 iv_room[:, i_frame, :3] = calc_intensity(
                     pnm, *sftdata_cp.get_for_intensity()
                 )
-                iv_room[:, i_frame, 3] = cp.abs(pnm[0])**2
+                iv_room[:, i_frame, 3] = cp.abs(pnm[0])
                 phase_room[:, i_frame, 0] = cp.angle(pnm[0])
 
         # Save
