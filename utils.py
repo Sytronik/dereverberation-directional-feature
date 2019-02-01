@@ -1,6 +1,7 @@
+import contextlib
 import gc
 import os
-from typing import List
+from typing import Callable, List
 
 import numpy as np
 import torch
@@ -99,3 +100,23 @@ def print_cuda_tensors():
                 print(type(obj), obj.size(), obj.device)
         finally:
             pass
+
+
+def silently_call(fn: Callable):
+    with open(os.devnull, 'w') as devnull:
+        with contextlib.redirect_stdout(devnull):
+            fn()
+
+
+def print_to_file(fname: str, fn: Callable, args=None, kwargs=None):
+    if not fname.endswith('.txt'):
+        fname = f'{fname}.txt'
+
+    if args is None:
+        args = tuple()
+    if kwargs is None:
+        kwargs = dict()
+
+    with open(fname, 'w') as file:
+        with contextlib.redirect_stdout(file):
+            fn(*args, **kwargs)

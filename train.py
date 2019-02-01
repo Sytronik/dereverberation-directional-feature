@@ -8,6 +8,7 @@ import torch
 from tensorboardX import SummaryWriter
 from torch import nn
 from torch.utils.data import DataLoader
+from torchsummary import summary
 
 import config as cfg
 from adamwr import AdamW, CosineLRWithRestarts
@@ -258,6 +259,11 @@ class Trainer:
         avg_loss = torch.zeros(1, device=cfg.OUT_CUDA_DEV)
 
         self.writer = CustomWriter(dir_result, purge_step=first_epoch)
+        print_to_file(
+            pathjoin(dir_result, 'summary'),
+            summary,
+            (self.model.module, (cfg.hp.get_for_UNet()[0], cfg.N_freq, 256)),
+        )
         # self.writer.add_graph(self.model.module.cpu(),
         #                       torch.zeros(1, cfg.hp.get_for_UNet()[0], 256, 256),
         #                       True,
