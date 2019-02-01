@@ -9,7 +9,7 @@ import torch
 
 import config as cfg
 import generic as gen
-from generic import TensArr
+from generic import TensArr, TensArrOrSeq
 
 
 class NormalizationBase(dd.util.Saveable, metaclass=ABCMeta):
@@ -31,23 +31,47 @@ class NormalizationBase(dd.util.Saveable, metaclass=ABCMeta):
 
     @staticmethod
     def _calc_per_file(tup: Tuple) -> Tuple:
-        fname, xname, yname, list_func, args_x, args_y = tup
-        try:
-            x, y = dd.io.load(fname, group=(xname, yname))
-        except:  # noqa: E722
-            raise Exception(fname)
+        fname, list_func, args_x, args_y = tup[:4]
+        if len(tup) == 5:
+            use_phase = tup[4]
+        else:
+            use_phase = False
 
-        result_x = {f: f(x, arg) for f, arg in zip(list_func, args_x)}
-        result_y = {f: f(y, arg) for f, arg in zip(list_func, args_y)}
+        while True:
+            try:
+                if use_phase:
+                    x, x_phase, y, y_phase \
+                        = dd.io.load(fname, group=(cfg.IV_DATA_NAME['x'],
+                                                   cfg.IV_DATA_NAME['x_phase'],
+                                                   cfg.IV_DATA_NAME['y'],
+                                                   cfg.IV_DATA_NAME['y_phase'],
+                                                   ))
+                else:
+                    x, y = dd.io.load(fname, group=(cfg.IV_DATA_NAME['x'],
+                                                    cfg.IV_DATA_NAME['y'],
+                                                    ))
+                    x_phase = None
+                    y_phase = None
+                break
+            except:  # noqa: E722
+                print(fname)
+                fname_sq = fname.replace('IV_sqrt', 'IV')
+                iv_dict = dd.io.load(fname_sq)
+                iv_dict['IV_free'][..., -1] = np.sqrt(iv_dict['IV_free'][..., -1])
+                iv_dict['IV_room'][..., -1] = np.sqrt(iv_dict['IV_room'][..., -1])
+                dd.io.save(fname, iv_dict, compression=None)
+
+        result_x = {f: f(x, x_phase, arg) for f, arg in zip(list_func, args_x)}
+        result_y = {f: f(y, y_phase, arg) for f, arg in zip(list_func, args_y)}
 
         print('.', end='', flush=True)
         return result_x, result_y
 
-    def _get_consts_like(self, a: TensArr, xy: str):
+    def _get_consts_like(self, xy: str, a: TensArr):
         assert xy == 'x' or xy == 'y'
         shft = int(xy == 'y') if not cfg.NORM_USING_ONLY_X else 0
 
-        ch = range(3, 4) if a.shape[-1] == 1 else range(0, 4)
+        ch = slice(-a.shape[-1], None)
 
         if type(a) == torch.Tensor:
             if a.device == torch.device('cpu'):
@@ -95,52 +119,75 @@ class NormalizationBase(dd.util.Saveable, metaclass=ABCMeta):
         return result[:-1]
 
     @abstractmethod
-    def normalize(self, a: TensArr, xy: str) -> TensArr:
+    def normalize(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
         pass
 
     @abstractmethod
-    def normalize_(self, a: TensArr, xy: str) -> TensArr:
+    def normalize_(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
         pass
 
     @abstractmethod
-    def denormalize(self, a: TensArr, xy: str) -> TensArr:
+    def denormalize(self, xy: str, a: TensArr) -> TensArrOrSeq:
         pass
 
     @abstractmethod
-    def denormalize_(self, a: TensArr, xy: str) -> TensArr:
+    def denormalize_(self, xy: str, a: TensArr) -> TensArrOrSeq:
         pass
 
 
 class MeanStdNormalization(NormalizationBase):
+    USE_PHASE = False
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     @classmethod
-    def sum_(cls, a: np.ndarray, *args) -> np.ndarray:
-        return a.sum(axis=1, keepdims=True)
+    def pre(cls, a: TensArr, a_phase: TensArr = None) -> TensArr:
+        return a
 
     @classmethod
-    def sq_dev(cls, a: np.ndarray, mean_a) -> np.ndarray:
-        return ((a - mean_a)**2).sum(axis=1, keepdims=True)
+    def pre_(cls, a: TensArr, a_phase: TensArr = None) -> TensArr:
+        return a
 
     @classmethod
-    def create(cls, all_files: List[str], xname: str, yname: str, *, need_mean=True):
+    def post(cls, a: TensArr) -> tuple:
+        return a, None
+
+    @classmethod
+    def post_(cls, a: TensArr) -> tuple:
+        return a, None
+
+    @classmethod
+    def _size(cls, a: np.ndarray, a_phase: np.ndarray, *args) -> int:
+        return np.size(cls.pre_(a, a_phase))
+
+    @classmethod
+    def _sum(cls, a: np.ndarray, a_phase: np.ndarray, *args) -> np.ndarray:
+        return cls.pre_(a, a_phase).sum(axis=1, keepdims=True)
+
+    @classmethod
+    def _sq_dev(cls, a: np.ndarray, a_phase: np.ndarray, *args) -> np.ndarray:
+        mean_a = args[0]
+        return ((cls.pre_(a, a_phase) - mean_a)**2).sum(axis=1, keepdims=True)
+
+    @classmethod
+    def create(cls, all_files: List[str], *, need_mean=True):
         # Calculate summation & size (parallel)
-        list_fn = (np.size, cls.sum_) if need_mean else (np.size,)
+        list_fn = (cls._size, cls._sum) if need_mean else (cls._size,)
         args_none = (None,) * len(list_fn)
         pool = mp.Pool(mp.cpu_count())
         result = pool.map(
             cls._calc_per_file,
-            [(fname, xname, yname, list_fn, args_none, args_none)
+            [(fname, list_fn, args_none, args_none, cls.USE_PHASE)
              for fname in all_files]
         )
         print()
 
-        sum_size_x = np.sum([item[0][np.size] for item in result])
-        sum_size_y = np.sum([item[1][np.size] for item in result])
+        sum_size_x = np.sum([item[0][cls._size] for item in result])
+        sum_size_y = np.sum([item[1][cls._size] for item in result])
         if need_mean:
-            sum_x = np.sum([item[0][cls.sum_] for item in result], axis=0)
-            sum_y = np.sum([item[1][cls.sum_] for item in result], axis=0)
+            sum_x = np.sum([item[0][cls._sum] for item in result], axis=0)
+            sum_y = np.sum([item[1][cls._sum] for item in result], axis=0)
             mean_x = sum_x / (sum_size_x // sum_x.size)
             mean_y = sum_y / (sum_size_y // sum_y.size)
             # mean_x = sum_x[..., :3] / (sum_size_x//sum_x[..., :3].size)
@@ -153,13 +200,13 @@ class MeanStdNormalization(NormalizationBase):
         # Calculate squared deviation (parallel)
         result = pool.map(
             cls._calc_per_file,
-            [(fname, xname, yname, (cls.sq_dev,), (mean_x,), (mean_y,))
+            [(fname, (cls._sq_dev,), (mean_x,), (mean_y,), cls.USE_PHASE)
              for fname in all_files]
         )
         pool.close()
 
-        sum_sq_dev_x = np.sum([item[0][cls.sq_dev] for item in result], axis=0)
-        sum_sq_dev_y = np.sum([item[1][cls.sq_dev] for item in result], axis=0)
+        sum_sq_dev_x = np.sum([item[0][cls._sq_dev] for item in result], axis=0)
+        sum_sq_dev_y = np.sum([item[1][cls._sq_dev] for item in result], axis=0)
 
         std_x = np.sqrt(sum_sq_dev_x / (sum_size_x // sum_sq_dev_x.size) + 1e-5)
         std_y = np.sqrt(sum_sq_dev_y / (sum_size_y // sum_sq_dev_y.size) + 1e-5)
@@ -167,86 +214,96 @@ class MeanStdNormalization(NormalizationBase):
 
         return cls(('mean', 'std'), (mean_x, mean_y, std_x, std_y))
 
-    def normalize(self, a: TensArr, xy: str) -> TensArr:
-        mean, std = self._get_consts_like(a, xy)
+    def normalize(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
+        b = self.pre(a, a_phase)
+        mean, std = self._get_consts_like(xy, b)
 
-        return (a - mean) / (2 * std)
+        return (b - mean) / (2 * std)
 
-    def normalize_(self, a: TensArr, xy: str) -> TensArr:
-        mean, std = self._get_consts_like(a, xy)
+    def normalize_(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
+        a = self.pre_(a, a_phase)
+        mean, std = self._get_consts_like(xy, a)
+
         a -= mean
         a /= (2 * std)
+
         return a
 
-    def denormalize(self, a: TensArr, xy: str) -> TensArr:
-        mean, std = self._get_consts_like(a, xy)
+    def denormalize(self, xy: str, a: TensArr) -> TensArrOrSeq:
+        mean, std = self._get_consts_like(xy, a)
+        tup = self.post_(a * (2 * std) + mean)
+        if tup[1] is None:
+            return tup[0]
+        else:
+            return tup
 
-        return a * (2 * std) + mean
-
-    def denormalize_(self, a: TensArr, xy: str) -> TensArr:
-        mean, std = self._get_consts_like(a, xy)
-
+    def denormalize_(self, xy: str, a: TensArr) -> TensArrOrSeq:
+        mean, std = self._get_consts_like(xy, a)
         a *= (2 * std)
         a += mean
-        return a
+        tup = self.post_(a)
+        if tup[1] is None:
+            return tup[0]
+        else:
+            return tup
 
 
-class MinMaxNormalization(NormalizationBase):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    @classmethod
-    def min_(cls, a: np.ndarray, *args) -> np.ndarray:
-        return a.min(axis=1, keepdims=True)
-
-    @classmethod
-    def max_(cls, a: np.ndarray, *args) -> np.ndarray:
-        return a.max(axis=1, keepdims=True)
-
-    @classmethod
-    def create(cls, all_files: List[str], xname: str, yname: str):
-        # Calculate summation & no. of total frames (parallel)
-        pool = mp.Pool(mp.cpu_count())
-        result = pool.map(
-            cls._calc_per_file,
-            [(fname, xname, yname, (cls.min_, cls.max_), (None,) * 2, (None,) * 2)
-             for fname in all_files]
-        )
-        pool.close()
-
-        min_x = np.min([res[0][cls.min_] for res in result], axis=0)
-        min_y = np.min([res[1][cls.min_] for res in result], axis=0)
-        max_x = np.max([res[0][cls.max_] for res in result], axis=0)
-        max_y = np.max([res[1][cls.max_] for res in result], axis=0)
-        print('Calculated Min/Max.')
-
-        return cls(('min', 'max'), (min_x, min_y, max_x, max_y))
-
-    def normalize(self, a: TensArr, xy: str) -> TensArr:
-        min_, max_ = self._get_consts_like(a, xy)
-
-        return (a - min_) / (max_ - min_) - 0.5
-
-    def normalize_(self, a: TensArr, xy: str) -> TensArr:
-        min_, max_ = self._get_consts_like(a, xy)
-
-        a -= min_
-        a /= (max_ - min_)
-        a -= 0.5
-        return a
-
-    def denormalize(self, a: TensArr, xy: str) -> TensArr:
-        min_, max_ = self._get_consts_like(a, xy)
-
-        return (a + 0.5) * (max_ - min_) + min_
-
-    def denormalize_(self, a: TensArr, xy: str) -> TensArr:
-        min_, max_ = self._get_consts_like(a, xy)
-
-        a += 0.5
-        a *= (max_ - min_)
-        a += min_
-        return a
+# class MinMaxNormalization(NormalizationBase):
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#
+#     @classmethod
+#     def _min(cls, a: np.ndarray, *args) -> np.ndarray:
+#         return a.min(axis=1, keepdims=True)
+#
+#     @classmethod
+#     def _max(cls, a: np.ndarray, *args) -> np.ndarray:
+#         return a.max(axis=1, keepdims=True)
+#
+#     @classmethod
+#     def create(cls, all_files: List[str]):
+#         # Calculate summation & no. of total frames (parallel)
+#         pool = mp.Pool(mp.cpu_count())
+#         result = pool.map(
+#             cls._calc_per_file,
+#             [(fname, (cls._min, cls._max), (None,) * 2, (None,) * 2)
+#              for fname in all_files]
+#         )
+#         pool.close()
+#
+#         min_x = np.min([res[0][cls._min] for res in result], axis=0)
+#         min_y = np.min([res[1][cls._min] for res in result], axis=0)
+#         max_x = np.max([res[0][cls._max] for res in result], axis=0)
+#         max_y = np.max([res[1][cls._max] for res in result], axis=0)
+#         print('Calculated Min/Max.')
+#
+#         return cls(('min', 'max'), (min_x, min_y, max_x, max_y))
+#
+#     def normalize(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
+#         min_, max_ = self._get_consts_like(xy, a)
+#
+#         return (a - min_) / (max_ - min_) - 0.5
+#
+#     def normalize_(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
+#         min_, max_ = self._get_consts_like(xy, a)
+#
+#         a -= min_
+#         a /= (max_ - min_)
+#         a -= 0.5
+#         return a
+#
+#     def denormalize(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
+#         min_, max_ = self._get_consts_like(xy, a)
+#
+#         return (a + 0.5) * (max_ - min_) + min_
+#
+#     def denormalize_(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
+#         min_, max_ = self._get_consts_like(xy, a)
+#
+#         a += 0.5
+#         a *= (max_ - min_)
+#         a += min_
+#         return a
 
 
 class LogInterface:
@@ -316,51 +373,133 @@ class LogInterface:
 
 class LogMeanStdNormalization(MeanStdNormalization, LogInterface):
     @classmethod
-    def sum_(cls, a: np.ndarray, *args) -> np.ndarray:
-        return super().sum_(cls.log_(a))
+    def pre(cls, a: TensArr, a_phase: TensArr = None) -> TensArr:
+        return cls.log(a)
 
     @classmethod
-    def sq_dev(cls, a: np.ndarray, mean_a) -> np.ndarray:
-        return super().sq_dev(cls.log_(a), mean_a)
-
-    def normalize(self, a: TensArr, xy: str) -> TensArr:
-        b = self.log(a)
-        return super().normalize_(b, xy)
-
-    def normalize_(self, a: TensArr, xy: str) -> TensArr:
-        a = self.log_(a)
-        return super().normalize_(a, xy)
-
-    def denormalize(self, a: TensArr, xy: str) -> TensArr:
-        b = super().denormalize(a, xy)
-        return self.exp_(b)
-
-    def denormalize_(self, a: TensArr, xy: str) -> TensArr:
-        a = super().denormalize_(a, xy)
-        return self.exp_(a)
-
-
-class LogMinMaxNormalization(MinMaxNormalization, LogInterface):
-    @classmethod
-    def min_(cls, a: np.ndarray, *args) -> np.ndarray:
-        return super().min_(cls.log_(a))
+    def pre_(cls, a: TensArr, a_phase: TensArr = None) -> TensArr:
+        return cls.log_(a)
 
     @classmethod
-    def max_(cls, a: np.ndarray, *args) -> np.ndarray:
-        return super().max_(cls.log_(a))
+    def post(cls, a: TensArr) -> tuple:
+        return cls.exp(a), None
 
-    def normalize(self, a: TensArr, xy: str) -> TensArr:
-        b = self.log(a)
-        return super().normalize_(b, xy)
+    @classmethod
+    def post_(cls, a: TensArr) -> tuple:
+        return cls.exp_(a), None
 
-    def normalize_(self, a: TensArr, xy: str) -> TensArr:
-        a = self.log_(a)
-        return super().normalize_(a, xy)
 
-    def denormalize(self, a: TensArr, xy: str) -> TensArr:
-        b = super().denormalize(a, xy)
-        return self.exp_(b)
+# class LogMinMaxNormalization(MinMaxNormalization, LogInterface):
+#     @classmethod
+#     def _min(cls, a: np.ndarray, *args) -> np.ndarray:
+#         return super()._min(cls.log_(a))
+#
+#     @classmethod
+#     def _max(cls, a: np.ndarray, *args) -> np.ndarray:
+#         return super()._max(cls.log_(a))
+#
+#     def normalize(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
+#         b = self.log(a)
+#         return super().normalize_(xy, b)
+#
+#     def normalize_(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
+#         a = self.log_(a)
+#         return super().normalize_(xy, a)
+#
+#     def denormalize(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
+#         b = super().denormalize(xy, a)
+#         return self.exp_(b)
+#
+#     def denormalize_(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
+#         a = super().denormalize_(xy, a)
+#         return self.exp_(a)
 
-    def denormalize_(self, a: TensArr, xy: str) -> TensArr:
-        a = super().denormalize_(a, xy)
-        return self.exp_(a)
+
+class ReImMeanStdNormalization(MeanStdNormalization):
+    USE_PHASE = True
+
+    @classmethod
+    def pre(cls, a: TensArr, a_phase: TensArr = None) -> TensArr:
+        # return magphase2realimag(cls.log(a), a_phase)
+        return magphase2realimag(a, a_phase)
+
+    @classmethod
+    def pre_(cls, a: TensArr, a_phase: TensArr = None) -> TensArr:
+        # return magphase2realimag(cls.log_(a), a_phase)
+        return magphase2realimag(a, a_phase)
+
+    @classmethod
+    def post(cls, a: TensArr) -> tuple:
+        b, b_phase = realimag2magphase(a, concat=False)
+        # return cls.exp_(b), b_phase
+        return b, b_phase
+
+    @classmethod
+    def post_(cls, a: TensArr) -> tuple:
+        b, b_phase = realimag2magphase(a, concat=False)
+        # return cls.exp_(b), b_phase
+        return b, b_phase
+
+    @classmethod
+    def _size(cls, a: np.ndarray, a_phase: np.ndarray, *args) -> int:
+        return np.size(a) + np.size(a_phase)
+
+
+class LogReImMeanStdNormalization(ReImMeanStdNormalization, LogInterface):
+    @classmethod
+    def pre(cls, a: TensArr, a_phase: TensArr = None) -> TensArr:
+        a = cls.log(a)
+        return magphase2realimag(a, a_phase)
+
+    @classmethod
+    def pre_(cls, a: TensArr, a_phase: TensArr = None) -> TensArr:
+        a = cls.log_(a)
+        return magphase2realimag(a, a_phase)
+
+    @classmethod
+    def post(cls, a: TensArr) -> tuple:
+        b, b_phase = realimag2magphase(a, concat=False)
+        b = cls.exp_(b)
+        return b, b_phase
+
+    @classmethod
+    def post_(cls, a: TensArr) -> tuple:
+        b, b_phase = realimag2magphase(a, concat=False)
+        b = cls.exp_(b)
+        return b, b_phase
+
+
+def magphase2realimag(a: TensArr, a_phase: TensArr, concat=True) -> TensArrOrSeq:
+    pkg = gen.dict_package[type(a)]
+    a_real = a[..., -1:] * pkg.cos(a_phase)
+    a_imag = a[..., -1:] * pkg.sin(a_phase)
+    if concat:
+        return gen.cat((a[..., :-1], a_real, a_imag), axis=-1)
+    else:
+        return gen.cat((a[..., :-1], a_real), axis=-1), a_imag
+
+
+def realimag2magphase(a: TensArr, concat=True) -> TensArrOrSeq:
+    a_mag = (a[..., -2:-1]**2 + a[..., -1:]**2)**0.5
+    a_phase = gen.arctan2(a[..., -1:], a[..., -2:-1])
+    if concat:
+        return gen.cat((a[..., :-2], a_mag, a_phase), axis=-1)
+    else:
+        return gen.cat((a[..., :-2], a_mag), axis=-1), a_phase
+
+
+# indexing 다시 해야함
+# def complex2magphase(a: np.ndarray, concat=True) \
+#         -> Union[np.ndarray, Sequence[np.ndarray]]:
+#     a_mag = np.abs(a[..., -1])
+#     a_phase = np.angle(a[..., -1])
+#     if concat:
+#         return np.cat((a[..., :-1].real, a_mag, a_phase), axis=-1)
+#     else:
+#         return np.cat((a[..., :-1].real, a_mag), axis=-1), a_phase
+
+
+# def realimag2complex(a: np.ndarray) -> np.ndarray:
+#     a_complex = a[..., -2] + 1j * a[..., -1]
+#
+#     return np.cat((a[..., :-2], a_complex), axis=-1)

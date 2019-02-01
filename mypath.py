@@ -1,6 +1,10 @@
 _PATH_WAV = './data/speech/data/lisa/data/timit/raw/TIMIT'
-_PATH_IV = './data/IV'
-F_NORMCONST = 'normconst_{}_log_meanstd.h5'
+_PATH_IV = './backup/IV_sqrt'
+# _PATH_IV = './backup/IV'
+# _PATH_IV = './backup/DirAC'
+PATH_RESULT = './result'
+
+F_NORMCONST = 'normconst_{}_{}.h5'
 
 DICT_PATH = dict(
     root='./data',
@@ -17,5 +21,6 @@ DICT_PATH = dict(
     normconst_seen=f'{_PATH_IV}/TEST/{F_NORMCONST}',
     normconst_unseen=f'{_PATH_IV}/TEST/{F_NORMCONST}',
 
-    UNet=f'./result/UNet'
+    # UNet=f'./result/UNet 19-01-17 (w.dcy 1e-5)'
+    UNet=f'{PATH_RESULT}/UNet'
 )

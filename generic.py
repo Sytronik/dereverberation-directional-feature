@@ -41,6 +41,13 @@ def copy(a: TensArr, requires_grad=True) -> TensArr:
         raise TypeError
 
 
+def arctan2(a: TensArr, b: TensArr, out: TensArr = None) -> TensArr:
+    if type(a) == Tensor:
+        return torch.atan2(a, b, out=out)
+    else:
+        return np.arctan2(a, b, out=out)
+
+
 def convert(a: TensArr, astype: type, device: Union[int, torch.device] = None) -> TensArr:
     if astype == Tensor:
         if type(a) == Tensor:
@@ -111,8 +118,6 @@ def _cat_stack(fn: str,
         astype = types[0]
     for idx, type_ in enumerate(types):
         if type_ != astype:
-            if type(a) != list:
-                a = list(a)
             a[idx] = convert(a[idx], astype)
 
     return dict_cat_stack_fn[(astype, fn)](a, axis)
