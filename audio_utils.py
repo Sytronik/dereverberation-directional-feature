@@ -137,7 +137,7 @@ def calc_using_eval_module(y_clean: np.ndarray, y_est: np.ndarray,
         y_clean = y_clean[np.newaxis, ...]
         y_est = y_est[np.newaxis, ...]
     if T_ys == (0,):
-        T_ys = (y_clean.shape[1],)*y_clean.shape[0]
+        T_ys = (y_clean.shape[1],) * y_clean.shape[0]
 
     keys = None
     sum_result = None
@@ -163,19 +163,33 @@ def wave_scale_fix(wave: np.ndarray, amp_limit=1., message='') -> np.ndarray:
     return wave
 
 
-def reconstruct_wave(mag: np.ndarray, phase: np.ndarray,
-                     *, n_iter=0, n_sample=-1) -> np.ndarray:
-    mag = mag.squeeze()
-    phase = phase.squeeze()
+def reconstruct_wave(*args: np.ndarray, n_iter=0, n_sample=-1) -> np.ndarray:
+    if len(args) == 1:
+        spec = args[0].squeeze()
+        mag = None
+        phase = None
+        assert np.iscomplexobj(spec)
+    elif len(args) == 2:
+        spec = None
+        mag = args[0].squeeze()
+        phase = args[1].squeeze()
+        assert np.isrealobj(mag) and np.isrealobj(phase)
+    else:
+        raise ValueError
 
     for _ in range(n_iter - 1):
+        if mag is None:
+            mag = np.abs(spec)
+            phase = np.angle(spec)
+            spec = None
         wave = librosa.core.istft(mag * np.exp(1j * phase), **cfg.KWARGS_ISTFT)
 
-        spec = librosa.core.stft(wave, **cfg.KWARGS_STFT)
-        phase = np.angle(spec)
+        phase = np.angle(librosa.core.stft(wave, **cfg.KWARGS_STFT))
 
     kwarg_len = dict(length=n_sample) if n_sample != -1 else dict()
-    wave = librosa.core.istft(mag * np.exp(1j * phase), **cfg.KWARGS_ISTFT, **kwarg_len)
+    if spec is None:
+        spec = mag * np.exp(1j * phase)
+    wave = librosa.core.istft(spec, **cfg.KWARGS_ISTFT, **kwarg_len)
 
     return wave
 
@@ -242,7 +256,7 @@ def draw_spectrogram(data: gen.TensArr, is_power=False, show=False, **kwargs):
     fig = plt.figure()
     plt.imshow(data,
                cmap=plt.get_cmap('CMRmap'),
-               extent=(0, data.shape[1], 0, cfg.Fs//2),
+               extent=(0, data.shape[1], 0, cfg.Fs // 2),
                origin='lower', aspect='auto', **kwargs)
     plt.xlabel('Frame Index')
     plt.ylabel('Frequency (Hz)')
@@ -253,21 +267,51 @@ def draw_spectrogram(data: gen.TensArr, is_power=False, show=False, **kwargs):
     return fig
 
 
-def bnkr_equalize_(mag, phase=None):
-    assert mag.shape[0] == cfg.bEQf0_mag.shape[0]
-    bEQf0_mag = cfg.bEQf0_mag
-    while mag.ndim < bEQf0_mag.ndim:
-        bEQf0_mag = bEQf0_mag[..., 0]
+def bnkr_equalize_(*args):
+    """
 
-    mag *= bEQf0_mag
-
-    if phase is not None:
-        assert phase.shape[0] == mag.shape[0]
-        bEQf0_angle = cfg.bEQf0_angle
-        while phase.ndim < bEQf0_mag.ndim:
-            bEQf0_angle = bEQf0_angle[..., 0]
-
-        phase += bEQf0_angle
-        return mag, phase
+    :param args: (spec,), (mag,), or (mag, phase)
+    :return:
+    """
+    if len(args) == 1:
+        if np.iscomplexobj(args[0]):
+            spec = args[0]
+            mag = None
+            phase = None
+        else:
+            spec = None
+            mag = args[0]
+            phase = None
+    elif len(args) == 2:
+        spec = None
+        mag, phase = args
     else:
-        return mag
+        raise ValueError
+
+    if mag is None:
+        assert spec.shape[0] == cfg.bEQf0.shape[0]
+        bEQf0 = cfg.bEQf0
+        while spec.ndim < bEQf0.ndim:
+            bEQf0 = bEQf0[..., 0]
+
+        spec *= bEQf0
+
+        return spec
+    else:
+        assert mag.shape[0] == cfg.bEQf0_mag.shape[0]
+        bEQf0_mag = cfg.bEQf0_mag
+        while mag.ndim < bEQf0_mag.ndim:
+            bEQf0_mag = bEQf0_mag[..., 0]
+
+        mag *= bEQf0_mag
+
+        if phase is not None:
+            assert phase.shape[0] == mag.shape[0]
+            bEQf0_angle = cfg.bEQf0_angle
+            while phase.ndim < bEQf0_mag.ndim:
+                bEQf0_angle = bEQf0_angle[..., 0]
+
+            phase += bEQf0_angle
+            return mag, phase
+        else:
+            return mag
