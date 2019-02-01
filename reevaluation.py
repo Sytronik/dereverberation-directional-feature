@@ -3,8 +3,9 @@ import matlab.engine
 
 import os
 import time
-from argparse import ArgumentError, ArgumentParser
+from argparse import ArgumentParser
 from glob import glob
+from os.path import join as pathjoin
 
 import scipy.io as scio
 
@@ -12,8 +13,9 @@ import config as cfg
 from train import CustomWriter
 from utils import arr2str
 
-cfg.N_GRIFFIN_LIM = 10
-TITLE = f'iter{cfg.N_GRIFFIN_LIM}'
+# cfg.N_GRIFFIN_LIM = 10
+# TITLE = f'iter{cfg.N_GRIFFIN_LIM}'
+TITLE = 'with_anechoic_ph'
 
 parser = ArgumentParser()
 parser.add_argument(
@@ -24,15 +26,16 @@ del parser
 group = ARGS.kind_data[0]
 
 DIR_MODEL = './result/UNet 19-01-14 (amp fix)'
-DIR_ORIGINAL = os.path.join(DIR_MODEL, group)
-DIR_NEW = os.path.join(DIR_MODEL, f'{group}_{TITLE}')
+DIR_ORIGINAL = pathjoin(DIR_MODEL, group)
+DIR_NEW = pathjoin(DIR_MODEL, f'{group}_{TITLE}')
 if not os.path.isdir(DIR_NEW):
     os.makedirs(DIR_NEW)
 writer = CustomWriter(DIR_NEW)
 
-iv_files = glob(os.path.join(DIR_ORIGINAL, 'IV_*.mat'))
+iv_files = glob(pathjoin(DIR_ORIGINAL, 'IV_*.mat'))
 names = {k: v[1:] for k, v in cfg.IV_DATA_NAME.items() if k != 'fname_wav'}
 avg_measure = None
+
 
 print(' 0.00%:')
 for idx, file in enumerate(iv_files):
@@ -40,7 +43,9 @@ for idx, file in enumerate(iv_files):
     iv_dict = scio.loadmat(file)
     iv_dict = {k: iv_dict[v] for k, v in names.items()}
 
-    measure = writer.write_one(idx, group=group, **iv_dict)
+    measure = writer.write_one(idx, group=group,
+                               eval_with_y_ph=True,  # info: the objective of reevaluation
+                               **iv_dict)
     if avg_measure is None:
         avg_measure = measure
     else:

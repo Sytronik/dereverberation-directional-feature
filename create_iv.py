@@ -5,6 +5,7 @@ import os
 import time
 from argparse import ArgumentParser
 from glob import glob
+from os.path import join as pathjoin
 from typing import List, NamedTuple, Tuple, TypeVar
 
 import cupy as cp
@@ -62,7 +63,7 @@ class SFTData(NamedTuple):
 def search_all_files(directory: str, id_: str) -> List[str]:
     result = []
     for folder, _, _ in os.walk(directory):
-        files = glob(os.path.join(folder, id_))
+        files = glob(pathjoin(folder, id_))
         if files:
             result += files
 
@@ -183,7 +184,7 @@ if __name__ == '__main__':
         DIR_WAVFILE = DICT_PATH['wav_test']
 
     # RIR Data
-    transfer_dict = scio.loadmat(os.path.join(DIR_DATA, 'RIR_Ys.mat'), squeeze_me=True)
+    transfer_dict = scio.loadmat(pathjoin(DIR_DATA, 'RIR_Ys.mat'), squeeze_me=True)
     kind_RIR = 'TEST' if ARGS.kind_data.lower() == 'unseen' else 'TRAIN'
     RIRs = transfer_dict[f'RIR_{kind_RIR}'].transpose((2, 0, 1))
     N_LOC, N_MIC, L_RIR = RIRs.shape
@@ -194,13 +195,13 @@ if __name__ == '__main__':
     t_peak = np.round(RIRs.argmax(axis=2).mean(axis=1)).astype(int)
     amp_peak = RIRs.max(axis=2).mean(axis=1)
 
-    # RIRs_0 = scio.loadmat(os.path.join(DIR_DATA, 'RIR_0_order.mat'),
+    # RIRs_0 = scio.loadmat(pathjoin()(DIR_DATA, 'RIR_0_order.mat'),
     #                       variable_names='RIR_'+ARGS.kind_data)
     # RIRs_0 = RIRs_0['RIR_'+ARGS.kind_data].transpose((2, 0, 1))
 
     # SFT Data
     sft_dict = scio.loadmat(
-        os.path.join(DIR_DATA, 'sft_data.mat'),
+        pathjoin(DIR_DATA, 'sft_data.mat'),
         variable_names=('bmn_ka', 'bEQf', 'Yenc', 'Wnv', 'Wpv', 'Vv'),
         squeeze_me=True
     )
@@ -245,7 +246,7 @@ if __name__ == '__main__':
     del (sft_dict, Yenc, Wnv, Wpv, Vv, bnkr, bEQf,
          bn_sel2_0, bn_sel2_1, bn_sel3_0, bn_sel3_1, bn_sel_4_0, bn_sel_4_1)
 
-    f_metadata = os.path.join(DIR_IV, 'metadata.h5')
+    f_metadata = pathjoin(DIR_IV, 'metadata.h5')
     if os.path.isfile(f_metadata):
         all_files = dd.io.load(f_metadata)['path_wavfiles']
     else:
@@ -267,7 +268,7 @@ def process():
     if ARGS.init:
         idx_start = 1
     else:
-        idx_start = len(glob(os.path.join(DIR_IV, f'*_{N_LOC - 1:02d}.h5'))) + 1
+        idx_start = len(glob(pathjoin(DIR_IV, f'*_{N_LOC - 1:02d}.h5'))) + 1
     # idx_start = 1
     print(f'Start processing from the {idx_start}-th wave file')
 
@@ -370,7 +371,7 @@ def save_IV(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *a
                 axis=1
             )
         # fname = '%04d_%02d_room.wav' % (*args, i_loc)
-        # sf.write(os.path.join(DIR_IV, fname), data_room.T, Fs)
+        # sf.write(pathjoin()(DIR_IV, fname), data_room.T, Fs)
         # print(fname)
         data_room = cp.array(data_room)
 
@@ -454,7 +455,7 @@ def save_IV(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *a
                             # IV_0=cp.asnumpy(iv_0),
                             )
         fname = FORM % (*args, i_loc)
-        dd.io.save(os.path.join(DIR_IV, fname), dict_to_save, compression=None)
+        dd.io.save(pathjoin(DIR_IV, fname), dict_to_save, compression=None)
 
         print(fname)
 
@@ -479,7 +480,7 @@ def print_save_info():
                     path_wavfiles=all_files,
                     )
 
-    dd.io.save(os.path.join(DIR_IV, 'metadata.h5'), metadata)
+    dd.io.save(pathjoin(DIR_IV, 'metadata.h5'), metadata)
 
 
 if __name__ == '__main__':
