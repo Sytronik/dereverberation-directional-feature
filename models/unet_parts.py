@@ -115,7 +115,7 @@ class FusionNetBlock(nn.Module):
 class InConv(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
-        self.block = FusionNetBlock(in_ch, out_ch, nn.ReLU())
+        self.block = FusionNetBlock(in_ch, out_ch, nn.ReLU(inplace=True))
         # self.conv = ResidualBlock(in_ch, out_ch)
 
     def forward(self, x):
