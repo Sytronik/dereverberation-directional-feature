@@ -1,4 +1,3 @@
-import atexit
 from os.path import join as pathjoin
 
 import numpy as np
@@ -21,14 +20,17 @@ class CustomWriter(SummaryWriter):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        atexit.register(self.close)
         self.one_sample = dict()
         self.recon_sample = dict()
         self.measure_x = dict()
         self.kwargs_fig = dict()
 
+    def __del__(self):
+        self.close()
+
     def close(self):
         self.export_scalars_to_json(pathjoin(self.log_dir, 'scalars.json'))
+        super().close()
 
     def write_one(self, step: int, group='',
                   out: np.ndarray = None, out_phase: np.ndarray = None,
@@ -67,9 +69,6 @@ class CustomWriter(SummaryWriter):
             x = one_sample['x'][..., -1:]
             y = one_sample['y'][..., -1:]
 
-            # x = np.sqrt(x)
-            # y = np.sqrt(y)
-
             if cfg.DO_B_EQ:
                 x, x_phase = bnkr_equalize_(x, one_sample['x_phase'][:])
                 y, y_phase = bnkr_equalize_(y, one_sample['y_phase'][:])
@@ -93,20 +92,17 @@ class CustomWriter(SummaryWriter):
             fig_x = draw_spectrogram(x)
             fig_y = draw_spectrogram(np.append(y, y.min() * pad_one, axis=1))
 
-            y_wav = wave_scale_fix(y_wav, message='y_wav')
-            x_wav = wave_scale_fix(x_wav, message='x_wav')
-
             self.add_figure(f'{group}/1. Anechoic Spectrum', fig_y, step)
             self.add_figure(f'{group}/2. Reverberant Spectrum', fig_x, step)
 
-            self.add_audio(
-                f'{group}/1. Anechoic Wave', torch.from_numpy(y_wav), step,
-                sample_rate=cfg.Fs
-            )
-            self.add_audio(
-                f'{group}/2. Reverberant Wave', torch.from_numpy(x_wav), step,
-                sample_rate=cfg.Fs
-            )
+            self.add_audio(f'{group}/1. Anechoic Wave',
+                           torch.from_numpy(wave_scale_fix(y_wav, message='y_wav')),
+                           step,
+                           sample_rate=cfg.Fs)
+            self.add_audio(f'{group}/2. Reverberant Wave',
+                           torch.from_numpy(wave_scale_fix(x_wav, message='x_wav')),
+                           step,
+                           sample_rate=cfg.Fs)
 
             self.recon_sample = dict(x=x, y=y,
                                      x_phase=x_phase, y_phase=y_phase,
@@ -144,39 +140,32 @@ class CustomWriter(SummaryWriter):
 
             odict_eval = calc_using_eval_module(y_wav,
                                                 out_wav_y_ph if eval_with_y_ph else out_wav)
-            out_wav_y_ph = torch.from_numpy(
-                wave_scale_fix(out_wav_y_ph, message='out_wav_y_ph')
-            )
-            self.add_audio(
-                f'{group}/4. Estimated Wave with Anechoic Phase', out_wav_y_ph, step,
-                sample_rate=cfg.Fs
-            )
-
-        out_wav = torch.from_numpy(
-            wave_scale_fix(out_wav, message='out_wav')
-        )
-
-        fig_out = draw_spectrogram(np.append(out, y.min() * pad_one, axis=1),
-                                   **self.kwargs_fig)
+            out_wav_y_ph = torch.from_numpy(wave_scale_fix(out_wav_y_ph,
+                                                           message='out_wav_y_ph'))
+            self.add_audio(f'{group}/4. Estimated Wave with Anechoic Phase',
+                           out_wav_y_ph,
+                           step,
+                           sample_rate=cfg.Fs)
 
         self.add_scalars(f'{group}/1. SNRseg',
                          dict(Reverberant=snrseg_x,
                               Proposed=snrseg),
                          step)
-        # for idx, key in enumerate(odict_eval.keys()):
         for idx, key in enumerate(odict_eval.keys()):
-            self.add_scalars(f'{group}/{2+idx}. {key}',
+            self.add_scalars(f'{group}/{2 + idx}. {key}',
                              dict(Reverberant=odict_eval_x[key],
                                   Proposed=odict_eval[key]),
                              step)
 
-        self.add_figure(
-            f'{group}/3. Estimated Anechoic Spectrum', fig_out, step
-        )
-        self.add_audio(
-            f'{group}/3. Estimated Anechoic Wave', out_wav, step,
-            sample_rate=cfg.Fs
-        )
+        fig_out = draw_spectrogram(np.append(out, y.min() * pad_one, axis=1),
+                                   **self.kwargs_fig)
+        self.add_figure(f'{group}/3. Estimated Anechoic Spectrum', fig_out, step)
 
-        return np.array([[snrseg]+list(odict_eval.values()),
-                         [snrseg_x]+list(odict_eval_x.values())])
+        out_wav = torch.from_numpy(wave_scale_fix(out_wav, message='out_wav'))
+        self.add_audio(f'{group}/3. Estimated Anechoic Wave',
+                       out_wav,
+                       step,
+                       sample_rate=cfg.Fs)
+
+        return np.array([[snrseg, *(odict_eval.values())],
+                         [snrseg_x, *(odict_eval_x.values())]])
