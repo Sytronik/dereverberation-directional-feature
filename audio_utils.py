@@ -9,7 +9,7 @@ from scipy.linalg import toeplitz
 
 import config as cfg
 import generic as gen
-from matlab_lib import Evaluation
+from matlab_lib import Evaluation as EvalModule
 from normalize import LogInterface as LogModule
 from utils import static_vars
 
@@ -128,11 +128,8 @@ def calc_snrseg(y_clean: np.ndarray, y_est: np.ndarray,
     return sum_result
 
 
-@static_vars(module=None)
 def calc_using_eval_module(y_clean: np.ndarray, y_est: np.ndarray,
                            T_ys: Sequence[int] = (0,)) -> ODict:
-    if not calc_using_eval_module.module:
-        calc_using_eval_module.module = Evaluation()
     if y_clean.ndim == 1:
         y_clean = y_clean[np.newaxis, ...]
         y_est = y_est[np.newaxis, ...]
@@ -142,7 +139,8 @@ def calc_using_eval_module(y_clean: np.ndarray, y_est: np.ndarray,
     keys = None
     sum_result = None
     for T, item_clean, item_est in zip(T_ys, y_clean, y_est):
-        temp = calc_using_eval_module.module(item_clean[:T], item_est[:T], cfg.Fs)
+        # noinspection PyArgumentList
+        temp = EvalModule(item_clean[:T], item_est[:T], cfg.Fs)
         result = np.array(list(temp.values()))
         if not keys:
             keys = temp.keys()
