@@ -1,30 +1,33 @@
 # noinspection PyUnresolvedReferences
+import matlab.engine
+
+import atexit
 import contextlib
 import itertools
 import os
 import sys
 from datetime import datetime
 from os.path import join as pathjoin
-
-import matlab.engine
+# from multiprocessing import Process
+#
+# import keyboard as kb
 
 import config as cfg
 
 experiment = {
-    'cfg.HyperParameters.weight_decay':
-        [1e-5, 1e-3],
-    'cfg.NORM_CLASS':
-        ['ReImMeanStdNormalization',
-         'LogReImMeanStdNormalization',
-         ],
-    'cfg.HyperParameters.weight_loss':
-        [(0.1, 0.1, 1),
-         (0, 0, 1),
-         (0.1, 0.01, 1),
-         # (0.1, 0.1, 1),
-         # (0.001, 0.001, 1),
-         # (0.01, 0.01, 1),
-         ],
+    'cfg.HyperParameters.weight_decay': [
+        1e-5,
+        1e-3,
+    ],
+    'cfg.HyperParameters.weight_loss': [
+        (1, 0.1, 0),
+        (0.1, 0.1, 0),
+        (0.01, 0.01, 0),
+    ],
+    'cfg.NORM_CLASS': [
+        'ReImMeanStdNormalization',
+        'LogReImMeanStdNormalization',
+    ],
 }
 
 main_argvs = 'python main.py UNet --train'.split(' ')[1:]
@@ -36,6 +39,19 @@ def redirect_argv(*args):
     sys.argv = list(args)
     yield
     sys.argv = sys.argv_backup
+
+
+def main():
+    with open('main.py') as fmain:
+        with redirect_argv(*main_argvs):
+            code = compile(fmain.read(), 'main.py', 'exec')
+            exec(code)
+
+
+def _exit(exp: str):
+    with open(pathjoin(cfg.DICT_PATH['UNet'], f'autoexp.txt'), 'w') as f:
+        f.write(exp)
+    os.rename(cfg.DICT_PATH['UNet'], f'{cfg.DICT_PATH["UNet"]} Done')
 
 
 if __name__ == '__main__':
@@ -56,6 +72,7 @@ if __name__ == '__main__':
     with open(pathjoin(cfg.PATH_RESULT, f'autoexp {str_now}.txt'), 'w') as f:
         f.write('\n'.join(str_exps))
 
+
     for idx, (vs, str_exp) in enumerate(zip(itertools.product(*values), str_exps)):
         # str_now = datetime.now().strftime('%y-%m-%d %Hh')
         cfg.DICT_PATH['UNet'] = f'{DIR_RESULT_backup} {str_now} (autoexp {idx})'
@@ -64,11 +81,10 @@ if __name__ == '__main__':
 
         print(str_exp)
 
-        with open('main.py') as f:
-            with redirect_argv(*main_argvs):
-                code = compile(f.read(), 'main.py', 'exec')
-                exec(code)
-
-        with open(pathjoin(cfg.DICT_PATH['UNet'], f'autoexp.txt'), 'w') as f:
-            f.write(str_exp)
-        os.rename(cfg.DICT_PATH['UNet'], f'{cfg.DICT_PATH["UNet"]} Done')
+        atexit.register(_exit, str_exp)
+        # process = Process(target=main)
+        # kb.add_hotkey('ctrl+q', process.terminate)
+        # process.start()
+        # process.join()
+        main()
+        atexit.unregister(_exit)
