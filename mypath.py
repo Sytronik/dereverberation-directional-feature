@@ -3,6 +3,7 @@ _PATH_IV = './backup/IV_sqrt'
 # _PATH_IV = './backup/IV'
 # _PATH_IV = './backup/DirAC'
 PATH_RESULT = './result'
+PATH_FIG = './figures'
 
 F_NORMCONST = 'normconst_{}_{}.h5'
 
@@ -21,6 +22,5 @@ DICT_PATH = dict(
     normconst_seen=f'{_PATH_IV}/TEST/{F_NORMCONST}',
     normconst_unseen=f'{_PATH_IV}/TEST/{F_NORMCONST}',
 
-    # UNet=f'./result/UNet 19-01-17 (w.dcy 1e-5)'
     UNet=f'{PATH_RESULT}/UNet'
 )
