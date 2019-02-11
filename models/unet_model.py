@@ -1,7 +1,7 @@
 # full assembly of the sub-parts to form the complete net
 
 import torch
-import torch.nn as nn
+from torch import nn, Tensor
 from .unet_parts import InConv, DownAndConv, UpAndConv, OutConvMap
 
 
@@ -23,7 +23,7 @@ class UNet(nn.Module):
         self.outc = OutConvMap(ch_base, ch_out)
 
     def forward(self, xin):
-        x_skip = [torch.Tensor] * 4
+        x_skip = [Tensor] * 4
         x_skip[0] = self.inc(xin)
 
         for idx, down in enumerate(self.downs[:-1]):

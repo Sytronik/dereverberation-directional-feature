@@ -17,17 +17,17 @@ import config as cfg
 
 experiment = {
     'cfg.HyperParameters.weight_decay': [
-        1e-5,
+        # 1e-5,
         1e-3,
     ],
     'cfg.HyperParameters.weight_loss': [
-        (1, 0.1, 0),
-        (0.1, 0.1, 0),
-        (0.01, 0.01, 0),
+        # (1, 0.1, 0),
+        (0.1, 1, 0),
+        # (0.1, 1, 0),
     ],
     'cfg.NORM_CLASS': [
-        'ReImMeanStdNormalization',
-        'LogReImMeanStdNormalization',
+        ('ReImMeanStdNormalization', 'LogMeanStdNormalization'),
+        # ('LogReImMeanStdNormalization', 'LogMeanStdNormalization'),
     ],
 }
 

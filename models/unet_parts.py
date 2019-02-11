@@ -1,17 +1,18 @@
-# sub-parts of the U-Net model
+"""
+sub-parts of the U-Net model
+"""
 
 from typing import Tuple
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn, Tensor
 import torch.nn.functional as F
 
 import config as cfg
 
 
-def force_size_same(
-        a: torch.Tensor, b: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+def force_size_same(a: Tensor, b: Tensor) -> Tuple[Tensor, Tensor]:
     diffX = a.shape[-2] - b.shape[-2]
     diffY = a.shape[-1] - b.shape[-1]
 

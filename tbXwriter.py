@@ -31,7 +31,8 @@ class CustomWriter(SummaryWriter):
         self.close()
 
     def close(self):
-        self.export_scalars_to_json(pathjoin(self.log_dir, 'scalars.json'))
+        if self.scalar_dict:
+            self.export_scalars_to_json(pathjoin(self.log_dir, 'scalars.json'))
         super().close()
 
     def write_one(self, step: int, group='',
