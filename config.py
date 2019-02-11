@@ -1,15 +1,15 @@
 import os
 from os.path import join as pathjoin
-from typing import NamedTuple, Tuple, Dict
+from typing import NamedTuple, Tuple, Dict, Any
 
 import deepdish as dd
 import numpy as np
 import scipy.io as scio
 import torch
+from numpy import ndarray
 from torch import nn
 
 from mypath import *
-
 
 # ============================ nn & cuda ==============================
 
@@ -25,41 +25,43 @@ class HyperParameters(NamedTuple):
     # n_per_frame: int
 
     # method = 'mag'
-    method = 'complex'
+    method: str = 'complex'
     # method = 'ifd'
 
-    CHANNELS = dict(x='all', y='alpha',
-                    fname_wav=False,
-                    x_phase=True, y_phase=True,
-                    )
-    ch_base = 32
-    dflt_kernel_size = (3, 3)
-    dflt_pad = (1, 1)
+    CHANNELS: Dict[str, Any] \
+        = dict(x='all', y='alpha',
+               fname_wav=False,
+               x_phase=True, y_phase=True,
+               )
+    ch_base: int = 32
+    dflt_kernel_size: Tuple[int, int] = (3, 3)
+    dflt_pad: Tuple[int, int] = (1, 1)
 
-    n_epochs = 169
-    batch_size = len(CUDA_DEVICES) * 8
-    learning_rate = 5e-4
-    n_file = 20 * 500
+    n_epochs: int = 449
+    batch_size: int = len(CUDA_DEVICES) * 8
+    learning_rate: float = 5e-4
+    n_file: int = 20 * 500
 
     # p = 0.5  # Dropout p
 
     # lr scheduler
-    StepLR = dict(step_size=5, gamma=0.8)
+    StepLR: Dict[str, Any] = dict(step_size=5, gamma=0.8)
 
-    CosineAnnealingLR = dict(T_max=10,
-                             eta_min=0,
-                             )
+    CosineAnnealingLR: Dict[str, Any] \
+        = dict(T_max=10,
+               eta_min=0,
+               )
 
-    CosineLRWithRestarts = dict(restart_period=10,
-                                t_mult=2,
-                                eta_threshold=1.5,
-                                )
+    CosineLRWithRestarts: Dict[str, Any] \
+        = dict(restart_period=30,
+               t_mult=2,
+               eta_threshold=0.5,
+               )
 
-    weight_decay = 1e-5  # Adam weight_decay
+    weight_decay: float = 1e-5  # Adam weight_decay
 
-    # weight_loss = (1, 0.7, 0.5)
-    # weight_loss = (1, 0, 0)
-    weight_loss = (1, 1, 1)
+    weight_loss: tuple = (0.1, 1, 0)
+    # weight_loss: tuple = (0.05, 0.5, 0.001)
 
     # def for_MLP(self) -> Tuple:
     #     n_input = self.L_cut_x * self.n_per_frame
@@ -67,7 +69,7 @@ class HyperParameters(NamedTuple):
     #     n_output = self.n_per_frame
     #     return (n_input, n_hidden, n_output, self.p)
 
-    def get_for_UNet(self) -> Tuple:
+    def get_for_UNet(self) -> tuple:
         ch_in = 4 if self.CHANNELS['x'] == 'all' else 1
         ch_out = 4 if self.CHANNELS['y'] == 'all' else 1
         if 'x_phase' in self.CHANNELS:
@@ -87,7 +89,6 @@ class HyperParameters(NamedTuple):
 hp = HyperParameters()
 
 criterion = nn.MSELoss(reduction='sum')
-
 
 # ========================= for audio utils ===========================
 
@@ -140,11 +141,10 @@ if len(N_LOC) < 3:
 sft_dict = scio.loadmat(DICT_PATH['sft_data'],
                         variable_names=('bEQf',),
                         squeeze_me=True)
-bEQf0: np.ndarray = sft_dict['bEQf'][:, 0][:, np.newaxis, np.newaxis]  # F, T, C
-bEQf0_mag: np.ndarray = np.abs(bEQf0)
-bEQf0_angle: np.ndarray = np.angle(bEQf0)
+bEQf0: ndarray = sft_dict['bEQf'][:, 0][:, np.newaxis, np.newaxis]  # F, T, C
+bEQf0_mag: ndarray = np.abs(bEQf0)
+bEQf0_angle: ndarray = np.angle(bEQf0)
 del sft_dict
-
 
 # ========================== for IVDataset ============================
 
@@ -173,7 +173,6 @@ def is_ivfile(f: os.DirEntry) -> bool:
 EPS_FOR_LOG = 1e-10
 USE_LOG = False
 NORM_USING_ONLY_X = False
-
 
 # ========================= dependent values ===========================
 
