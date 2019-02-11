@@ -12,6 +12,7 @@ from typing import Dict
 import inspect
 
 import numpy as np
+from numpy import ndarray
 
 
 class CallableSingletonMeta(type):
@@ -33,6 +34,8 @@ class CallableSingletonMeta(type):
 
 
 class Evaluation(metaclass=CallableSingletonMeta):
+    __slots__ = ('eng', 'strio')
+
     instance = None
 
     def __init__(self):
@@ -41,7 +44,7 @@ class Evaluation(metaclass=CallableSingletonMeta):
         self.strio = io.StringIO()
         Evaluation.instance: Evaluation = self
 
-    def __call__(self, clean: np.ndarray, noisy: np.ndarray, fs: int) -> ODict:
+    def __call__(self, clean: ndarray, noisy: ndarray, fs: int) -> ODict:
         clean = matlab.double(clean.tolist())
         noisy = matlab.double(noisy.tolist())
         fs = matlab.double([fs])
@@ -53,10 +56,10 @@ class Evaluation(metaclass=CallableSingletonMeta):
     def _exit(self):
         self.eng.quit()
 
-        fname = datetime.now().strftime('log_matlab_eng_%Y-%m-%d %H.%M.%S.txt')
-        with io.open(fname, 'w') as flog:
-            self.strio.seek(0)
-            shutil.copyfileobj(self.strio, flog)
+        # fname = datetime.now().strftime('log_matlab_eng_%Y-%m-%d %H.%M.%S.txt')
+        # with io.open(fname, 'w') as flog:
+        #     self.strio.seek(0)
+        #     shutil.copyfileobj(self.strio, flog)
 
         self.strio.close()
 
