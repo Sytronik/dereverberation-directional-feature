@@ -22,9 +22,9 @@ class STFT(nn.Module):
         fourier_basis = np.vstack([np.real(fourier_basis[:cutoff, :]),
                                    np.imag(fourier_basis[:cutoff, :])])
         forward_basis = torch.tensor(fourier_basis[:, None, :],
-                                     dtype=torch.float32, requires_grad=False)
+                                     dtype=torch.float32).pin_memory()
         inverse_basis = torch.tensor(np.linalg.pinv(scale * fourier_basis).T[:, None, :],
-                                     dtype=torch.float32, requires_grad=False)
+                                     dtype=torch.float32).pin_memory()
 
         self.register_buffer('forward_basis', forward_basis)
         self.register_buffer('inverse_basis', inverse_basis)

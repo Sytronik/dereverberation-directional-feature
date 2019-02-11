@@ -21,7 +21,8 @@ parser.add_argument(
     '--train', action='store_true',
 )
 parser.add_argument(
-    '--test', type=str, nargs='?', const='unseen', choices=('valid', 'seen', 'unseen'),
+    '--test',
+    type=str, nargs='?', const='unseen', choices=('valid', 'seen', 'unseen'),
     metavar='DATASET'
 )
 parser.add_argument(
@@ -29,7 +30,7 @@ parser.add_argument(
     dest='epoch', metavar='EPOCH',
 )
 parser.add_argument(
-    '--debug', '-d', action='store_const', const=0, default=cpu_count(),
+    '--debug', '-d', action='store_const', const=0, default=4,
     dest='num_workers',
 )  # number of cpu threads for dataloaders
 ARGS = parser.parse_args()
@@ -54,8 +55,7 @@ else:
 # epoch, state dict
 FIRST_EPOCH = ARGS.epoch[0] + 1
 if FIRST_EPOCH > 0:
-    F_STATE_DICT = pathjoin(DIR_TRAIN,
-                                f'{model_name}_{ARGS.epoch[0]}.pt')
+    F_STATE_DICT = pathjoin(DIR_TRAIN, f'{model_name}_{ARGS.epoch[0]}.pt')
 else:
     F_STATE_DICT = ''
 
@@ -77,6 +77,7 @@ loader_valid = DataLoader(dataset_valid,
                           shuffle=False,
                           num_workers=ARGS.num_workers,
                           collate_fn=dataset_valid.pad_collate,
+                          pin_memory=True,
                           )
 
 # run
@@ -86,6 +87,7 @@ if ARGS.train:
                               shuffle=True,
                               num_workers=ARGS.num_workers,
                               collate_fn=dataset_train.pad_collate,
+                              pin_memory=True,
                               )
     # noinspection PyProtectedMember
     dd.io.save(pathjoin(DIR_TRAIN, cfg.F_HPARAMS),
@@ -112,7 +114,7 @@ elif ARGS.test:
                             collate_fn=dataset_test.pad_collate,
                             )
 
-    trainer = Trainer('UNet', use_cuda=False)
+    trainer = Trainer('UNet', use_cuda=True)
     trainer.test(loader, DIR_TEST, F_STATE_DICT)
 else:
     raise ArgumentError
