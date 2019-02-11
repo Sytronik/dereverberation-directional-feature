@@ -106,6 +106,12 @@ class IVDataset(Dataset):
         return len(self._all_files)
 
     def __getitem__(self, idx: int):
+        """
+
+        :param idx:
+        :return: Dict[str, Any].
+            Dict value can be an integer, ndarray, or str
+        """
         sample = dict()
         for k, v in self._needs.items():
             if v:
@@ -114,7 +120,7 @@ class IVDataset(Dataset):
                                   sel=cfg.CH_SLICES[v])
                 if type(data) == np.str_:
                     data = str(data)
-                sample[k] = data
+                sample[k] = data.astype(np.float32)
 
         for xy in ('x', 'y'):
             sample[f'T_{xy}'] = sample[xy].shape[-2]
@@ -122,7 +128,15 @@ class IVDataset(Dataset):
         return sample
 
     @staticmethod
+    @torch.no_grad()
     def pad_collate(batch: List[Dict]) -> Dict:
+        """
+
+        :param batch:
+        :return: Dict[str, Any]
+            Dict value can be an Tensor(cpu), list of str, ndarray of int.
+            Important data like x, y are all converted to Tensor(cpu).
+        """
         result = dict()
         T_xs = np.array([item.pop('T_x') for item in batch])
         idxs_sorted = np.argsort(T_xs)
@@ -145,14 +159,23 @@ class IVDataset(Dataset):
                         for idx in idxs_sorted]
                 data = pad_sequence(data, batch_first=True)
                 # B, F, T, C
-                data = data.permute(0, -2, -3, -1).numpy()
+                data = data.permute(0, -2, -3, -1)  # .numpy()
 
                 result[key] = data
 
         return result
 
     @staticmethod
+    @torch.no_grad()
     def decollate_padded(batch: Dict, idx: int) -> Dict:
+        """
+
+        :param batch:
+        :param idx:
+        :return: Dict[str, Any]
+            Dict value can be an str or ndarray.
+            Important data like x, y are all converted to ndarray.
+        """
         result = dict()
         for key, value in batch.items():
             if type(value) == str:
@@ -161,7 +184,7 @@ class IVDataset(Dataset):
                 result[key] = value[key]
             elif not key.startswith('T_'):
                 T_xy = 'T_xs' if 'x' in key else 'T_ys'
-                result[key] = value[idx, :, :batch[T_xy][idx], :]
+                result[key] = value[idx, :, :batch[T_xy][idx], :].numpy()
         return result
 
     @staticmethod

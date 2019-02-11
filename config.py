@@ -108,8 +108,8 @@ if os.path.isfile(_f_metadata):
 
     # STFT/iSTFT arguments
     kwargs = dict(hop_length=L_hop, window='hann', center=True)
-    KWARGS_STFT = dict(**kwargs, n_fft=N_fft, dtype=np.complex128)
-    KWARGS_ISTFT = dict(**kwargs, dtype=np.float64)
+    KWARGS_STFT = dict(**kwargs, n_fft=N_fft, dtype=np.complex64)
+    KWARGS_ISTFT = dict(**kwargs, dtype=np.float32)
     del kwargs
 
 _f_metadata = pathjoin(DICT_PATH['iv_seen'], 'metadata.h5')

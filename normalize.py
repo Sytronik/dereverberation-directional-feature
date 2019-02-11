@@ -27,7 +27,7 @@ class NormalizationBase(dd.util.Saveable, metaclass=ABCMeta):
 
     @staticmethod
     def _tensor(consts, device=torch.device('cpu')):
-        return [torch.tensor(a, device=device, dtype=torch.float32) for a in consts]
+        return [torch.tensor(a, device=device) for a in consts]
 
     @staticmethod
     def _calc_per_file(tup: Tuple) -> Tuple:

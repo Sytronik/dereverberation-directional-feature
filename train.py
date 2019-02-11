@@ -307,14 +307,14 @@ class Trainer(metaclass=TrainerMeta):
 
 
 class MagTrainer(Trainer):
-    def _pre(self, data: Dict[str, np.ndarray], dataset: IVDataset) \
-            -> Tuple[torch.Tensor, torch.Tensor]:
+    def _pre(self, data: Dict[str, ndarray], dataset: IVDataset) \
+            -> Tuple[Tensor, Tensor]:
         # B, F, T, C
         x = data['x']
         y = data['y']
 
-        x = torch.tensor(x, dtype=torch.float32, device=self.x_device)
-        y = torch.tensor(y, dtype=torch.float32, device=self.y_device)
+        x = x.to(self.x_device)
+        y = y.to(self.y_device)
 
         x = dataset.normalize_('x', x)
         y = dataset.normalize_('y', y)
@@ -378,10 +378,10 @@ class ComplexTrainer(Trainer):
         x_phase = data['x_phase']
         y_phase = data['y_phase']
 
-        x = torch.tensor(x, dtype=torch.float32, device=self.x_device)
-        y = torch.tensor(y, dtype=torch.float32, device=self.y_device)
-        x_phase = torch.tensor(x_phase, dtype=torch.float32, device=self.x_device)
-        y_phase = torch.tensor(y_phase, dtype=torch.float32, device=self.y_device)
+        x = x.to(self.x_device)
+        y = y.to(self.y_device)
+        x_phase = x_phase.to(self.x_device)
+        y_phase = y_phase.to(self.y_device)
 
         x = dataset.normalize_('x', x, x_phase)
         y = dataset.normalize_('y', y, y_phase)
