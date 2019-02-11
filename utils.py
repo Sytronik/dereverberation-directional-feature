@@ -104,14 +104,8 @@ def print_cuda_tensors():
             pass
 
 
-def silently_call(fn: Callable):
-    with open(os.devnull, 'w') as devnull:
-        with contextlib.redirect_stdout(devnull):
-            fn()
-
-
 def print_to_file(fname: str, fn: Callable, args=None, kwargs=None):
-    if not fname.endswith('.txt'):
+    if fname and not fname.endswith('.txt'):
         fname = f'{fname}.txt'
 
     if args is None:
@@ -119,6 +113,6 @@ def print_to_file(fname: str, fn: Callable, args=None, kwargs=None):
     if kwargs is None:
         kwargs = dict()
 
-    with open(fname, 'w') as file:
+    with (open(fname, 'w') if fname else open(os.devnull, 'w')) as file:
         with contextlib.redirect_stdout(file):
             fn(*args, **kwargs)
