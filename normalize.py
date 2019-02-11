@@ -6,6 +6,7 @@ from typing import Dict, List, Sequence, Tuple
 import deepdish as dd
 import numpy as np
 import torch
+from numpy import ndarray
 
 import config as cfg
 import generic as gen
@@ -158,15 +159,15 @@ class MeanStdNormalization(NormalizationBase):
         return a, None
 
     @classmethod
-    def _size(cls, a: np.ndarray, a_phase: np.ndarray, *args) -> int:
+    def _size(cls, a: ndarray, a_phase: ndarray, *args) -> int:
         return np.size(cls.pre_(a, a_phase))
 
     @classmethod
-    def _sum(cls, a: np.ndarray, a_phase: np.ndarray, *args) -> np.ndarray:
+    def _sum(cls, a: ndarray, a_phase: ndarray, *args) -> ndarray:
         return cls.pre_(a, a_phase).sum(axis=1, keepdims=True)
 
     @classmethod
-    def _sq_dev(cls, a: np.ndarray, a_phase: np.ndarray, *args) -> np.ndarray:
+    def _sq_dev(cls, a: ndarray, a_phase: ndarray, *args) -> ndarray:
         mean_a = args[0]
         return ((cls.pre_(a, a_phase) - mean_a)**2).sum(axis=1, keepdims=True)
 
@@ -253,11 +254,11 @@ class MeanStdNormalization(NormalizationBase):
 #         super().__init__(*args, **kwargs)
 #
 #     @classmethod
-#     def _min(cls, a: np.ndarray, *args) -> np.ndarray:
+#     def _min(cls, a: ndarray, *args) -> ndarray:
 #         return a.min(axis=1, keepdims=True)
 #
 #     @classmethod
-#     def _max(cls, a: np.ndarray, *args) -> np.ndarray:
+#     def _max(cls, a: ndarray, *args) -> ndarray:
 #         return a.max(axis=1, keepdims=True)
 #
 #     @classmethod
@@ -311,7 +312,7 @@ class LogInterface:
     EPS = cfg.EPS_FOR_LOG
 
     @classmethod
-    def log(cls, a: TensArr) -> TensArr:
+    def log(cls, a: TensArr, only_I=False) -> TensArr:
         pkg = gen.dict_package[type(a)]
 
         b = pkg.empty_like(a)
@@ -319,14 +320,15 @@ class LogInterface:
             r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
             log_r = pkg.log10((r + cls.EPS) / cls.EPS)
             b[..., :3] = a[..., :3] * log_r / (r + cls.EPS)
-
-            b[..., 3] = pkg.log10((a[..., 3] + cls.EPS) / cls.EPS)
+            if not only_I:
+                b[..., 3] = pkg.log10((a[..., 3] + cls.EPS) / cls.EPS)
         else:
-            b = pkg.log10((a + cls.EPS) / cls.EPS)
+            if not only_I:
+                b = pkg.log10((a + cls.EPS) / cls.EPS)
         return b
 
     @classmethod
-    def log_(cls, a: TensArr) -> TensArr:
+    def log_(cls, a: TensArr, only_I=False) -> TensArr:
         pkg = gen.dict_package[type(a)]
 
         if a.shape[-1] == 4:
@@ -334,14 +336,15 @@ class LogInterface:
             log_r = pkg.log10((r + cls.EPS) / cls.EPS)
             a[..., :3] *= log_r
             a[..., :3] /= (r + cls.EPS)
-
-            a[..., 3] = pkg.log10((a[..., 3] + cls.EPS) / cls.EPS)
+            if not only_I:
+                a[..., 3] = pkg.log10((a[..., 3] + cls.EPS) / cls.EPS)
         else:
-            pkg.log10((a + cls.EPS) / cls.EPS, out=a)
+            if not only_I:
+                pkg.log10((a + cls.EPS) / cls.EPS, out=a)
         return a
 
     @classmethod
-    def exp(cls, a: TensArr) -> TensArr:
+    def exp(cls, a: TensArr, only_I=False) -> TensArr:
         pkg = gen.dict_package[type(a)]
 
         b = pkg.empty_like(a)
@@ -349,14 +352,15 @@ class LogInterface:
             r = (a[..., :3]**2).sum(-1, **cls.KWARGS_SUM[pkg])**0.5
             exp_r = cls.EPS * (10.**r - 1)
             b[..., :3] = a[..., :3] * exp_r / (r + cls.EPS)
-
-            b[..., 3] = cls.EPS * (10.**a[..., 3] - 1)
+            if not only_I:
+                b[..., 3] = cls.EPS * (10.**a[..., 3] - 1)
         else:
-            b = cls.EPS * (10.**a - 1)
+            if not only_I:
+                b = cls.EPS * (10.**a - 1)
         return b
 
     @classmethod
-    def exp_(cls, a: TensArr) -> TensArr:
+    def exp_(cls, a: TensArr, only_I=False) -> TensArr:
         pkg = gen.dict_package[type(a)]
 
         if a.shape[-1] == 4:
@@ -364,10 +368,11 @@ class LogInterface:
             exp_r = cls.EPS * (10.**r - 1)
             a[..., :3] *= exp_r
             a[..., :3] /= (r + cls.EPS)
-
-            a[..., 3] = cls.EPS * (10.**a[..., 3] - 1)
+            if not only_I:
+                a[..., 3] = cls.EPS * (10.**a[..., 3] - 1)
         else:
-            a = cls.EPS * (10.**a - 1)
+            if not only_I:
+                a = cls.EPS * (10.**a - 1)
         return a
 
 
@@ -391,11 +396,11 @@ class LogMeanStdNormalization(MeanStdNormalization, LogInterface):
 
 # class LogMinMaxNormalization(MinMaxNormalization, LogInterface):
 #     @classmethod
-#     def _min(cls, a: np.ndarray, *args) -> np.ndarray:
+#     def _min(cls, a: ndarray, *args) -> ndarray:
 #         return super()._min(cls.log_(a))
 #
 #     @classmethod
-#     def _max(cls, a: np.ndarray, *args) -> np.ndarray:
+#     def _max(cls, a: ndarray, *args) -> ndarray:
 #         return super()._max(cls.log_(a))
 #
 #     def normalize(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
@@ -441,31 +446,31 @@ class ReImMeanStdNormalization(MeanStdNormalization):
         return b, b_phase
 
     @classmethod
-    def _size(cls, a: np.ndarray, a_phase: np.ndarray, *args) -> int:
+    def _size(cls, a: ndarray, a_phase: ndarray, *args) -> int:
         return np.size(a) + np.size(a_phase)
 
 
 class LogReImMeanStdNormalization(ReImMeanStdNormalization, LogInterface):
     @classmethod
     def pre(cls, a: TensArr, a_phase: TensArr = None) -> TensArr:
-        a = cls.log(a)
+        a = cls.log(a, only_I=True)
         return magphase2realimag(a, a_phase)
 
     @classmethod
     def pre_(cls, a: TensArr, a_phase: TensArr = None) -> TensArr:
-        a = cls.log_(a)
+        a = cls.log_(a, only_I=True)
         return magphase2realimag(a, a_phase)
 
     @classmethod
     def post(cls, a: TensArr) -> tuple:
         b, b_phase = realimag2magphase(a, concat=False)
-        b = cls.exp_(b)
+        b = cls.exp_(b, only_I=True)
         return b, b_phase
 
     @classmethod
     def post_(cls, a: TensArr) -> tuple:
         b, b_phase = realimag2magphase(a, concat=False)
-        b = cls.exp_(b)
+        b = cls.exp_(b, only_I=True)
         return b, b_phase
 
 
@@ -489,8 +494,8 @@ def realimag2magphase(a: TensArr, concat=True) -> TensArrOrSeq:
 
 
 # indexing 다시 해야함
-# def complex2magphase(a: np.ndarray, concat=True) \
-#         -> Union[np.ndarray, Sequence[np.ndarray]]:
+# def complex2magphase(a: ndarray, concat=True) \
+#         -> Union[ndarray, Sequence[ndarray]]:
 #     a_mag = np.abs(a[..., -1])
 #     a_phase = np.angle(a[..., -1])
 #     if concat:
@@ -499,7 +504,7 @@ def realimag2magphase(a: TensArr, concat=True) -> TensArrOrSeq:
 #         return np.cat((a[..., :-1].real, a_mag), axis=-1), a_phase
 
 
-# def realimag2complex(a: np.ndarray) -> np.ndarray:
+# def realimag2complex(a: ndarray) -> ndarray:
 #     a_complex = a[..., -2] + 1j * a[..., -1]
 #
 #     return np.cat((a[..., :-2], a_complex), axis=-1)
