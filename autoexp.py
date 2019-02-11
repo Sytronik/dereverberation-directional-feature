@@ -8,6 +8,7 @@ import os
 import sys
 from datetime import datetime
 from os.path import join as pathjoin
+import gc
 # from multiprocessing import Process
 #
 # import keyboard as kb
@@ -41,17 +42,18 @@ def redirect_argv(*args):
     sys.argv = sys.argv_backup
 
 
-def main():
+def run_main():
     with open('main.py') as fmain:
         with redirect_argv(*main_argvs):
             code = compile(fmain.read(), 'main.py', 'exec')
             exec(code)
+            gc.collect()
 
 
 def _exit(exp: str):
     with open(pathjoin(cfg.DICT_PATH['UNet'], f'autoexp.txt'), 'w') as f:
         f.write(exp)
-    os.rename(cfg.DICT_PATH['UNet'], f'{cfg.DICT_PATH["UNet"]} Done')
+    # os.rename(cfg.DICT_PATH['UNet'], f'{cfg.DICT_PATH["UNet"]} Done')
 
 
 if __name__ == '__main__':
@@ -60,6 +62,7 @@ if __name__ == '__main__':
     # cfg.DICT_PATH['UNet'] += '_auto'
     DIR_RESULT_backup = cfg.DICT_PATH['UNet']
 
+    # save configurations
     keys_shorten = [k.replace('cfg.', '').replace('HyperParameters', 'hp') for k in keys]
     str_now = datetime.now().strftime('%y-%m-%d %Hh %Mm')
     str_exps = []
@@ -72,8 +75,13 @@ if __name__ == '__main__':
     with open(pathjoin(cfg.PATH_RESULT, f'autoexp {str_now}.txt'), 'w') as f:
         f.write('\n'.join(str_exps))
 
-
+    # iterate main
     for idx, (vs, str_exp) in enumerate(zip(itertools.product(*values), str_exps)):
+        # warning
+        # if idx == 0:
+        #     continue
+
+        # apply configurations
         # str_now = datetime.now().strftime('%y-%m-%d %Hh')
         cfg.DICT_PATH['UNet'] = f'{DIR_RESULT_backup} {str_now} (autoexp {idx})'
         for k, v in zip(keys, vs):
@@ -86,5 +94,5 @@ if __name__ == '__main__':
         # kb.add_hotkey('ctrl+q', process.terminate)
         # process.start()
         # process.join()
-        main()
+        run_main()
         atexit.unregister(_exit)
