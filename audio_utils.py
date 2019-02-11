@@ -5,6 +5,7 @@ import librosa
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
+from numpy import ndarray
 from scipy.linalg import toeplitz
 
 import config as cfg
@@ -21,7 +22,7 @@ from utils import static_vars
 #         super().__init__()
 #
 #     def forward(self, y_clean: torch.Tensor, y_est: torch.Tensor,
-#                 T_ys: np.ndarray) -> torch.Tensor:
+#                 T_ys: ndarray) -> torch.Tensor:
 #         if not T_ys:
 #             T_ys = (y_est.shape[-2],) * y_est.shape[0]
 #         sum_result = torch.zeros(1, device=y_est.device)
@@ -70,7 +71,7 @@ from utils import static_vars
 #         return ODict([(metric, sum_ / self.__len)
 #                       for metric, sum_ in self.__sum_values.items()])
 #
-#     def append(self, y: np.ndarray, out: np.ndarray,
+#     def append(self, y: ndarray, out: ndarray,
 #                T_ys: Union[int, Sequence[int]]) -> str:
 #         values = ODict([(metric, eval(self.DICT_CALC[metric])(y, out, T_ys))
 #                         for metric in self.__METRICS])
@@ -91,15 +92,15 @@ from utils import static_vars
 #         )
 #
 #
-# def calc_stoi(y_clean: np.ndarray, y_est: np.ndarray):
+# def calc_stoi(y_clean: ndarray, y_est: ndarray):
 #     sum_result = 0.
 #     for item_clean, item_est in zip(y_clean, y_est):
 #         sum_result += stoi(item_clean, item_est, cfg.Fs)
 #     return sum_result
 
 
-def calc_snrseg(y_clean: np.ndarray, y_est: np.ndarray,
-                T_ys: Sequence[int] = (0,)) -> np.ndarray:
+def calc_snrseg(y_clean: ndarray, y_est: ndarray,
+                T_ys: Sequence[int] = (0,)) -> ndarray:
     _LIM_UPPER = 35. / 10.  # clip at 35 dB
     _LIM_LOWER = -10. / 10.  # clip at -10 dB
     if len(T_ys) == 1 and y_clean.shape[0] != 1:
@@ -128,7 +129,7 @@ def calc_snrseg(y_clean: np.ndarray, y_est: np.ndarray,
     return sum_result
 
 
-def calc_using_eval_module(y_clean: np.ndarray, y_est: np.ndarray,
+def calc_using_eval_module(y_clean: ndarray, y_est: ndarray,
                            T_ys: Sequence[int] = (0,)) -> ODict:
     if y_clean.ndim == 1:
         y_clean = y_clean[np.newaxis, ...]
@@ -151,17 +152,21 @@ def calc_using_eval_module(y_clean: np.ndarray, y_est: np.ndarray,
     return ODict(zip(keys, sum_result.tolist()))
 
 
-def wave_scale_fix(wave: np.ndarray, amp_limit=1., message='') -> np.ndarray:
+def wave_scale_fix(wave: ndarray, amp_limit=1., message='', io=None) -> ndarray:
     max_amp = np.max(np.abs(wave))
     if max_amp > amp_limit:
         wave /= max_amp
         if message:
-            print(f'{message} is scaled by {max_amp / amp_limit} to prevent clipping.')
+            message = f'{message} is scaled by {max_amp / amp_limit} to prevent clipping.\n'
+            if io:
+                io.write(message)
+            else:
+                print(message, end='')
 
     return wave
 
 
-def reconstruct_wave(*args: np.ndarray, n_iter=0, n_sample=-1) -> np.ndarray:
+def reconstruct_wave(*args: ndarray, n_iter=0, n_sample=-1) -> ndarray:
     if len(args) == 1:
         spec = args[0].squeeze()
         mag = None
@@ -249,7 +254,7 @@ def draw_spectrogram(data: gen.TensArr, is_power=False, show=False, **kwargs):
     data = LogModule.log(data)
     data = data.squeeze()
     data *= scale_factor
-    data = gen.convert(data, astype=np.ndarray)
+    data = gen.convert(data, astype=ndarray)
 
     fig = plt.figure()
     plt.imshow(data,

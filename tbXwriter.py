@@ -20,12 +20,14 @@ class CustomWriter(SummaryWriter):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.flogtxt = open(pathjoin(self.log_dir, 'log.txt'), 'w')
         self.one_sample = dict()
         self.recon_sample = dict()
         self.measure_x = dict()
         self.kwargs_fig = dict()
 
     def __del__(self):
+        self.flogtxt.close()
         self.close()
 
     def close(self):
@@ -96,11 +98,19 @@ class CustomWriter(SummaryWriter):
             self.add_figure(f'{group}/2. Reverberant Spectrum', fig_x, step)
 
             self.add_audio(f'{group}/1. Anechoic Wave',
-                           torch.from_numpy(wave_scale_fix(y_wav, message='y_wav')),
+                           torch.from_numpy(
+                               wave_scale_fix(y_wav,
+                                              message=f'At step {step}, y_wav',
+                                              io=self.flogtxt)
+                           ),
                            step,
                            sample_rate=cfg.Fs)
             self.add_audio(f'{group}/2. Reverberant Wave',
-                           torch.from_numpy(wave_scale_fix(x_wav, message='x_wav')),
+                           torch.from_numpy(
+                               wave_scale_fix(x_wav,
+                                              message=f'At step {step}, x_wav',
+                                              io=self.flogtxt)
+                           ),
                            step,
                            sample_rate=cfg.Fs)
 
@@ -138,10 +148,15 @@ class CustomWriter(SummaryWriter):
                 out_wav = reconstruct_wave(out, out_phase)
             out_wav_y_ph = reconstruct_wave(out, y_phase)
 
-            odict_eval = calc_using_eval_module(y_wav,
-                                                out_wav_y_ph if eval_with_y_ph else out_wav)
-            out_wav_y_ph = torch.from_numpy(wave_scale_fix(out_wav_y_ph,
-                                                           message='out_wav_y_ph'))
+            odict_eval = calc_using_eval_module(
+                y_wav,
+                out_wav_y_ph if eval_with_y_ph else out_wav
+            )
+            out_wav_y_ph = torch.from_numpy(
+                wave_scale_fix(out_wav_y_ph,
+                               message=f'At step {step}, out_wav_y_ph',
+                               io=self.flogtxt)
+            )
             self.add_audio(f'{group}/4. Estimated Wave with Anechoic Phase',
                            out_wav_y_ph,
                            step,
@@ -161,7 +176,11 @@ class CustomWriter(SummaryWriter):
                                    **self.kwargs_fig)
         self.add_figure(f'{group}/3. Estimated Anechoic Spectrum', fig_out, step)
 
-        out_wav = torch.from_numpy(wave_scale_fix(out_wav, message='out_wav'))
+        out_wav = torch.from_numpy(
+            wave_scale_fix(out_wav,
+                           message=f'At step {step}, out_wav',
+                           io=self.flogtxt)
+        )
         self.add_audio(f'{group}/3. Estimated Anechoic Wave',
                        out_wav,
                        step,
