@@ -2,7 +2,7 @@ import os
 from copy import copy
 from glob import glob
 from os.path import join as pathjoin
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple, TypeVar
 
 import deepdish as dd
 import numpy as np
@@ -15,6 +15,8 @@ import config as cfg
 # noinspection PyUnresolvedReferences
 import normalize
 from generic import TensArr
+
+StrOrSeq = TypeVar('StrOrSeq', str, Sequence[str])
 
 
 class IVDataset(Dataset):
@@ -32,74 +34,90 @@ class IVDataset(Dataset):
     __slots__ = ('_PATH', '_needs', '_normalization', '_all_files')
 
     def __init__(self, kind_data: str,
-                 n_file=-1, random_by_utterance=False, norm_class=None, **kwargs):
+                 n_file=-1, random_by_utterance=False, norm_classes: StrOrSeq = None,
+                 **kwargs):
         self._PATH = cfg.DICT_PATH[f'iv_{kind_data}']
         self._needs = dict(x='all', y='alpha',
                            x_phase=False, y_phase=False,
                            fname_wav=True)
         self.set_needs(**kwargs)
 
+        self._all_files = None
+        if not norm_classes or type(norm_classes) == str:
+            norm_classes = (norm_classes,)
+        _normalization = [None] * len(norm_classes)
+
         # f_normconst: The name of the file
         # that has information about data file list, mean, std, ...
         list_f_norm = glob(cfg.DICT_PATH[f'normconst_{kind_data}'].format(n_file, '*'))
-        f_normconst = cfg.DICT_PATH[f'normconst_{kind_data}'].format(n_file, norm_class)
+        for idx, norm_class in enumerate(norm_classes):
+            f_normconst = cfg.DICT_PATH[f'normconst_{kind_data}'].format(n_file, norm_class)
 
-        if f_normconst in list_f_norm:
-            _all_files, normconst = dd.io.load(f_normconst)
-            should_calc_save = False
-        elif len(list_f_norm) > 0:
-            _all_files, _ = dd.io.load(list_f_norm[0])
-            should_calc_save = True
-            normconst = None
-        else:
-            # search all data files
-            _all_files = [f.name for f in os.scandir(self._PATH) if cfg.is_ivfile(f)]
-            _all_files = sorted(_all_files)
-            if n_file != -1:
-                if random_by_utterance:
-                    utterances = np.random.randint(len(_all_files) // cfg.N_LOC[kind_data],
-                                                   size=n_file // cfg.N_LOC[kind_data])
-                    utterances = [f'{u:4d}_' for u in utterances]
-                    _all_files = [f for f in _all_files if f.startswith(utterances)]
+            if f_normconst in list_f_norm:
+                _all_files, normconst = dd.io.load(f_normconst)
+                should_calc_save = False
+            elif not self._all_files:
+                if len(list_f_norm) > 0:
+                    _all_files, _ = dd.io.load(list_f_norm[0])
+                    normconst = None
+                    should_calc_save = True
                 else:
-                    _all_files = np.random.permutation(_all_files)
-                    _all_files = _all_files[:n_file]
-            should_calc_save = True
-            normconst = None
-
-        _all_files = [pathjoin(self._PATH, f) for f in _all_files]
-        self._all_files = [f for f in _all_files if os.path.isfile(f)]
-
-        if cfg.REFRESH_CONST:
-            should_calc_save = True
-
-        if norm_class:
-            norm_class = eval(f'normalize.{norm_class}')
-            if not should_calc_save:
-                self._normalization = norm_class.load_from_dict(normconst)
+                    # search all data files
+                    _all_files = [f.name for f in os.scandir(self._PATH) if cfg.is_ivfile(f)]
+                    _all_files = sorted(_all_files)
+                    if n_file != -1:
+                        if random_by_utterance:
+                            utterances = np.random.randint(len(_all_files) // cfg.N_LOC[kind_data],
+                                                           size=n_file // cfg.N_LOC[kind_data])
+                            utterances = [f'{u:4d}_' for u in utterances]
+                            _all_files = [f for f in _all_files if f.startswith(utterances)]
+                        else:
+                            _all_files = np.random.permutation(_all_files)
+                            _all_files = _all_files[:n_file]
+                    normconst = None
+                    should_calc_save = True
             else:
-                self._normalization = norm_class.create(self._all_files)
-        else:
-            self._normalization = None
+                _all_files = [os.path.basename(f) for f in self._all_files]
+                normconst = None
+                should_calc_save = True
 
-        if should_calc_save:
-            basenames = [os.path.basename(f) for f in self._all_files]
-            dd.io.save(
-                f_normconst,
-                (basenames,
-                 self._normalization.save_to_dict() if self._normalization else None,
-                 )
-            )
-            scio.savemat(
-                f_normconst.replace('.h5', '.mat'),
-                dict(all_files=basenames,
-                     **(self._normalization.save_to_dict(only_consts=True)
-                        if self._normalization else dict()
-                        )
-                     )
-            )
+            if not self._all_files:
+                self._all_files = [pathjoin(self._PATH, f) for f in _all_files]
+                self._all_files = [f for f in self._all_files if os.path.isfile(f)]
 
-        print(self._normalization)
+            if cfg.REFRESH_CONST:
+                should_calc_save = True
+
+            if norm_class:
+                norm_class = eval(f'normalize.{norm_class}')
+                if not should_calc_save:
+                    _normalization[idx] = norm_class.load_from_dict(normconst)
+                else:
+                    _normalization[idx] = norm_class.create(self._all_files)
+
+            if should_calc_save:
+                if _normalization[idx]:
+                    dd.io.save(
+                        f_normconst,
+                        (_all_files,
+                         _normalization[idx].save_to_dict(),
+                         )
+                    )
+                    scio.savemat(
+                        f_normconst.replace('.h5', '.mat'),
+                        dict(all_files=_all_files,
+                             **_normalization[idx].save_to_dict(only_consts=True)
+                             )
+                    )
+                else:
+                    dd.io.save(f_normconst, (_all_files, None))
+                    scio.savemat(f_normconst.replace('.h5', '.mat'),
+                                 dict(all_files=_all_files)
+                                 )
+
+            print(_normalization[idx])
+
+        self._normalization = _normalization
         print(f'{len(self._all_files)} files prepared from {kind_data.upper()}.')
 
     def __len__(self):
@@ -216,17 +234,17 @@ class IVDataset(Dataset):
                         or type(kwargs[k]) == bool)
                 self._needs[k] = kwargs[k]
 
-    def normalize(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
-        return self._normalization.normalize(xy, a, a_phase)
+    def normalize(self, xy: str, a: TensArr, a_phase: TensArr = None, idx=0) -> TensArr:
+        return self._normalization[idx].normalize(xy, a, a_phase)
 
-    def normalize_(self, xy: str, a: TensArr, a_phase: TensArr = None) -> TensArr:
-        return self._normalization.normalize_(xy, a, a_phase)
+    def normalize_(self, xy: str, a: TensArr, a_phase: TensArr = None, idx=0) -> TensArr:
+        return self._normalization[idx].normalize_(xy, a, a_phase)
 
-    def denormalize(self, xy: str, a: TensArr) -> TensArr:
-        return self._normalization.denormalize(xy, a)
+    def denormalize(self, xy: str, a: TensArr, idx=0) -> TensArr:
+        return self._normalization[idx].denormalize(xy, a)
 
-    def denormalize_(self, xy: str, a: TensArr) -> TensArr:
-        return self._normalization.denormalize_(xy, a)
+    def denormalize_(self, xy: str, a: TensArr, idx=0) -> TensArr:
+        return self._normalization[idx].denormalize_(xy, a)
 
     # noinspection PyProtectedMember
     @classmethod

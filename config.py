@@ -186,6 +186,7 @@ elif hp.method == 'complex':
         NORM_CLASS = 'LogReImMeanStdNormalization'
     else:
         NORM_CLASS = 'ReImMeanStdNormalization'
+    NORM_CLASS = (NORM_CLASS, 'LogMeanStdNormalization')
 
 CH_WITH_PHASE = dict(**hp.CHANNELS)
 

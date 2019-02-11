@@ -414,20 +414,23 @@ class ComplexTrainer(Trainer):
             self.name_loss_terms = ('mse', 'mse of log mag', 'mse of wave')
         loss = torch.zeros(3, device=self.y_device)
         for T, item_y, item_out in zip(T_ys, y, output):
+            if cfg.hp.weight_loss[0] > 0:
+                loss[0] += self.criterion(item_out[:, :, :T], item_y[:, :, :T]) / int(T)
+
+            if not (cfg.hp.weight_loss[1] or cfg.hp.weight_loss[2]):
+                continue
             # F, T, C
             mag_out, phase_out \
                 = dataset.denormalize('y', item_out[:, :, :T].permute(1, 2, 0))
             mag_y, phase_y \
                 = dataset.denormalize('y', item_y[:, :, :T].permute(1, 2, 0))
 
-            if cfg.hp.weight_loss[0] > 0:
-                loss[0] += self.criterion(item_out[:, :, :T], item_y[:, :, :T]) / int(T)
             if cfg.hp.weight_loss[1] > 0:
                 # F, T, C
-                logmag_out = LogModule.log(mag_out)
-                logmag_y = LogModule.log(mag_y)
+                mag_norm_out = dataset.normalize('y', mag_out, idx=1)
+                mag_norm_y = dataset.normalize('y', mag_y, idx=1)
 
-                loss[1] += self.criterion(logmag_out, logmag_y) / int(T)
+                loss[1] += self.criterion(mag_norm_out, mag_norm_y) / int(T)
             if cfg.hp.weight_loss[2] > 0:
                 # 1, n
                 wav_out = self.stft_module.inverse(mag_out.permute(2, 0, 1),
@@ -435,7 +438,9 @@ class ComplexTrainer(Trainer):
                 wav_y = self.stft_module.inverse(mag_y.permute(2, 0, 1),
                                                  phase_y.permute(2, 0, 1))
 
-                loss[2] += self.criterion(wav_out, wav_y) / int(T)
+                temp = self.criterion(wav_out, wav_y) / int(T)
+                if not torch.isnan(temp) and temp < 10**4:
+                    loss[2] += temp
 
         for w, ll in zip(cfg.hp.weight_loss, loss):
             ll *= w

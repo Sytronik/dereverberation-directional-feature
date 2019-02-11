@@ -65,7 +65,7 @@ if F_STATE_DICT and not os.path.isfile(F_STATE_DICT):
 # Training + Validation Set
 dataset_temp = IVDataset('train',
                          n_file=cfg.hp.n_file,
-                         norm_class=cfg.NORM_CLASS,
+                         norm_classes=cfg.NORM_CLASS,
                          )
 dataset_train, dataset_valid \
     = IVDataset.split(dataset_temp, (0.7, -1))
