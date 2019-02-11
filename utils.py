@@ -64,10 +64,12 @@ class MultipleScheduler(object):
         return self._schedulers[idx]
 
 
-def arr2str(a: np.ndarray, format_='e', n_decimal=2) -> str:
+def arr2str(a: np.ndarray, format_='e', ndigits=2) -> str:
     return np.array2string(
         a,
-        formatter={'float_kind': lambda x: f'{x:.{n_decimal}{format_}}'}
+        formatter=dict(
+            float_kind=(lambda x: f'{x:.{ndigits}{format_}}' if x != 0 else '0')
+        )
     )
 
 

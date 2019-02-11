@@ -1,13 +1,14 @@
 import os
-import time
 from os.path import join as pathjoin
 from typing import Dict, Sequence, Tuple
 
 import numpy as np
 import torch
-from torch import nn
+from numpy import ndarray
+from torch import nn, Tensor
 from torch.utils.data import DataLoader
 from torchsummary import summary
+from tqdm import tqdm
 
 import config as cfg
 from adamwr import AdamW, CosineLRWithRestarts
@@ -20,7 +21,6 @@ from tbXwriter import CustomWriter
 from utils import (MultipleOptimizer,
                    MultipleScheduler,
                    arr2str,
-                   print_progress,
                    print_to_file,
                    )
 
@@ -50,8 +50,6 @@ class Trainer(metaclass=TrainerMeta):
             return super().__new__(ComplexTrainer)
 
     def __init__(self, model_name: str, use_cuda=True):
-        # Model (Using Parallel GPU)
-        # model = nn.DataParallel(DeepLabv3_plus(4, 4),
         self.model_name = model_name
         self.use_cuda = use_cuda
         if model_name == 'UNet':
@@ -62,8 +60,8 @@ class Trainer(metaclass=TrainerMeta):
                                      device_ids=cfg.CUDA_DEVICES,
                                      output_device=cfg.OUT_CUDA_DEV)
         if use_cuda:
-            self.model = self.model.cuda()
-            self.x_device = torch.device('cuda:0')
+            self.model = self.model.cuda(device=cfg.CUDA_DEVICES[0])
+            self.x_device = torch.device(f'cuda:{cfg.CUDA_DEVICES[0]}')
             self.y_device = torch.device(f'cuda:{cfg.OUT_CUDA_DEV}')
         else:
             self.model = self.model.module.cpu()
@@ -75,16 +73,16 @@ class Trainer(metaclass=TrainerMeta):
 
         self.writer: CustomWriter = None
 
-    def _pre(self, data: Dict[str, np.ndarray], dataset: IVDataset) \
-            -> Tuple[torch.Tensor, torch.Tensor]:
+    def _pre(self, data: Dict[str, ndarray], dataset: IVDataset) \
+            -> Tuple[Tensor, Tensor]:
         pass
 
-    def _post_one(self, output: torch.Tensor, Ts: np.ndarray,
-                  idx: int, dataset: IVDataset) -> Dict[str, np.ndarray]:
+    def _post_one(self, output: Tensor, Ts: ndarray,
+                  idx: int, dataset: IVDataset) -> Dict[str, ndarray]:
         pass
 
-    def _calc_loss(self, y: torch.Tensor, output: torch.Tensor,
-                   T_ys: Sequence[int], dataset) -> torch.Tensor:
+    def _calc_loss(self, y: Tensor, output: Tensor,
+                   T_ys: Sequence[int], dataset) -> Tensor:
         pass
 
     def train(self, loader_train: DataLoader, loader_valid: DataLoader, dir_result: str,
@@ -143,12 +141,12 @@ class Trainer(metaclass=TrainerMeta):
 
         # Start Training
         for epoch in range(first_epoch, cfg.hp.n_epochs):
-            t_start = time.time()
 
             print()
-            print_progress(0, len(loader_train), f'epoch {epoch:3d}:')
             scheduler.step()
-            for i_iter, data in enumerate(loader_train):
+            pbar = tqdm(loader_train, desc=f'epoch {epoch:3d}', postfix='[0]')
+
+            for i_iter, data in enumerate(pbar):
                 # get data
                 x, y = self._pre(data, loader_train.dataset)  # B, C, F, T
                 T_ys = data['T_ys']
@@ -158,12 +156,11 @@ class Trainer(metaclass=TrainerMeta):
 
                 loss = self._calc_loss(y, output, T_ys, loader_train.dataset)
                 loss_sum = loss.sum()
-                avg_loss += loss
 
                 # backward
                 optimizer.zero_grad()
                 loss_sum.backward()
-                if epoch <= 1:
+                if epoch <= 2:
                     gradnorm = nn.utils.clip_grad_norm_(self.model.parameters(), 10**10)
                     self.writer.add_scalar('train/grad', gradnorm,
                                            epoch * len(loader_train) + i_iter)
@@ -173,8 +170,10 @@ class Trainer(metaclass=TrainerMeta):
                 scheduler.batch_step()
 
                 # print
-                loss_sum = (loss_sum / len(T_ys)).item()
-                print_progress(i_iter + 1, len(loader_train), f'epoch {epoch:3d}: {loss_sum:.1e}')
+                with torch.no_grad():
+                    avg_loss += loss
+                    loss = loss.cpu().numpy() / len(T_ys)
+                    pbar.set_postfix_str(arr2str(loss, ndigits=1))
 
             avg_loss /= len(loader_train.dataset)
             tag = 'loss/train'
@@ -195,10 +194,7 @@ class Trainer(metaclass=TrainerMeta):
                     f'{f_prefix}{epoch}.pt'
                 )
 
-            # Time
-            tt = time.strftime('%M min %S sec', time.gmtime(time.time() - t_start))
-            print(f'epoch {epoch:3d}: {tt}')
-
+    @torch.no_grad()
     def validate(self, loader: DataLoader, f_prefix: str, epoch: int):
         """ Evaluate the performance of the model.
 
@@ -207,60 +203,56 @@ class Trainer(metaclass=TrainerMeta):
         :param epoch:
         """
 
-        with torch.no_grad():
-            self.model.eval()
+        self.model.eval()
 
-            wrote = False if self.writer else True
-            avg_loss = torch.zeros(cfg.N_LOSS_TERM, device=self.y_device)
+        avg_loss = torch.zeros(cfg.N_LOSS_TERM, device=self.y_device)
 
-            print_progress(0, len(loader), f'validate : ')
-            for i_iter, data in enumerate(loader):
-                # get data
-                x, y = self._pre(data, loader.dataset)  # B, C, F, T
-                T_ys = data['T_ys']
+        pbar = tqdm(loader, desc=f'validate ', postfix='[0]')
+        for i_iter, data in enumerate(pbar):
+            # get data
+            x, y = self._pre(data, loader.dataset)  # B, C, F, T
+            T_ys = data['T_ys']
 
-                # forward
-                output = self.model(x)[..., :y.shape[-1]]
+            # forward
+            output = self.model(x)[..., :y.shape[-1]]
 
-                # loss
-                loss = self._calc_loss(y, output, T_ys, loader.dataset)
-                avg_loss += loss
+            # loss
+            loss = self._calc_loss(y, output, T_ys, loader.dataset)
+            avg_loss += loss
 
-                # print
-                loss = loss.cpu().numpy() / len(T_ys)
-                print_progress(i_iter + 1, len(loader),
-                               f'validate : {arr2str(loss, n_decimal=1)}')
+            # print
+            loss = loss.cpu().numpy() / len(T_ys)
+            pbar.set_postfix_str(arr2str(loss, ndigits=1))
 
-                # write summary
-                if not wrote:
-                    # F, T, C
-                    if not self.writer.one_sample:
-                        self.writer.one_sample = IVDataset.decollate_padded(data, 0)
+            # write summary
+            if not i_iter:
+                # F, T, C
+                if not self.writer.one_sample:
+                    self.writer.one_sample = IVDataset.decollate_padded(data, 0)
 
-                    out_one = self._post_one(output, T_ys, 0, loader.dataset)
+                out_one = self._post_one(output, T_ys, 0, loader.dataset)
 
-                    IVDataset.save_iv(f'{f_prefix}IV_{epoch}',
-                                      **self.writer.one_sample, **out_one)
+                IVDataset.save_iv(f'{f_prefix}IV_{epoch}',
+                                  **self.writer.one_sample, **out_one)
 
-                    wrote = True
+                # Process(
+                #     target=write_one,
+                #     args=(x_one, y_one, x_ph_one, y_ph_one, out_one, epoch)
+                # ).start()
+                self.writer.write_one(epoch, **out_one, group='train')
 
-                    # Process(
-                    #     target=write_one,
-                    #     args=(x_one, y_one, x_ph_one, y_ph_one, out_one, epoch)
-                    # ).start()
-                    self.writer.write_one(epoch, **out_one, group='train')
+        avg_loss /= len(loader.dataset)
+        tag = 'loss/valid'
+        self.writer.add_scalar(tag, avg_loss.sum().item(), epoch)
+        if len(self.name_loss_terms) > 1:
+            for idx, (n, ll) in enumerate(zip(self.name_loss_terms, avg_loss)):
+                self.writer.add_scalar(f'{tag}/{idx + 1}. {n}', ll.item(), epoch)
 
-            avg_loss /= len(loader.dataset)
-            tag = 'loss/valid'
-            self.writer.add_scalar(tag, avg_loss.sum().item(), epoch)
-            if len(self.name_loss_terms) > 1:
-                for idx, (n, ll) in enumerate(zip(self.name_loss_terms, avg_loss)):
-                    self.writer.add_scalar(f'{tag}/{idx + 1}. {n}', ll.item(), epoch)
-
-            self.model.train()
+        self.model.train()
 
         return avg_loss
 
+    @torch.no_grad()
     def test(self, loader: DataLoader, dir_result: str, f_state_dict: str):
         if self.use_cuda:
             self.model.module.load_state_dict(torch.load(f_state_dict)[0])
@@ -271,45 +263,43 @@ class Trainer(metaclass=TrainerMeta):
         group = os.path.basename(dir_result)
 
         avg_measure = None
-        with torch.no_grad():
-            self.model.eval()
+        self.model.eval()
 
-            print(' 0.00%:')
-            for i_iter, data in enumerate(loader):
-                t_start = time.time()
-                # get data
-                x, y = self._pre(data, loader.dataset)  # B, C, F, T
-                T_ys = data['T_ys']
+        pbar = tqdm(loader, desc=group)
+        for i_iter, data in enumerate(pbar):
+            # get data
+            x, y = self._pre(data, loader.dataset)  # B, C, F, T
+            T_ys = data['T_ys']
 
-                # forward
-                output = self.model(x)[..., :y.shape[-1]]
+            # forward
+            output = self.model(x)[..., :y.shape[-1]]
 
-                # write summary
-                # F, T, C
-                one_sample = IVDataset.decollate_padded(data, 0)
+            # write summary
+            # F, T, C
+            one_sample = IVDataset.decollate_padded(data, 0)
 
-                out_one = self._post_one(output, T_ys, 0, loader.dataset)
+            out_one = self._post_one(output, T_ys, 0, loader.dataset)
 
-                IVDataset.save_iv(pathjoin(dir_result, f'IV_{i_iter}'),
-                                  **one_sample, **out_one)
+            IVDataset.save_iv(pathjoin(dir_result, f'IV_{i_iter}'),
+                              **one_sample, **out_one)
 
-                measure = self.writer.write_one(i_iter, **out_one, group=group, **one_sample)
-                if avg_measure is None:
-                    avg_measure = measure
-                else:
-                    avg_measure += measure
+            measure = self.writer.write_one(i_iter, **out_one, group=group, **one_sample)
+            if avg_measure is None:
+                avg_measure = measure
+            else:
+                avg_measure += measure
 
-                # print
-                str_measure = arr2str(measure).replace('\n', '; ')
-                tt = time.strftime('(%Ss)', time.gmtime(time.time() - t_start))
-                print(f'{(i_iter + 1) / len(loader) * 100:5.2f}%: {str_measure}\t{tt}')
+            # print
+            str_measure = arr2str(measure).replace('\n', '; ')
+            pbar.write(str_measure)
 
-            self.model.train()
+        self.model.train()
 
         avg_measure /= len(loader.dataset)
 
         self.writer.add_text(f'{group}/Average Measure/Proposed', str(avg_measure[0]))
         self.writer.add_text(f'{group}/Average Measure/Reverberant', str(avg_measure[1]))
+        self.writer.close()  # Explicitly close
 
         print()
         str_avg_measure = arr2str(avg_measure).replace('\n', '; ')
@@ -336,8 +326,9 @@ class MagTrainer(Trainer):
 
         return x, y
 
-    def _post_one(self, output: torch.Tensor, Ts: np.ndarray,
-                  idx: int, dataset: IVDataset) -> Dict[str, np.ndarray]:
+    @torch.no_grad()
+    def _post_one(self, output: Tensor, Ts: ndarray,
+                  idx: int, dataset: IVDataset) -> Dict[str, ndarray]:
         if self.model_name == 'UNet':
             one = output[idx, :, :, :Ts[idx]].permute(1, 2, 0)  # F, T, C
         else:
@@ -349,8 +340,8 @@ class MagTrainer(Trainer):
 
         return dict(out=one)
 
-    def _calc_loss(self, y: torch.Tensor, output: torch.Tensor,
-                   T_ys: Sequence[int], dataset) -> torch.Tensor:
+    def _calc_loss(self, y: Tensor, output: Tensor,
+                   T_ys: Sequence[int], dataset) -> Tensor:
         if not self.name_loss_terms:
             self.name_loss_terms = ('',)
         y = [y, None, None]
@@ -361,7 +352,7 @@ class MagTrainer(Trainer):
                     = delta(y[i_dyn - 1], output[i_dyn - 1], axis=-1)
 
         # Loss
-        loss = torch.zeros(1).cuda(cfg.OUT_CUDA_DEV)
+        loss = torch.zeros(1, device=self.y_device)
         for i_dyn, (y_dyn, out_dyn) in enumerate(zip(y, output)):
             if cfg.hp.weight_loss[i_dyn] > 0:
                 for T, item_y, item_out in zip(T_ys, y_dyn, out_dyn):
@@ -379,8 +370,8 @@ class ComplexTrainer(Trainer):
         super().__init__(model_name, use_cuda)
         self.stft_module = STFT(cfg.N_fft, cfg.L_hop).cuda(self.y_device)
 
-    def _pre(self, data: Dict[str, np.ndarray], dataset: IVDataset) \
-            -> Tuple[torch.Tensor, torch.Tensor]:
+    def _pre(self, data: Dict[str, ndarray], dataset: IVDataset) \
+            -> Tuple[Tensor, Tensor]:
         # B, F, T, C
         x = data['x']
         y = data['y']
@@ -402,8 +393,9 @@ class ComplexTrainer(Trainer):
 
         return x, y
 
-    def _post_one(self, output: torch.Tensor, Ts: np.ndarray,
-                  idx: int, dataset: IVDataset) -> Dict[str, np.ndarray]:
+    @torch.no_grad()
+    def _post_one(self, output: Tensor, Ts: ndarray,
+                  idx: int, dataset: IVDataset) -> Dict[str, ndarray]:
         if self.model_name == 'UNet':
             one = output[idx, :, :, :Ts[idx]].permute(1, 2, 0)  # F, T, C
         else:
@@ -416,11 +408,11 @@ class ComplexTrainer(Trainer):
 
         return dict(out=one, out_phase=one_phase)
 
-    def _calc_loss(self, y: torch.Tensor, output: torch.Tensor,
-                   T_ys: Sequence[int], dataset) -> torch.Tensor:
+    def _calc_loss(self, y: Tensor, output: Tensor,
+                   T_ys: Sequence[int], dataset) -> Tensor:
         if not self.name_loss_terms:
             self.name_loss_terms = ('mse', 'mse of log mag', 'mse of wave')
-        loss = torch.zeros(3).cuda(cfg.OUT_CUDA_DEV)
+        loss = torch.zeros(3, device=self.y_device)
         for T, item_y, item_out in zip(T_ys, y, output):
             # F, T, C
             mag_out, phase_out \
