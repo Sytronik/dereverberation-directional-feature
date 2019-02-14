@@ -1,6 +1,7 @@
 import os
 from os.path import join as pathjoin
 from typing import NamedTuple, Tuple, Dict, Any
+from types import ModuleType
 
 import deepdish as dd
 import numpy as np
@@ -176,16 +177,13 @@ NORM_USING_ONLY_X = False
 
 # ========================= dependent values ===========================
 
+KEY_TRANNORM = (hp.method, 'meanstd', USE_LOG)
 if hp.method == 'mag':
     N_LOSS_TERM = 1
-    NORM_CLASS = 'LogMeanStdNormalization'
+    KEYS_TRANNORM = (KEY_TRANNORM,)
 elif hp.method == 'complex':
     N_LOSS_TERM = 3
-    if USE_LOG:
-        NORM_CLASS = 'LogReImMeanStdNormalization'
-    else:
-        NORM_CLASS = 'ReImMeanStdNormalization'
-    NORM_CLASS = (NORM_CLASS, 'LogMeanStdNormalization')
+    KEYS_TRANNORM = (KEY_TRANNORM, ('mag', 'meanstd', True))
 
 CH_WITH_PHASE = dict(**hp.CHANNELS)
 

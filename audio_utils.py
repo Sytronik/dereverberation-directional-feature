@@ -11,8 +11,7 @@ from scipy.linalg import toeplitz
 import config as cfg
 import generic as gen
 from matlab_lib import Evaluation as EvalModule
-from normalize import LogInterface as LogModule
-from utils import static_vars
+from dirspecgram import LogModule
 
 
 # class SNRseg(nn.Module):

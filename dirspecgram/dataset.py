@@ -10,16 +10,15 @@ import scipy.io as scio
 import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
+from .trannorm import TranNormModule
 
 import config as cfg
-# noinspection PyUnresolvedReferences
-import normalize
 from generic import TensArr
 
 StrOrSeq = TypeVar('StrOrSeq', str, Sequence[str])
+TupOrSeq = TypeVar('TupOrSeq', tuple, Sequence[tuple])
 
-
-class IVDataset(Dataset):
+class DirSpecDataset(Dataset):
     """
     <Instance Variables>
     (not splitted)
@@ -31,11 +30,11 @@ class IVDataset(Dataset):
     _all_files
     """
 
-    __slots__ = ('_PATH', '_needs', '_normalization', '_all_files')
+    __slots__ = ('_PATH', '_needs', '_trannorm', '_all_files')
 
     def __init__(self, kind_data: str,
-                 n_file=-1, random_by_utterance=False, norm_classes: StrOrSeq = None,
-                 **kwargs):
+                 n_file=-1, keys_trannorm: TupOrSeq = None,
+                 random_by_utterance=False, **kwargs):
         self._PATH = cfg.DICT_PATH[f'iv_{kind_data}']
         self._needs = dict(x='all', y='alpha',
                            x_phase=False, y_phase=False,
@@ -43,15 +42,15 @@ class IVDataset(Dataset):
         self.set_needs(**kwargs)
 
         self._all_files = None
-        if not norm_classes or type(norm_classes) == str:
-            norm_classes = (norm_classes,)
-        _normalization = [None] * len(norm_classes)
+        if not keys_trannorm or type(keys_trannorm[0]) != tuple:
+            keys_trannorm = (keys_trannorm,)
+        trannorm: List[TranNormModule] = [None] * len(keys_trannorm)
 
         # f_normconst: The name of the file
         # that has information about data file list, mean, std, ...
         list_f_norm = glob(cfg.DICT_PATH[f'normconst_{kind_data}'].format(n_file, '*'))
-        for idx, norm_class in enumerate(norm_classes):
-            f_normconst = cfg.DICT_PATH[f'normconst_{kind_data}'].format(n_file, norm_class)
+        for idx, key_tn in enumerate(keys_trannorm):
+            f_normconst = cfg.DICT_PATH[f'normconst_{kind_data}'].format(n_file, key_tn)
 
             if f_normconst in list_f_norm:
                 _all_files, normconst = dd.io.load(f_normconst)
@@ -67,8 +66,10 @@ class IVDataset(Dataset):
                     _all_files = sorted(_all_files)
                     if n_file != -1:
                         if random_by_utterance:
-                            utterances = np.random.randint(len(_all_files) // cfg.N_LOC[kind_data],
-                                                           size=n_file // cfg.N_LOC[kind_data])
+                            utterances = np.random.randint(
+                                len(_all_files) // cfg.N_LOC[kind_data],
+                                size=n_file // cfg.N_LOC[kind_data]
+                            )
                             utterances = [f'{u:4d}_' for u in utterances]
                             _all_files = [f for f in _all_files if f.startswith(utterances)]
                         else:
@@ -88,36 +89,29 @@ class IVDataset(Dataset):
             if cfg.REFRESH_CONST:
                 should_calc_save = True
 
-            if norm_class:
-                norm_class = eval(f'normalize.{norm_class}')
+            if key_tn:
                 if not should_calc_save:
-                    _normalization[idx] = norm_class.load_from_dict(normconst)
+                    trannorm[idx] = TranNormModule.load_module(key_tn, normconst)
                 else:
-                    _normalization[idx] = norm_class.create(self._all_files)
+                    trannorm[idx] = TranNormModule.create_module(key_tn, self._all_files)
 
             if should_calc_save:
-                if _normalization[idx]:
-                    dd.io.save(
-                        f_normconst,
-                        (_all_files,
-                         _normalization[idx].save_to_dict(),
-                         )
-                    )
-                    scio.savemat(
-                        f_normconst.replace('.h5', '.mat'),
-                        dict(all_files=_all_files,
-                             **_normalization[idx].save_to_dict(only_consts=True)
-                             )
-                    )
+                if trannorm[idx]:
+                    dd.io.save(f_normconst, (_all_files, trannorm[idx].consts))
+                    scio.savemat(f_normconst.replace('.h5', '.mat'),
+                                 dict(all_files=_all_files,
+                                      **trannorm[idx].consts_as_dict()
+                                      )
+                                 )
                 else:
                     dd.io.save(f_normconst, (_all_files, None))
                     scio.savemat(f_normconst.replace('.h5', '.mat'),
                                  dict(all_files=_all_files)
                                  )
 
-            print(_normalization[idx])
+            print(trannorm[idx])
 
-        self._normalization = _normalization
+        self._trannorm = trannorm
         print(f'{len(self._all_files)} files prepared from {kind_data.upper()}.')
 
     def __len__(self):
@@ -215,10 +209,10 @@ class IVDataset(Dataset):
     def normalize_on_like(self, other):
         """
 
-        :type other: IVDataset
+        :type other: DirSpecDataset
         :return:
         """
-        self._normalization = other._normalization
+        self._trannorm = other._trannorm
 
     def set_needs(self, **kwargs):
         """
@@ -234,17 +228,17 @@ class IVDataset(Dataset):
                         or type(kwargs[k]) == bool)
                 self._needs[k] = kwargs[k]
 
-    def normalize(self, xy: str, a: TensArr, a_phase: TensArr = None, idx=0) -> TensArr:
-        return self._normalization[idx].normalize(xy, a, a_phase)
+    def preprocess(self, xy: str, a: TensArr, a_phase: TensArr = None, idx=0) -> TensArr:
+        return self._trannorm[idx].process(xy, a, a_phase)
 
-    def normalize_(self, xy: str, a: TensArr, a_phase: TensArr = None, idx=0) -> TensArr:
-        return self._normalization[idx].normalize_(xy, a, a_phase)
+    def preprocess_(self, xy: str, a: TensArr, a_phase: TensArr = None, idx=0) -> TensArr:
+        return self._trannorm[idx].process_(xy, a, a_phase)
 
-    def denormalize(self, xy: str, a: TensArr, idx=0) -> TensArr:
-        return self._normalization[idx].denormalize(xy, a)
+    def postprocess(self, xy: str, a: TensArr, idx=0) -> TensArr:
+        return self._trannorm[idx].inverse(xy, a)
 
-    def denormalize_(self, xy: str, a: TensArr, idx=0) -> TensArr:
-        return self._normalization[idx].denormalize_(xy, a)
+    def postprocess_(self, xy: str, a: TensArr, idx=0) -> TensArr:
+        return self._trannorm[idx].inverse_(xy, a)
 
     # noinspection PyProtectedMember
     @classmethod
@@ -255,10 +249,10 @@ class IVDataset(Dataset):
         and only one element can have the value of -1 which means that
         it's automaticall set to the value so that the sum of the elements is 1
 
-        :type dataset: IVDataset
+        :type dataset: DirSpecDataset
         :type ratio: Sequence[float]
 
-        :rtype: Tuple[IVDataset]
+        :rtype: Tuple[DirSpecDataset]
         """
         if type(dataset) != cls:
             raise TypeError

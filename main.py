@@ -3,14 +3,13 @@ import matlab.engine
 
 import os
 from argparse import ArgumentError, ArgumentParser
-from multiprocessing import cpu_count
 from os.path import join as pathjoin
 
 import deepdish as dd
 from torch.utils.data import DataLoader
 
 import config as cfg
-from iv_dataset import IVDataset
+from dirspecgram import DirSpecDataset
 from train import Trainer
 
 parser = ArgumentParser()
@@ -63,12 +62,12 @@ if F_STATE_DICT and not os.path.isfile(F_STATE_DICT):
     raise FileNotFoundError
 
 # Training + Validation Set
-dataset_temp = IVDataset('train',
-                         n_file=cfg.hp.n_file,
-                         norm_classes=cfg.NORM_CLASS,
-                         )
+dataset_temp = DirSpecDataset('train',
+                              n_file=cfg.hp.n_file,
+                              keys_trannorm=cfg.KEYS_TRANNORM,
+                              )
 dataset_train, dataset_valid \
-    = IVDataset.split(dataset_temp, (0.7, -1))
+    = DirSpecDataset.split(dataset_temp, (0.7, -1))
 dataset_train.set_needs(**cfg.hp.CHANNELS)
 dataset_valid.set_needs(**cfg.CH_WITH_PHASE)
 
@@ -101,11 +100,11 @@ elif ARGS.test:
         loader = loader_valid
     else:
         # Test Set
-        dataset_test = IVDataset(ARGS.test,
-                                 n_file=cfg.hp.n_file // 4,
-                                 random_by_utterance=False,
-                                 **cfg.CH_WITH_PHASE,
-                                 )
+        dataset_test = DirSpecDataset(ARGS.test,
+                                      n_file=cfg.hp.n_file // 4,
+                                      random_by_utterance=False,
+                                      **cfg.CH_WITH_PHASE,
+                                      )
         dataset_test.normalize_on_like(dataset_temp)
         loader = DataLoader(dataset_test,
                             batch_size=1,

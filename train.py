@@ -2,7 +2,6 @@ import os
 from os.path import join as pathjoin
 from typing import Dict, Sequence, Tuple
 
-import numpy as np
 import torch
 from numpy import ndarray
 from torch import nn, Tensor
@@ -13,9 +12,8 @@ from tqdm import tqdm
 import config as cfg
 from adamwr import AdamW, CosineLRWithRestarts
 from audio_utils import delta
-from iv_dataset import IVDataset
+from dirspecgram import DirSpecDataset
 from models import UNet
-from normalize import LogInterface as LogModule
 from stft import STFT
 from tbXwriter import CustomWriter
 from utils import (MultipleOptimizer,
@@ -73,12 +71,12 @@ class Trainer(metaclass=TrainerMeta):
 
         self.writer: CustomWriter = None
 
-    def _pre(self, data: Dict[str, ndarray], dataset: IVDataset) \
+    def _pre(self, data: Dict[str, ndarray], dataset: DirSpecDataset) \
             -> Tuple[Tensor, Tensor]:
         pass
 
     def _post_one(self, output: Tensor, Ts: ndarray,
-                  idx: int, dataset: IVDataset) -> Dict[str, ndarray]:
+                  idx: int, dataset: DirSpecDataset) -> Dict[str, ndarray]:
         pass
 
     def _calc_loss(self, y: Tensor, output: Tensor,
@@ -228,12 +226,12 @@ class Trainer(metaclass=TrainerMeta):
             if not i_iter:
                 # F, T, C
                 if not self.writer.one_sample:
-                    self.writer.one_sample = IVDataset.decollate_padded(data, 0)
+                    self.writer.one_sample = DirSpecDataset.decollate_padded(data, 0)
 
                 out_one = self._post_one(output, T_ys, 0, loader.dataset)
 
-                IVDataset.save_iv(f'{f_prefix}IV_{epoch}',
-                                  **self.writer.one_sample, **out_one)
+                DirSpecDataset.save_iv(f'{f_prefix}IV_{epoch}',
+                                       **self.writer.one_sample, **out_one)
 
                 # Process(
                 #     target=write_one,
@@ -276,12 +274,12 @@ class Trainer(metaclass=TrainerMeta):
 
             # write summary
             # F, T, C
-            one_sample = IVDataset.decollate_padded(data, 0)
+            one_sample = DirSpecDataset.decollate_padded(data, 0)
 
             out_one = self._post_one(output, T_ys, 0, loader.dataset)
 
-            IVDataset.save_iv(pathjoin(dir_result, f'IV_{i_iter}'),
-                              **one_sample, **out_one)
+            DirSpecDataset.save_iv(pathjoin(dir_result, f'IV_{i_iter}'),
+                                   **one_sample, **out_one)
 
             measure = self.writer.write_one(i_iter, **out_one, group=group, **one_sample)
             if avg_measure is None:
@@ -307,7 +305,7 @@ class Trainer(metaclass=TrainerMeta):
 
 
 class MagTrainer(Trainer):
-    def _pre(self, data: Dict[str, ndarray], dataset: IVDataset) \
+    def _pre(self, data: Dict[str, ndarray], dataset: DirSpecDataset) \
             -> Tuple[Tensor, Tensor]:
         # B, F, T, C
         x = data['x']
@@ -316,8 +314,8 @@ class MagTrainer(Trainer):
         x = x.to(self.x_device)
         y = y.to(self.y_device)
 
-        x = dataset.normalize_('x', x)
-        y = dataset.normalize_('y', y)
+        x = dataset.preprocess_('x', x)
+        y = dataset.preprocess_('y', y)
 
         if self.model_name == 'UNet':
             # B, C, F, T
@@ -328,14 +326,14 @@ class MagTrainer(Trainer):
 
     @torch.no_grad()
     def _post_one(self, output: Tensor, Ts: ndarray,
-                  idx: int, dataset: IVDataset) -> Dict[str, ndarray]:
+                  idx: int, dataset: DirSpecDataset) -> Dict[str, ndarray]:
         if self.model_name == 'UNet':
             one = output[idx, :, :, :Ts[idx]].permute(1, 2, 0)  # F, T, C
         else:
             # one = output[idx, :, :, :Ts[idx]]  # C, F, T
             raise NotImplementedError
 
-        one = dataset.denormalize_('y', one)
+        one = dataset.postprocess_('y', one)
         one = one.cpu().numpy()
 
         return dict(out=one)
@@ -370,7 +368,7 @@ class ComplexTrainer(Trainer):
         super().__init__(model_name, use_cuda)
         self.stft_module = STFT(cfg.N_fft, cfg.L_hop).cuda(self.y_device)
 
-    def _pre(self, data: Dict[str, ndarray], dataset: IVDataset) \
+    def _pre(self, data: Dict[str, ndarray], dataset: DirSpecDataset) \
             -> Tuple[Tensor, Tensor]:
         # B, F, T, C
         x = data['x']
@@ -383,8 +381,8 @@ class ComplexTrainer(Trainer):
         x_phase = x_phase.to(self.x_device)
         y_phase = y_phase.to(self.y_device)
 
-        x = dataset.normalize_('x', x, x_phase)
-        y = dataset.normalize_('y', y, y_phase)
+        x = dataset.preprocess_('x', x, x_phase)
+        y = dataset.preprocess_('y', y, y_phase)
 
         if self.model_name == 'UNet':
             # B, C, F, T
@@ -395,14 +393,14 @@ class ComplexTrainer(Trainer):
 
     @torch.no_grad()
     def _post_one(self, output: Tensor, Ts: ndarray,
-                  idx: int, dataset: IVDataset) -> Dict[str, ndarray]:
+                  idx: int, dataset: DirSpecDataset) -> Dict[str, ndarray]:
         if self.model_name == 'UNet':
             one = output[idx, :, :, :Ts[idx]].permute(1, 2, 0)  # F, T, C
         else:
             # one = output[idx, :, :, :Ts[idx]]  # C, F, T
             raise NotImplementedError
 
-        one, one_phase = dataset.denormalize_('y', one)
+        one, one_phase = dataset.postprocess_('y', one)
         one = one.cpu().numpy()
         one_phase = one_phase.cpu().numpy()
 
@@ -421,14 +419,14 @@ class ComplexTrainer(Trainer):
                 continue
             # F, T, C
             mag_out, phase_out \
-                = dataset.denormalize('y', item_out[:, :, :T].permute(1, 2, 0))
+                = dataset.postprocess('y', item_out[:, :, :T].permute(1, 2, 0))
             mag_y, phase_y \
-                = dataset.denormalize('y', item_y[:, :, :T].permute(1, 2, 0))
+                = dataset.postprocess('y', item_y[:, :, :T].permute(1, 2, 0))
 
             if cfg.hp.weight_loss[1] > 0:
                 # F, T, C
-                mag_norm_out = dataset.normalize('y', mag_out, idx=1)
-                mag_norm_y = dataset.normalize('y', mag_y, idx=1)
+                mag_norm_out = dataset.preprocess('y', mag_out, idx=1)
+                mag_norm_y = dataset.preprocess('y', mag_y, idx=1)
 
                 loss[1] += self.criterion(mag_norm_out, mag_norm_y) / int(T)
             if cfg.hp.weight_loss[2] > 0:

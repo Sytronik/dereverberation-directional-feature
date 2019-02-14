@@ -12,7 +12,7 @@ from audio_utils import (bnkr_equalize_,
                          reconstruct_wave,
                          wave_scale_fix,
                          )
-from normalize import LogInterface as LogModule
+from dirspecgram import LogModule
 
 
 class CustomWriter(SummaryWriter):
