@@ -142,7 +142,7 @@ class Trainer(metaclass=TrainerMeta):
 
             print()
             scheduler.step()
-            pbar = tqdm(loader_train, desc=f'epoch {epoch:3d}', postfix='[0]')
+            pbar = tqdm(loader_train, desc=f'epoch {epoch:3d}', postfix='[0]', dynamic_ncols=True)
 
             for i_iter, data in enumerate(pbar):
                 # get data
@@ -205,7 +205,7 @@ class Trainer(metaclass=TrainerMeta):
 
         avg_loss = torch.zeros(cfg.N_LOSS_TERM, device=self.y_device)
 
-        pbar = tqdm(loader, desc=f'validate ', postfix='[0]')
+        pbar = tqdm(loader, desc=f'validate ', postfix='[0]', dynamic_ncols=True)
         for i_iter, data in enumerate(pbar):
             # get data
             x, y = self._pre(data, loader.dataset)  # B, C, F, T
@@ -263,7 +263,7 @@ class Trainer(metaclass=TrainerMeta):
         avg_measure = None
         self.model.eval()
 
-        pbar = tqdm(loader, desc=group)
+        pbar = tqdm(loader, desc=group, dynamic_ncols=True)
         for i_iter, data in enumerate(pbar):
             # get data
             x, y = self._pre(data, loader.dataset)  # B, C, F, T
