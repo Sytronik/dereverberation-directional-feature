@@ -10,11 +10,11 @@ from torchsummary import summary
 from tqdm import tqdm
 
 import config as cfg
+import stft
 from adamwr import AdamW, CosineLRWithRestarts
 from audio_utils import delta
 from dirspecgram import DirSpecDataset
 from models import UNet
-from stft import STFT
 from tbXwriter import CustomWriter
 from utils import (MultipleOptimizer,
                    MultipleScheduler,
@@ -366,7 +366,7 @@ class ComplexTrainer(Trainer):
 
     def __init__(self, model_name: str, use_cuda=True):
         super().__init__(model_name, use_cuda)
-        self.stft_module = STFT(cfg.N_fft, cfg.L_hop).cuda(self.y_device)
+        self.stft_module = stft.get_STFT_module(self.y_device, cfg.N_fft, cfg.L_hop)
 
     def _pre(self, data: Dict[str, ndarray], dataset: DirSpecDataset) \
             -> Tuple[Tensor, Tensor]:

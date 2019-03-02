@@ -1,15 +1,40 @@
+from typing import Union, Dict, Tuple
+
 import numpy as np
 import scipy.signal as scsig
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+_instances = dict()  # type: Dict[Tuple[torch.device, tuple], _STFT]
 
-class STFT(nn.Module):
+
+def get_STFT_module(device: Union[int, torch.device], *args, **kwargs):
+    """
+
+    :param device:
+    :param args:
+    :param kwargs:
+    :rtype: _STFT
+    """
+
+    device = torch.device(device)
+    initargs = _STFT.initargs2tup(*args, **kwargs)
+    if (device, initargs) not in _instances:
+        _instances[(device, initargs)] = _STFT(*initargs).to(device=device)
+
+    return _instances[(device, initargs)]
+
+
+class _STFT(nn.Module):
     __slots__ = ('filter_length', 'hop_length', 'forward_basis', 'inverse_basis')
 
+    @staticmethod
+    def initargs2tup(filter_length=1024, hop_length=512) -> tuple:
+        return filter_length, hop_length
+
     def __init__(self, filter_length=1024, hop_length=512):
-        super(STFT, self).__init__()
+        super().__init__()
 
         self.filter_length = filter_length
         self.hop_length = hop_length
