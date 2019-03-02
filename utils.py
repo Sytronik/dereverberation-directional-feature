@@ -9,7 +9,12 @@ import torch.optim
 
 
 def static_vars(**kwargs):
-    def decorate(func):
+    """ decorator to make static variables in function
+
+    :param kwargs:
+    :return:
+    """
+    def decorate(func: Callable):
         for k, a in kwargs.items():
             setattr(func, k, a)
         return func
@@ -65,6 +70,13 @@ class MultipleScheduler(object):
 
 
 def arr2str(a: np.ndarray, format_='e', ndigits=2) -> str:
+    """convert ndarray of floats to a string expression.
+
+    :param a:
+    :param format_:
+    :param ndigits:
+    :return:
+    """
     return np.array2string(
         a,
         formatter=dict(
@@ -73,11 +85,9 @@ def arr2str(a: np.ndarray, format_='e', ndigits=2) -> str:
     )
 
 
+# deprecated. Use tqdm
 def print_progress(iteration: int, total: int, prefix='', suffix='',
                    decimals=1, len_bar=0):
-    """
-    Print Progress Bar
-    """
     percent = f'{100 * iteration / total:>{decimals + 4}.{decimals}f}'
     if len_bar == 0:
         len_bar = (min(os.get_terminal_size().columns, 80)
@@ -92,9 +102,7 @@ def print_progress(iteration: int, total: int, prefix='', suffix='',
 
 
 def print_cuda_tensors():
-    """
-    Print All CUDA Tensors
-    """
+    """ Print all cuda Tensors """
     for obj in gc.get_objects():
         try:
             if (torch.is_tensor(obj)
@@ -105,6 +113,15 @@ def print_cuda_tensors():
 
 
 def print_to_file(fname: str, fn: Callable, args=None, kwargs=None):
+    """ All `print` function calls in `fn(*args, **kwargs)`
+      uses a text file `fname`.
+
+    :param fname:
+    :param fn:
+    :param args: args for fn
+    :param kwargs: kwargs for fn
+    :return:
+    """
     if fname and not fname.endswith('.txt'):
         fname = f'{fname}.txt'
 

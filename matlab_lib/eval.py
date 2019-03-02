@@ -4,14 +4,11 @@ try:
 finally:
     pass
 
+import inspect
 import io
 from collections import OrderedDict as ODict
-from datetime import datetime
-import shutil
-from typing import Dict
-import inspect
+from typing import Union
 
-import numpy as np
 from numpy import ndarray
 
 
