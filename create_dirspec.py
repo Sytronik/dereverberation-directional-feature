@@ -1,3 +1,15 @@
+""" create directional spectrogram.
+
+--init option forces to start from the first data.
+--dirac option is for using dirac instead of spatially average intensity.
+
+Ex)
+python create_dirspec.py TRAIN
+python create_dirspec.py UNSEEN --init
+python create_dirspec.py SEEN --dirac
+python create_dirspec.py TRAIN --dirac --init
+"""
+
 # noinspection PyUnresolvedReferences
 import logging
 import multiprocessing as mp
@@ -23,7 +35,7 @@ NDArray = TypeVar('NDArray', np.ndarray, cp.ndarray)
 N_CUDA_DEV = 4
 FORM = '%04d_%02d.h5'
 L_WIN_MS = 32.
-HOP_RATIO = 0.5
+HOP_RATIO = 0.25
 FN_WIN = scsig.windows.hann
 
 # determined by wave files
@@ -37,8 +49,8 @@ N_fft = 0
 
 
 class SFTData(NamedTuple):
-    """
-    Constant Matrices/Vectors for Spherical Fourier Analysis
+    """ Constant Matrices/Vectors for Spherical Fourier Analysis
+
     """
     Yenc: NDArray
     Wnv: NDArray
@@ -61,6 +73,12 @@ class SFTData(NamedTuple):
 
 
 def search_all_files(directory: str, id_: str) -> List[str]:
+    """ search all files that matches the pattern `id_` in `direcotry` recursively.
+
+    :param directory:
+    :param id_:
+    :return:
+    """
     result = []
     for folder, _, _ in os.walk(directory):
         files = glob(pathjoin(folder, id_))
@@ -72,6 +90,14 @@ def search_all_files(directory: str, id_: str) -> List[str]:
 
 # noinspection PyShadowingNames
 def seltriag(Ain: NDArray, nrord: int, shft: Tuple[int, int]) -> NDArray:
+    """ select spherical harmonics coefficients from Ain
+     with $N$-`nrord` order, $m$+`shft[0]`, $n$+`shift[1]`
+
+    :param Ain:
+    :param nrord:
+    :param shft:
+    :return:
+    """
     xp = cp.get_array_module(Ain)
     N_freq = 1 if Ain.ndim == 1 else Ain.shape[1]
     N = int(np.ceil(np.sqrt(Ain.shape[0])) - 1)
@@ -87,75 +113,6 @@ def seltriag(Ain: NDArray, nrord: int, shft: Tuple[int, int]) -> NDArray:
                 Aout[idx] = Ain[idx_from]
             idx += 1
     return Aout
-
-
-# noinspection PyShadowingNames
-def calc_intensity(Asv: NDArray,
-                   Wnv: NDArray, Wpv: NDArray, Vv: NDArray,
-                   bn_sel2_0: NDArray, bn_sel2_1: NDArray,
-                   bn_sel3_0: NDArray, bn_sel3_1: NDArray,
-                   bn_sel_4_0: NDArray, bn_sel_4_1: NDArray) -> NDArray:
-    """
-    Asv(anm) -> IV
-    """
-    xp = cp.get_array_module(Asv)
-
-    aug1 = seltriag(Asv, 1, (0, 0))
-    aug2 = (bn_sel2_0 * seltriag(Wpv, 1, (1, -1)) * seltriag(Asv, 1, (1, -1))
-            - bn_sel2_1 * seltriag(Wnv, 1, (0, 0)) * seltriag(Asv, 1, (-1, -1)))
-    aug3 = (bn_sel3_0 * seltriag(Wpv, 1, (0, 0)) * seltriag(Asv, 1, (-1, 1))
-            - bn_sel3_1 * seltriag(Wnv, 1, (1, 1)) * seltriag(Asv, 1, (1, 1)))
-    aug4 = (bn_sel_4_0 * seltriag(Vv, 1, (0, 0)) * seltriag(Asv, 1, (-1, 0))
-            + bn_sel_4_1 * seltriag(Vv, 1, (1, 0)) * seltriag(Asv, 1, (1, 0)))
-
-    aug1 = aug1.conj()
-    intensity = xp.empty((aug1.shape[1], 3))
-    intensity[:, 0] = (xp.einsum('mf,mf->f', aug1, aug2 + aug3) / 2).real
-    intensity[:, 1] = (xp.einsum('mf,mf->f', aug1, aug2 - aug3) / 2j).real
-    intensity[:, 2] = (xp.einsum('mf,mf->f', aug1, aug4)).real
-
-    return 0.5 * intensity
-
-
-def calc_real_coeffs(anm: NDArray) -> NDArray:
-    xp = cp.get_array_module(anm)
-    N = int(np.ceil(np.sqrt(anm.shape[0])) - 1)
-    trans = np.zeros(((N + 1)**2, (N + 1)**2), dtype=np.complex128)
-    trans[0, 0] = 1
-    if N > 0:
-        idxs = (np.arange(N + 1) + 1)**2
-
-        for n in range(1, N + 1):
-            m1 = np.arange(n)
-            diag = np.array([1j] * n + [0] + list(-(-1)**m1))
-
-            m2 = m1[::-1]
-            anti_diag = np.array(list(1j * (-1)**m2) + [0] + [1] * n)
-
-            block = (np.diagflat(diag) + np.diagflat(anti_diag)[:, ::-1]) / np.sqrt(2)
-            block[n, n] = 1.
-
-            trans[idxs[n - 1]:idxs[n], idxs[n - 1]:idxs[n]] = block
-
-    anm_real = (xp.asarray(trans.conj()) @ anm).real
-
-    return anm_real
-
-
-def calc_direction_vec(anm: NDArray) -> NDArray:
-    """ Calculate direciton vector in DirAC
-
-    using Complex Spherical Harmonics Coefficients
-
-    :param anm:
-    :return:
-    """
-    if anm.shape[0] > 4:
-        anm = anm[:4]
-    anm_real = calc_real_coeffs(anm)  # transform to real coefficient
-    v = anm_real[[3, 1, 2]]  # DirAC particle velocity vector
-
-    return (1 / np.sqrt(2) * anm_real[0] * v).T
 
 
 if __name__ == '__main__':
@@ -306,7 +263,7 @@ def process():
             range_loc = range(start_idx, end_idx)
 
             pools[-1].apply_async(
-                save_IV,
+                calc_save_dirspec,
                 (i_proc % N_CUDA_DEV, data, range_loc, fname, N_wavfile + 1)
             )
 
@@ -339,8 +296,8 @@ def process():
     print_save_info()
 
 
-def save_IV(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *args):
-    """ Save IV files.
+def calc_save_dirspec(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *args):
+    """ Calculate & save directional spectrogram files.
 
     :param i_dev: GPU Device No.
     :param data_np: original wave data
@@ -356,7 +313,9 @@ def save_IV(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *a
     cp.cuda.Device(i_dev).use()
     win_cp = cp.array(win)
     Ys_cp = cp.array(Ys)
-    sftdata_cp = SFTData(*[cp.array(item) if item is not None else None for item in sftdata])
+    sftdata_cp = SFTData(*[cp.array(item)
+                           if (item is not None) else None
+                           for item in sftdata])
     # data = cp.array(data_np)
 
     N_frame_room = int(np.ceil((data_np.shape[0] + L_RIR - 1) / L_hop) - 1)
@@ -460,9 +419,94 @@ def save_IV(i_dev: int, data_np: np.ndarray, range_loc: iter, fname_wav: str, *a
         print(fname)
 
 
-def print_save_info():
+# noinspection PyShadowingNames
+def calc_intensity(Asv: NDArray,
+                   Wnv: NDArray, Wpv: NDArray, Vv: NDArray,
+                   bn_sel2_0: NDArray, bn_sel2_1: NDArray,
+                   bn_sel3_0: NDArray, bn_sel3_1: NDArray,
+                   bn_sel_4_0: NDArray, bn_sel_4_1: NDArray) -> NDArray:
+    """ Asv(anm) -> IV
+
+    :param Asv:
+    :param Wnv:
+    :param Wpv:
+    :param Vv:
+    :param bn_sel2_0:
+    :param bn_sel2_1:
+    :param bn_sel3_0:
+    :param bn_sel3_1:
+    :param bn_sel_4_0:
+    :param bn_sel_4_1:
+    :return:
     """
-    Print __str__ and save metadata.
+
+    xp = cp.get_array_module(Asv)
+
+    aug1 = seltriag(Asv, 1, (0, 0))
+    aug2 = (bn_sel2_0 * seltriag(Wpv, 1, (1, -1)) * seltriag(Asv, 1, (1, -1))
+            - bn_sel2_1 * seltriag(Wnv, 1, (0, 0)) * seltriag(Asv, 1, (-1, -1)))
+    aug3 = (bn_sel3_0 * seltriag(Wpv, 1, (0, 0)) * seltriag(Asv, 1, (-1, 1))
+            - bn_sel3_1 * seltriag(Wnv, 1, (1, 1)) * seltriag(Asv, 1, (1, 1)))
+    aug4 = (bn_sel_4_0 * seltriag(Vv, 1, (0, 0)) * seltriag(Asv, 1, (-1, 0))
+            + bn_sel_4_1 * seltriag(Vv, 1, (1, 0)) * seltriag(Asv, 1, (1, 0)))
+
+    aug1 = aug1.conj()
+    intensity = xp.empty((aug1.shape[1], 3))
+    intensity[:, 0] = (xp.einsum('mf,mf->f', aug1, aug2 + aug3) / 2).real
+    intensity[:, 1] = (xp.einsum('mf,mf->f', aug1, aug2 - aug3) / 2j).real
+    intensity[:, 2] = (xp.einsum('mf,mf->f', aug1, aug4)).real
+
+    return 0.5 * intensity
+
+
+def calc_real_coeffs(anm: NDArray) -> NDArray:
+    """ calculate real version coefficients of `anm`
+
+    :param anm: complex anm
+    :return:
+    """
+    xp = cp.get_array_module(anm)
+    N = int(np.ceil(np.sqrt(anm.shape[0])) - 1)
+    trans = np.zeros(((N + 1)**2, (N + 1)**2), dtype=np.complex128)
+    trans[0, 0] = 1
+    if N > 0:
+        idxs = (np.arange(N + 1) + 1)**2
+
+        for n in range(1, N + 1):
+            m1 = np.arange(n)
+            diag = np.array([1j] * n + [0] + list(-(-1)**m1))
+
+            m2 = m1[::-1]
+            anti_diag = np.array(list(1j * (-1)**m2) + [0] + [1] * n)
+
+            block = (np.diagflat(diag) + np.diagflat(anti_diag)[:, ::-1]) / np.sqrt(2)
+            block[n, n] = 1.
+
+            trans[idxs[n - 1]:idxs[n], idxs[n - 1]:idxs[n]] = block
+
+    anm_real = (xp.asarray(trans.conj()) @ anm).real
+
+    return anm_real
+
+
+def calc_direction_vec(anm: NDArray) -> NDArray:
+    """ Calculate direciton vector in DirAC
+     using Complex Spherical Harmonics Coefficients
+
+    :param anm:
+    :return:
+    """
+    if anm.shape[0] > 4:
+        anm = anm[:4]
+    anm_real = calc_real_coeffs(anm)  # transform to real coefficient
+    v = anm_real[[3, 1, 2]]  # DirAC particle velocity vector
+
+    return (1 / np.sqrt(2) * anm_real[0] * v).T
+
+
+def print_save_info():
+    """ Print and save metadata.
+
     """
     print(f'Wave Files Processed/Total: '
           f'{N_wavfile}/{len(all_files)}\n'
