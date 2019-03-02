@@ -1,5 +1,5 @@
 from collections import OrderedDict as ODict
-from typing import Sequence
+from typing import Sequence, Tuple, Union, IO
 
 import librosa
 import numpy as np
@@ -10,8 +10,8 @@ from scipy.linalg import toeplitz
 
 import config as cfg
 import generic as gen
+from dirspecgram import LogModule, principle_
 from matlab_lib import Evaluation as EvalModule
-from dirspecgram import LogModule
 
 
 # class SNRseg(nn.Module):
@@ -100,6 +100,14 @@ from dirspecgram import LogModule
 
 def calc_snrseg(y_clean: ndarray, y_est: ndarray,
                 T_ys: Sequence[int] = (0,)) -> ndarray:
+    """ calculate snrseg. y can be a batch.
+
+    :param y_clean:
+    :param y_est:
+    :param T_ys:
+    :return:
+    """
+
     _LIM_UPPER = 35. / 10.  # clip at 35 dB
     _LIM_LOWER = -10. / 10.  # clip at -10 dB
     if len(T_ys) == 1 and y_clean.shape[0] != 1:
@@ -130,6 +138,14 @@ def calc_snrseg(y_clean: ndarray, y_est: ndarray,
 
 def calc_using_eval_module(y_clean: ndarray, y_est: ndarray,
                            T_ys: Sequence[int] = (0,)) -> ODict:
+    """ calculate metric using EvalModule. y can be a batch.
+
+    :param y_clean:
+    :param y_est:
+    :param T_ys:
+    :return:
+    """
+
     if y_clean.ndim == 1:
         y_clean = y_clean[np.newaxis, ...]
         y_est = y_est[np.newaxis, ...]
@@ -140,7 +156,7 @@ def calc_using_eval_module(y_clean: ndarray, y_est: ndarray,
     sum_result = None
     for T, item_clean, item_est in zip(T_ys, y_clean, y_est):
         # noinspection PyArgumentList
-        temp = EvalModule(item_clean[:T], item_est[:T], cfg.Fs)
+        temp: ODict = EvalModule(item_clean[:T], item_est[:T], cfg.Fs)
         result = np.array(list(temp.values()))
         if not keys:
             keys = temp.keys()
@@ -151,7 +167,16 @@ def calc_using_eval_module(y_clean: ndarray, y_est: ndarray,
     return ODict(zip(keys, sum_result.tolist()))
 
 
-def wave_scale_fix(wave: ndarray, amp_limit=1., message='', io=None) -> ndarray:
+def wave_scale_fix(wave: ndarray, amp_limit=1., message='', io: IO = None) -> ndarray:
+    """ make scale of `wave` limits to `amp_limit`.
+
+    :param wave:
+    :param amp_limit:
+    :param message:
+    :param io:
+    :return:
+    """
+
     max_amp = np.max(np.abs(wave))
     if max_amp > amp_limit:
         wave /= max_amp
@@ -166,6 +191,14 @@ def wave_scale_fix(wave: ndarray, amp_limit=1., message='', io=None) -> ndarray:
 
 
 def reconstruct_wave(*args: ndarray, n_iter=0, n_sample=-1) -> ndarray:
+    """ reconstruct time-domain wave from spectrogram
+
+    :param args: can be (mag_spectrogram, phase_spectrogram) or (complex_spectrogram,)
+    :param n_iter: no. of iteration of griffin-lim
+    :param n_sample: number of samples of output wave
+    :return:
+    """
+
     if len(args) == 1:
         spec = args[0].squeeze()
         mag = None
@@ -239,20 +272,20 @@ def delta(*data: gen.TensArr, axis: int, L=2) -> gen.TensArrOrSeq:
     return result if len(result) > 1 else result[0]
 
 
-def draw_spectrogram(data: gen.TensArr, is_power=False, show=False, **kwargs):
+def draw_spectrogram(data: gen.TensArr, to_db=True, show=False, **kwargs):
     """
     
     :param data: 
-    :param is_power: 
+    :param to_db:
     :param show: 
     :param kwargs: vmin, vmax
     :return: 
     """
 
-    scale_factor = 10 if is_power else 20
-    data = LogModule.log(data)
+    if to_db:
+        data = LogModule.log(data)
+        data *= 20
     data = data.squeeze()
-    data *= scale_factor
     data = gen.convert(data, astype=ndarray)
 
     fig = plt.figure()
@@ -269,10 +302,11 @@ def draw_spectrogram(data: gen.TensArr, is_power=False, show=False, **kwargs):
     return fig
 
 
-def bnkr_equalize_(*args):
-    """
+def bnkr_equalize_(*args: ndarray) -> Union[ndarray, Tuple[ndarray, ndarray]]:
+    """ divide spectrogram into bnkr with regularization
 
-    :param args: (spec,), (mag,), or (mag, phase)
+    :param args: (complex_spectrogram,), (magnitude_spectrogram,),
+        or (magnitude_spectrogram, phase_spectrogram)
     :return:
     """
     if len(args) == 1:
@@ -314,6 +348,13 @@ def bnkr_equalize_(*args):
                 bEQf0_angle = bEQf0_angle[..., 0]
 
             phase += bEQf0_angle
+            phase = principle_(phase)
+
             return mag, phase
         else:
             return mag
+
+
+def bnkr_equalize(*args: ndarray) -> Union[ndarray, Tuple[ndarray, ndarray]]:
+    args = args[:]
+    return bnkr_equalize_(*args)
