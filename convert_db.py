@@ -116,9 +116,25 @@ def open_pt(fname: str):
     return contents
 
 
+def remove_none(a):
+    if a is None:
+        return []
+    else:
+        if hasattr(a, 'items'):
+            return {remove_none(k): remove_none(v) for k, v in a.items()}
+        elif type(a) == list:
+            return [remove_none(item) for item in a]
+        elif type(a) == tuple:
+            return tuple([remove_none(item) for item in a])
+        elif type(a) == set:
+            return set([remove_none(item) for item in a])
+        else:
+            return a
+
+
 def save_mat(fname: str, contents):
     if type(contents) != dict:  # make contents dict
-        contents = {os.path.basename(fname).replace('.mat', ''): contents}
+        contents = {os.path.basename(fname).replace('.mat', ''): remove_none(contents)}
     scio.savemat(fname, contents, long_field_names=True)
 
 
