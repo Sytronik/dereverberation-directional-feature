@@ -29,7 +29,7 @@ parser.add_argument(
     dest='epoch', metavar='EPOCH',
 )
 parser.add_argument(
-    '--debug', '-d', action='store_const', const=0, default=4,
+    '--debug', '-d', action='store_const', const=0, default=3,
     dest='num_workers',
 )  # number of cpu threads for dataloaders
 ARGS = parser.parse_args()
@@ -92,7 +92,7 @@ if ARGS.train:
     dd.io.save(pathjoin(DIR_TRAIN, cfg.F_HPARAMS),
                dict(cfg.hp.asdict()))
 
-    trainer = Trainer('UNet')
+    trainer = Trainer.create('UNet')
     trainer.train(loader_train, loader_valid, DIR_TRAIN,
                   FIRST_EPOCH, F_STATE_DICT)
 elif ARGS.test:
@@ -113,7 +113,7 @@ elif ARGS.test:
                             collate_fn=dataset_test.pad_collate,
                             )
 
-    trainer = Trainer('UNet', use_cuda=True)
+    trainer = Trainer.create('UNet', use_cuda=True)
     trainer.test(loader, DIR_TEST, F_STATE_DICT)
 else:
     raise ArgumentError

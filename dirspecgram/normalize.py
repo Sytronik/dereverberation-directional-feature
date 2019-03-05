@@ -3,16 +3,18 @@ from abc import ABCMeta, abstractmethod
 from typing import Callable, List
 
 import numpy as np
-import torch
 from numpy import ndarray
 
-import config as cfg
-import generic as gen
 from generic import TensArr, TensArrOrSeq
 
 
 class INormalizer(metaclass=ABCMeta):
-    names = None
+    """ Normalizer Interface """
+
+    @staticmethod
+    @abstractmethod
+    def names() -> tuple:
+        raise NotImplementedError
 
     @classmethod
     @abstractmethod
@@ -41,7 +43,9 @@ class INormalizer(metaclass=ABCMeta):
 
 
 class MeanStdNormalizer(INormalizer):
-    names = 'mean', 'std'
+    @staticmethod
+    def names() -> tuple:
+        return 'mean', 'std'
 
     @staticmethod
     def _sum(a: ndarray) -> ndarray:
@@ -54,6 +58,7 @@ class MeanStdNormalizer(INormalizer):
     @classmethod
     def calc_consts(cls, fn_calc_per_file: Callable, all_files: List[str], **kwargs) -> tuple:
         need_mean = kwargs.get('need_mean', True)
+
         # Calculate summation & size (parallel)
         list_fn = (np.size, cls._sum) if need_mean else (np.size,)
         pool = mp.Pool(mp.cpu_count())
@@ -117,7 +122,9 @@ class MeanStdNormalizer(INormalizer):
 
 
 class MinMaxNormalizer(INormalizer):
-    names = 'min', 'max'
+    @staticmethod
+    def names() -> tuple:
+        return 'min', 'max'
 
     @staticmethod
     def _min(a: ndarray) -> ndarray:

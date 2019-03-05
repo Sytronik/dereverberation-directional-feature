@@ -2,6 +2,7 @@ from os.path import join as pathjoin
 
 import numpy as np
 import torch
+from numpy import ndarray
 from tensorboardX import SummaryWriter
 
 import config as cfg
@@ -36,23 +37,26 @@ class CustomWriter(SummaryWriter):
         super().close()
 
     def write_one(self, step: int, group='',
-                  out: np.ndarray = None, out_phase: np.ndarray = None,
-                  eval_with_y_ph=False, **kwargs) -> np.ndarray:
+                  out: ndarray = None,
+                  out_phase: ndarray = None, out_bpd: ndarray = None,
+                  eval_with_y_ph=False, **kwargs: ndarray) -> ndarray:
         """ write summary about one sample of output(and x and y optionally).
 
         :param step:
         :param group:
         :param out:
         :param out_phase:
-        :param eval_with_y_ph:
-        :param kwargs: dict(x, y, x_phase, y_phase)
+        :param out_bpd:
+        :param eval_with_y_ph: determine if `out` is evaluated with `y_phase`
+        :param kwargs: keywords can be [x, y, x_phase, y_phase]
 
-        :return:
+        :return: evaluation result
         """
 
         assert out is not None
         if kwargs:
             one_sample = kwargs
+            self.one_sample = kwargs
             do_reuse = False
         else:
             one_sample = self.one_sample
@@ -73,11 +77,11 @@ class CustomWriter(SummaryWriter):
             y = one_sample['y'][..., -1:]
 
             if cfg.DO_B_EQ:
-                x, x_phase = bnkr_equalize_(x, one_sample['x_phase'][:])
-                y, y_phase = bnkr_equalize_(y, one_sample['y_phase'][:])
+                x, x_phase = bnkr_equalize_(x, one_sample['x_phase'].copy())
+                y, y_phase = bnkr_equalize_(y, one_sample['y_phase'].copy())
             else:
-                x_phase = one_sample['x_phase'][:]
-                y_phase = one_sample['y_phase'][:]
+                x_phase = one_sample['x_phase'].copy()
+                y_phase = one_sample['y_phase'].copy()
 
             snrseg_x = calc_snrseg(y, x[:, :y.shape[1], :])
 
@@ -115,6 +119,18 @@ class CustomWriter(SummaryWriter):
                            step,
                            sample_rate=cfg.Fs)
 
+            if 'x_bpd' in one_sample:
+                fig_x_bpd = draw_spectrogram(
+                    one_sample['x_bpd'],
+                    to_db=False, vmin=-np.pi, vmax=np.pi
+                )
+                fig_y_bpd = draw_spectrogram(
+                    np.append(one_sample['y_bpd'], 0. * pad_one, axis=1),
+                    to_db=False, vmin=-np.pi, vmax=np.pi
+                )
+                self.add_figure(f'{group}/1. Anechoic BPD', fig_y_bpd, step)
+                self.add_figure(f'{group}/2. Reverberant BPD', fig_x_bpd, step)
+
             self.recon_sample = dict(x=x, y=y,
                                      x_phase=x_phase, y_phase=y_phase,
                                      x_wav=x_wav, y_wav=y_wav,
@@ -146,7 +162,10 @@ class CustomWriter(SummaryWriter):
                 out_wav = reconstruct_wave(out, x_phase[:, :out.shape[1], :],
                                            n_iter=cfg.N_GRIFFIN_LIM)
             else:
-                out_wav = reconstruct_wave(out, out_phase)
+                if cfg.USE_GLIM_FOR_OUT:
+                    out_wav = reconstruct_wave(out, out_phase, n_iter=cfg.N_GRIFFIN_LIM)
+                else:
+                    out_wav = reconstruct_wave(out, out_phase)
             out_wav_y_ph = reconstruct_wave(out, y_phase)
 
             odict_eval = calc_using_eval_module(
@@ -186,6 +205,13 @@ class CustomWriter(SummaryWriter):
                        out_wav,
                        step,
                        sample_rate=cfg.Fs)
+
+        if out_bpd is not None:
+            fig_out_bpd = draw_spectrogram(
+                np.append(out_bpd, 0. * pad_one, axis=1),
+                to_db=False, vmin=-np.pi, vmax=np.pi
+            )
+            self.add_figure(f'{group}/3. Estimated BPD', fig_out_bpd, step)
 
         return np.array([[snrseg, *(odict_eval.values())],
                          [snrseg_x, *(odict_eval_x.values())]])

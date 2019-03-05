@@ -2,7 +2,7 @@ import os
 from copy import copy
 from glob import glob
 from os.path import join as pathjoin
-from typing import Dict, List, Sequence, Tuple, TypeVar
+from typing import Dict, List, Sequence, Tuple, TypeVar, Any
 
 import deepdish as dd
 import numpy as np
@@ -17,16 +17,18 @@ from generic import TensArr
 
 StrOrSeq = TypeVar('StrOrSeq', str, Sequence[str])
 TupOrSeq = TypeVar('TupOrSeq', tuple, Sequence[tuple])
+DataDict = Dict[str, Any]
 
 class DirSpecDataset(Dataset):
-    """
-    <Instance Variables>
-    (not splitted)
+    """ Directional Spectrogram Dataset
+
+    In the `split` class method, following member variables will be copied or split.
+    (will be copied)
     _PATH
     _needs
-    _normconst
+    _trannorm
 
-    (to be splitted)
+    (will be split)
     _all_files
     """
 
@@ -36,6 +38,8 @@ class DirSpecDataset(Dataset):
                  n_file=-1, keys_trannorm: TupOrSeq = None,
                  random_by_utterance=False, **kwargs):
         self._PATH = cfg.DICT_PATH[f'iv_{kind_data}']
+
+        # default needs
         self._needs = dict(x='all', y='alpha',
                            x_phase=False, y_phase=False,
                            fname_wav=True)
@@ -82,6 +86,7 @@ class DirSpecDataset(Dataset):
                 normconst = None
                 should_calc_save = True
 
+            # full paths of existing files
             if not self._all_files:
                 self._all_files = [pathjoin(self._PATH, f) for f in _all_files]
                 self._all_files = [f for f in self._all_files if os.path.isfile(f)]
@@ -117,22 +122,23 @@ class DirSpecDataset(Dataset):
     def __len__(self):
         return len(self._all_files)
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> DataDict:
         """
 
         :param idx:
-        :return: Dict[str, Any].
-            Dict value can be an integer, ndarray, or str
+        :return: DataDict
+            Values can be an integer, ndarray, or str.
         """
         sample = dict()
         for k, v in self._needs.items():
             if v:
                 data = dd.io.load(self._all_files[idx],
-                                  group=cfg.IV_DATA_NAME[k],
+                                  group=cfg.SPEC_DATA_NAME[k],
                                   sel=cfg.CH_SLICES[v])
                 if type(data) == np.str_:
-                    data = str(data)
-                sample[k] = data.astype(np.float32)
+                    sample[k] = str(data)
+                else:
+                    sample[k] = data.astype(np.float32)
 
         for xy in ('x', 'y'):
             sample[f'T_{xy}'] = sample[xy].shape[-2]
@@ -141,13 +147,13 @@ class DirSpecDataset(Dataset):
 
     @staticmethod
     @torch.no_grad()
-    def pad_collate(batch: List[Dict]) -> Dict:
-        """
+    def pad_collate(batch: List[DataDict]) -> DataDict:
+        """ return data with zero-padding
 
+        Important data like x, y are all converted to Tensor(cpu).
         :param batch:
-        :return: Dict[str, Any]
-            Dict value can be an Tensor(cpu), list of str, ndarray of int.
-            Important data like x, y are all converted to Tensor(cpu).
+        :return: DataDict
+            Values can be an Tensor(cpu), list of str, ndarray of int.
         """
         result = dict()
         T_xs = np.array([item.pop('T_x') for item in batch])
@@ -179,14 +185,14 @@ class DirSpecDataset(Dataset):
 
     @staticmethod
     @torch.no_grad()
-    def decollate_padded(batch: Dict, idx: int) -> Dict:
-        """
+    def decollate_padded(batch: DataDict, idx: int) -> DataDict:
+        """ select the `idx`-th data, get rid of padded zeros and return it.
 
+        Important data like x, y are all converted to ndarray.
         :param batch:
         :param idx:
-        :return: Dict[str, Any]
-            Dict value can be an str or ndarray.
-            Important data like x, y are all converted to ndarray.
+        :return: DataDict
+            Values can be an str or ndarray.
         """
         result = dict()
         for key, value in batch.items():
@@ -200,14 +206,20 @@ class DirSpecDataset(Dataset):
         return result
 
     @staticmethod
-    def save_iv(fname, **kwargs):
+    def save_dirspec(fname: str, **kwargs):
+        """ save directional spectrograms.
+
+        :param fname:
+        :param kwargs:
+        :return:
+        """
         scio.savemat(fname,
-                     {cfg.IV_DATA_NAME[k][1:]: v
-                      for k, v in kwargs.items() if k in cfg.IV_DATA_NAME}
+                     {cfg.SPEC_DATA_NAME[k][1:]: v
+                      for k, v in kwargs.items() if k in cfg.SPEC_DATA_NAME}
                      )
 
     def normalize_on_like(self, other):
-        """
+        """ use the same TranNormModule as other uses.
 
         :type other: DirSpecDataset
         :return:
@@ -215,12 +227,9 @@ class DirSpecDataset(Dataset):
         self._trannorm = other._trannorm
 
     def set_needs(self, **kwargs):
-        """
+        """ set which data are needed.
 
-        :param kwargs: dict(x: str, y: str,
-                            x_denorm: str, y_denorm: str,
-                            x_phase: str, y_phase: str)
-        :return:
+        :param kwargs: available keywords are [x, y, x_phase, y_phase, fname_wav]
         """
         for k in self._needs:
             if k in kwargs:
@@ -229,22 +238,55 @@ class DirSpecDataset(Dataset):
                 self._needs[k] = kwargs[k]
 
     def preprocess(self, xy: str, a: TensArr, a_phase: TensArr = None, idx=0) -> TensArr:
+        """
+
+        :param xy: one of 'x' or 'y'
+        :param a: directional spectrogram
+        :param a_phase: phase spectrum
+        :param idx: index of self._trannorm
+        :return:
+        """
         return self._trannorm[idx].process(xy, a, a_phase)
 
     def preprocess_(self, xy: str, a: TensArr, a_phase: TensArr = None, idx=0) -> TensArr:
+        """
+
+        :param xy: one of 'x' or 'y'
+        :param a: directional spectrogram
+        :param a_phase: phase spectrum
+        :param idx: index of self._trannorm
+        :return:
+        """
         return self._trannorm[idx].process_(xy, a, a_phase)
 
+    def set_transformer_var(self, idx=0, **kwargs):
+        self._trannorm[idx].set_transformer_var(**kwargs)
+
     def postprocess(self, xy: str, a: TensArr, idx=0) -> TensArr:
+        """
+
+        :param xy: one of 'x' or 'y'
+        :param a: directional spectrogram
+        :param idx: index of self._trannorm
+        :return:
+        """
         return self._trannorm[idx].inverse(xy, a)
 
     def postprocess_(self, xy: str, a: TensArr, idx=0) -> TensArr:
+        """
+
+        :param xy: one of 'x' or 'y'
+        :param a: directional spectrogram
+        :param idx: index of self._trannorm
+        :return:
+        """
         return self._trannorm[idx].inverse_(xy, a)
 
     # noinspection PyProtectedMember
     @classmethod
     def split(cls, dataset, ratio: Sequence[float]) -> Sequence:
-        """
-        Split datasets.
+        """ Split the dataset into `len(ratio)` datasets.
+
         The sum of elements of ratio must be 1,
         and only one element can have the value of -1 which means that
         it's automaticall set to the value so that the sum of the elements is 1
@@ -252,7 +294,7 @@ class DirSpecDataset(Dataset):
         :type dataset: DirSpecDataset
         :type ratio: Sequence[float]
 
-        :rtype: Tuple[DirSpecDataset]
+        :rtype: Sequence[DirSpecDataset]
         """
         if type(dataset) != cls:
             raise TypeError
