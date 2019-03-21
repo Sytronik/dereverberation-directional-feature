@@ -39,7 +39,7 @@ from utils import static_vars
 def main():
     parser = ArgumentParser()
     for arg_for_path in LIST_ARGS_FOR_PATH:
-        parser.add_argument(*arg_for_path, nargs='*', metavar='PATH')
+        parser.add_argument(*arg_for_path, nargs='+', metavar='PATH')
     parser.add_argument('--no-duplicate', '--nd', action='store_true')
 
     args = parser.parse_args()

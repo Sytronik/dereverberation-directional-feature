@@ -302,12 +302,13 @@ def draw_spectrogram(data: gen.TensArr, to_db=True, show=False, **kwargs):
     return fig
 
 
-def bnkr_equalize_(*args: ndarray) -> Union[ndarray, Tuple[ndarray, ndarray]]:
+def bnkr_equalize_(*args: ndarray)\
+        -> Union[ndarray, Tuple[ndarray, Union[ndarray, None]]]:
     """ divide spectrogram into bnkr with regularization
 
     :param args: (complex_spectrogram,), (magnitude_spectrogram,),
         or (magnitude_spectrogram, phase_spectrogram)
-    :return:
+    :return: same as args
     """
     if len(args) == 1:
         if np.iscomplexobj(args[0]):
@@ -352,7 +353,10 @@ def bnkr_equalize_(*args: ndarray) -> Union[ndarray, Tuple[ndarray, ndarray]]:
 
             return mag, phase
         else:
-            return mag
+            if len(args) == 1:
+                return mag
+            else:
+                return mag, None
 
 
 def bnkr_equalize(*args: ndarray) -> Union[ndarray, Tuple[ndarray, ndarray]]:

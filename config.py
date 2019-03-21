@@ -15,8 +15,8 @@ from mypath import *
 # ============================ nn & cuda ==============================
 
 # CUDA
-CUDA_DEVICES = list(range(torch.cuda.device_count()))
-OUT_CUDA_DEV = 1
+CUDA_DEVICES = [*range(torch.cuda.device_count())]#[1:]
+OUT_CUDA_DEV = 3
 
 # Files
 F_HPARAMS = 'hparams.h5'
@@ -25,20 +25,21 @@ F_HPARAMS = 'hparams.h5'
 class HyperParameters(NamedTuple):
     # n_per_frame: int
 
-    # method = 'mag'
-    method: str = 'complex'
-    # method = 'ifd'
+    method = 'mag'
+    # method: str = 'complex'
+    # method: str = 'magphase'
+    # method = 'magbpd'
 
     CHANNELS: Dict[str, Any] \
         = dict(x='all', y='alpha',
                fname_wav=False,
-               x_phase=True, y_phase=True,
+               # x_phase=True, y_phase=True,
                )
     ch_base: int = 32
     dflt_kernel_size: Tuple[int, int] = (3, 3)
     dflt_pad: Tuple[int, int] = (1, 1)
 
-    n_epochs: int = 449
+    n_epochs: int = 210
     batch_size: int = len(CUDA_DEVICES) * 8
     learning_rate: float = 5e-4
     n_file: int = 20 * 500
@@ -54,15 +55,15 @@ class HyperParameters(NamedTuple):
                )
 
     CosineLRWithRestarts: Dict[str, Any] \
-        = dict(restart_period=30,
+        = dict(restart_period=10,
                t_mult=2,
-               eta_threshold=0.5,
+               eta_threshold=1.5,
                )
 
     weight_decay: float = 1e-5  # Adam weight_decay
 
-    weight_loss: tuple = (0.1, 1, 0)
-    # weight_loss: tuple = (0.05, 0.5, 0.001)
+    weight_loss: tuple = (0.1, 1)  # complex
+    # weight_loss: tuple = (0.3, 1, 0.08)  # magphase
 
     # def for_MLP(self) -> Tuple:
     #     n_input = self.L_cut_x * self.n_per_frame
@@ -93,12 +94,17 @@ criterion = nn.MSELoss(reduction='sum')
 
 # ========================= for audio utils ===========================
 
+USE_GLIM_OUT_PHASE = False
+
 N_GRIFFIN_LIM = 20
 
-DO_B_EQ = True
+if 'DirAC' in DICT_PATH['dirspec_train']:
+    DO_B_EQ = False
+else:
+    DO_B_EQ = True
 
 # metadata
-_f_metadata = pathjoin(DICT_PATH['iv_train'], 'metadata.h5')
+_f_metadata = pathjoin(DICT_PATH['dirspec_train'], 'metadata.h5')
 if os.path.isfile(_f_metadata):
     _metadata = dd.io.load(_f_metadata)
     # all_files = metadata['path_wavfiles']
@@ -106,7 +112,7 @@ if os.path.isfile(_f_metadata):
     N_freq = int(_metadata['N_freq'])
     _N_LOC_TRAIN = int(_metadata['N_LOC'])
     Fs = int(_metadata['Fs'])
-    N_fft: int = L_hop * 2
+    N_fft: int = (N_freq - 1) * 2
 
     # STFT/iSTFT arguments
     kwargs = dict(hop_length=L_hop, window='hann', center=True)
@@ -114,12 +120,12 @@ if os.path.isfile(_f_metadata):
     KWARGS_ISTFT = dict(**kwargs, dtype=np.float32)
     del kwargs
 
-_f_metadata = pathjoin(DICT_PATH['iv_seen'], 'metadata.h5')
+_f_metadata = pathjoin(DICT_PATH['dirspec_seen'], 'metadata.h5')
 if os.path.isfile(_f_metadata):
     _metadata = dd.io.load(_f_metadata)
     _N_LOC_SEEN = int(_metadata['N_LOC'])
 
-_f_metadata = pathjoin(DICT_PATH['iv_unseen'], 'metadata.h5')
+_f_metadata = pathjoin(DICT_PATH['dirspec_unseen'], 'metadata.h5')
 if os.path.isfile(_f_metadata):
     _metadata = dd.io.load(_f_metadata)
     _N_LOC_UNSEEN = int(_metadata['N_LOC'])
@@ -142,21 +148,23 @@ if len(N_LOC) < 3:
 sft_dict = scio.loadmat(DICT_PATH['sft_data'],
                         variable_names=('bEQf',),
                         squeeze_me=True)
-bEQf0: ndarray = sft_dict['bEQf'][:, 0][:, np.newaxis, np.newaxis]  # F, T, C
+bEQf0: ndarray = sft_dict['bEQf'][:, 0][:, np.newaxis, np.newaxis]  # F, T(1), C(1)
 bEQf0_mag: ndarray = np.abs(bEQf0)
 bEQf0_angle: ndarray = np.angle(bEQf0)
 del sft_dict
 
-# ========================== for IVDataset ============================
+# ========================== for DirspecDataset ============================
 
 REFRESH_CONST = False
 
-IV_DATA_NAME = dict(x='/IV_room', y='/IV_free',
-                    x_phase='/phase_room', y_phase='/phase_free',
-                    fname_wav='/fname_wav',
-                    out='/IV_estimated',
-                    out_phase='/phase_estimated',
-                    )
+SPEC_DATA_NAME = dict(x='/dirspec_room', y='/dirspec_free',
+                      x_phase='/phase_room', y_phase='/phase_free',
+                      x_bpd='/bpd_room', y_bpd='/bpd_free',
+                      fname_wav='/fname_wav',
+                      out='/dirspec_estimated',
+                      out_phase='/phase_estimated',
+                      out_bpd='/bpd_estimated',
+                      )
 CH_SLICES = {'all': dd.aslice[:, :, :],
              'alpha': dd.aslice[:, :, -1:],
              True: None,
@@ -172,18 +180,21 @@ def is_ivfile(f: os.DirEntry) -> bool:
 # ==================== for Normalization Classes ======================
 
 EPS_FOR_LOG = 1e-10
-USE_LOG = False
+USE_LOG = True
 NORM_USING_ONLY_X = False
 
 # ========================= dependent values ===========================
 
 KEY_TRANNORM = (hp.method, 'meanstd', USE_LOG)
-if hp.method == 'mag':
+if hp.method == 'mag' or hp.method == 'magbpd':
     N_LOSS_TERM = 1
     KEYS_TRANNORM = (KEY_TRANNORM,)
 elif hp.method == 'complex':
-    N_LOSS_TERM = 3
+    N_LOSS_TERM = 2
     KEYS_TRANNORM = (KEY_TRANNORM, ('mag', 'meanstd', True))
+elif hp.method == 'magphase':
+    N_LOSS_TERM = 3
+    KEYS_TRANNORM = (('mag', 'meanstd', True), ('complex', 'meanstd', False))
 
 CH_WITH_PHASE = dict(**hp.CHANNELS)
 

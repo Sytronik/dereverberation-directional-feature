@@ -250,7 +250,7 @@ class Trainer(metaclass=TrainerMeta):
 
                 out_one = self._post_one(output, T_ys, 0, loader.dataset)
 
-                DirSpecDataset.save_dirspec(f'{f_prefix}IV_{epoch}',
+                DirSpecDataset.save_dirspec(f'{f_prefix}dirspec_{epoch}',
                                             **self.writer.one_sample, **out_one)
 
                 # Process(
@@ -305,7 +305,7 @@ class Trainer(metaclass=TrainerMeta):
 
             out_one = self._post_one(output, T_ys, 0, loader.dataset)
 
-            DirSpecDataset.save_dirspec(pathjoin(dir_result, f'IV_{i_iter}'),
+            DirSpecDataset.save_dirspec(pathjoin(dir_result, f'dirspec_{i_iter}'),
                                         **one_sample, **out_one)
 
             measure = self.writer.write_one(i_iter, **out_one, group=group, **one_sample)

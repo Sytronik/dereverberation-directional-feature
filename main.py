@@ -13,32 +13,32 @@ from dirspecgram import DirSpecDataset
 from train import Trainer
 
 parser = ArgumentParser()
+
 parser.add_argument(
-    'model_name', type=str, nargs=1, metavar='MODEL'
+    'model_name', type=str,
+    metavar='MODEL'
 )
 parser.add_argument(
     '--train', action='store_true',
 )
 parser.add_argument(
-    '--test',
-    type=str, nargs='?', const='unseen', choices=('valid', 'seen', 'unseen'),
+    '--test', type=str, choices=('valid', 'seen', 'unseen'),
     metavar='DATASET'
 )
 parser.add_argument(
-    '--from', type=int, nargs=1, default=(-1,),
+    '--from', type=int, default=-1,
     dest='epoch', metavar='EPOCH',
 )
 parser.add_argument(
-    '--debug', '-d', action='store_const', const=0, default=3,
+    '--disk-worker', '-dw', type=int, nargs='?', const=0, default=3,
     dest='num_workers',
-)  # number of cpu threads for dataloaders
+)  # number of subprocesses for dataloaders
 ARGS = parser.parse_args()
 del parser
-
-if ARGS.epoch[0] < -1:
+if ARGS.train and ARGS.test or ARGS.epoch < -1:
     raise ArgumentError
 
-model_name = ARGS.model_name[0]
+model_name = ARGS.model_name
 
 # directory
 DIR_TRAIN = pathjoin(cfg.DICT_PATH[model_name], 'train')
@@ -52,9 +52,9 @@ else:
     DIR_TEST = ''
 
 # epoch, state dict
-FIRST_EPOCH = ARGS.epoch[0] + 1
+FIRST_EPOCH = ARGS.epoch + 1
 if FIRST_EPOCH > 0:
-    F_STATE_DICT = pathjoin(DIR_TRAIN, f'{model_name}_{ARGS.epoch[0]}.pt')
+    F_STATE_DICT = pathjoin(DIR_TRAIN, f'{model_name}_{ARGS.epoch}.pt')
 else:
     F_STATE_DICT = ''
 
