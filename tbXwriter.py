@@ -17,7 +17,7 @@ from dirspecgram import LogModule
 
 
 class CustomWriter(SummaryWriter):
-    __slots__ = ('one_sample', 'recon_sample', 'measure_x', 'kwargs_fig')
+    __slots__ = ('one_sample', 'recon_sample', 'measure_x', 'kwargs_fig', 'y_scale')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -26,6 +26,7 @@ class CustomWriter(SummaryWriter):
         self.recon_sample = dict()
         self.measure_x = dict()
         self.kwargs_fig = dict()
+        self.y_scale = 1.
 
     def __del__(self):
         self.flogtxt.close()
@@ -71,9 +72,10 @@ class CustomWriter(SummaryWriter):
 
             snrseg_x = self.measure_x['SNRseg']
             odict_eval_x = self.measure_x['odict_eval']
+            y_scale = self.y_scale
         else:
             # F, T, 1
-            x = one_sample['x'][..., -1:]
+            x = one_sample['x'][..., -1:] / 2 / np.sqrt(4 * np.pi)  # warning
             y = one_sample['y'][..., -1:]
 
             if cfg.DO_B_EQ:
@@ -88,6 +90,7 @@ class CustomWriter(SummaryWriter):
             # T,
             x_wav = reconstruct_wave(x, x_phase)
             y_wav = reconstruct_wave(y, y_phase)
+            y_scale = np.abs(y_wav).max()/0.707
 
             odict_eval_x = calc_using_eval_module(y_wav, x_wav[:y_wav.shape[0]])
 
@@ -104,7 +107,7 @@ class CustomWriter(SummaryWriter):
 
             self.add_audio(f'{group}/1. Anechoic Wave',
                            torch.from_numpy(
-                               wave_scale_fix(y_wav,
+                               wave_scale_fix(y_wav/y_scale,
                                               message=f'At step {step}, y_wav',
                                               io=self.flogtxt)
                            ),
@@ -112,7 +115,7 @@ class CustomWriter(SummaryWriter):
                            sample_rate=cfg.Fs)
             self.add_audio(f'{group}/2. Reverberant Wave',
                            torch.from_numpy(
-                               wave_scale_fix(x_wav,
+                               wave_scale_fix(x_wav/(np.abs(x_wav).max()/0.707),
                                               message=f'At step {step}, x_wav',
                                               io=self.flogtxt)
                            ),
@@ -137,6 +140,7 @@ class CustomWriter(SummaryWriter):
                                      pad_one=pad_one)
             self.measure_x = dict(SNRseg=snrseg_x, odict_eval=odict_eval_x)
             self.kwargs_fig = dict(vmin=vmin, vmax=vmax)
+            self.y_scale = y_scale
 
         out = out[..., -1:]
         if np.iscomplexobj(out):
@@ -151,10 +155,7 @@ class CustomWriter(SummaryWriter):
             np.maximum(out, 0, out=out)
             # np.sqrt(out, out=out)
             if cfg.DO_B_EQ:
-                if out_phase is None:
-                    out = bnkr_equalize_(out)
-                else:
-                    out, out_phase = bnkr_equalize_(out, out_phase)
+                out, out_phase = bnkr_equalize_(out, out_phase)
 
             snrseg = calc_snrseg(y, out)
 
@@ -162,7 +163,7 @@ class CustomWriter(SummaryWriter):
                 out_wav = reconstruct_wave(out, x_phase[:, :out.shape[1], :],
                                            n_iter=cfg.N_GRIFFIN_LIM)
             else:
-                if cfg.USE_GLIM_FOR_OUT:
+                if cfg.USE_GLIM_OUT_PHASE:
                     out_wav = reconstruct_wave(out, out_phase, n_iter=cfg.N_GRIFFIN_LIM)
                 else:
                     out_wav = reconstruct_wave(out, out_phase)
@@ -173,7 +174,7 @@ class CustomWriter(SummaryWriter):
                 out_wav_y_ph if eval_with_y_ph else out_wav
             )
             out_wav_y_ph = torch.from_numpy(
-                wave_scale_fix(out_wav_y_ph,
+                wave_scale_fix(out_wav_y_ph/y_scale,
                                message=f'At step {step}, out_wav_y_ph',
                                io=self.flogtxt)
             )
@@ -197,7 +198,7 @@ class CustomWriter(SummaryWriter):
         self.add_figure(f'{group}/3. Estimated Anechoic Spectrum', fig_out, step)
 
         out_wav = torch.from_numpy(
-            wave_scale_fix(out_wav,
+            wave_scale_fix(out_wav/y_scale,
                            message=f'At step {step}, out_wav',
                            io=self.flogtxt)
         )
