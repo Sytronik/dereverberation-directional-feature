@@ -28,6 +28,7 @@ import scipy.io as scio
 import scipy.signal as scsig
 import soundfile as sf
 from tqdm import tqdm
+import librosa
 
 from mypath import DICT_PATH
 
@@ -35,8 +36,7 @@ NDArray = TypeVar('NDArray', np.ndarray, cp.ndarray)
 
 # manually select
 N_CUDA_DEV = 4
-N_DISK_WORKER = 3
-MAX_Q_SIZE = int(60/0.02135/N_CUDA_DEV)
+MAX_Q_SIZE = int(40 / 0.02135 / N_CUDA_DEV)
 FORM = '%04d_%02d.h5'
 L_WIN_MS = 32.
 HOP_RATIO = 0.5
@@ -64,6 +64,7 @@ class SFTData(NamedTuple):
     Wnv: NDArray
     Wpv: NDArray
     Vv: NDArray
+    T_real: NDArray
     bnkr: NDArray
     bEQf: NDArray
     bn_sel2_0: NDArray
@@ -94,6 +95,18 @@ def search_all_files(directory: str, id_: str) -> List[str]:
             result += files
 
     return result
+
+
+def stft(data: NDArray, N_frame: int, _win: NDArray):
+    xp = cp.get_array_module(data)
+    spec = xp.empty((data.shape[0], N_freq, N_frame), dtype=xp.complex128)
+    interval = np.arange(L_frame)
+    for i_frame in range(N_frame):
+        spec[:, :, i_frame] \
+            = xp.fft.fft(data[:, interval] * _win, n=N_fft)[:, :N_freq]
+        interval += L_hop
+
+    return spec
 
 
 # noinspection PyShadowingNames
@@ -129,7 +142,7 @@ def calc_intensity(Asv: NDArray,
                    bn_sel2_0: NDArray, bn_sel2_1: NDArray,
                    bn_sel3_0: NDArray, bn_sel3_1: NDArray,
                    bn_sel_4_0: NDArray, bn_sel_4_1: NDArray) -> NDArray:
-    """ Asv(anm) -> IV
+    """ Asv(anm) (Order x ...) -> Intensity (... x 3)
 
     :param Asv:
     :param Wnv:
@@ -157,8 +170,8 @@ def calc_intensity(Asv: NDArray,
 
     aug1 = aug1.conj()
     intensity = xp.empty((*other_shape, 3))
-    temp = ''.join([chr(ord('A')+ii) for ii in range(Asv.ndim-1)])
-    ein_expr = f'm{temp},m{temp}->{temp}'
+    other_axes_expr = ''.join([chr(ord('A') + ii) for ii in range(Asv.ndim - 1)])
+    ein_expr = f'm{other_axes_expr},m{other_axes_expr}->{other_axes_expr}'
     intensity[..., 0] = (xp.einsum(ein_expr, aug1, aug2 + aug3) / 2).real
     intensity[..., 1] = (xp.einsum(ein_expr, aug1, aug2 - aug3) / 2j).real
     intensity[..., 2] = (xp.einsum(ein_expr, aug1, aug4)).real
@@ -166,50 +179,42 @@ def calc_intensity(Asv: NDArray,
     return 0.5 * intensity
 
 
-def calc_real_coeffs(anm: NDArray) -> NDArray:
-    """ calculate real version coefficients of `anm`
+def calc_mat_for_real_coeffs(N: int) -> np.ndarray:
+    """ calculate matrix to convert complex SH coeffs to real
 
-    :param anm: complex anm
-    :return:
+    :param N: n-order
+    :return: (Order x Order)
     """
-    xp = cp.get_array_module(anm)
-    N = int(np.ceil(np.sqrt(anm.shape[0])) - 1)
-    trans = np.zeros(((N + 1)**2, (N + 1)**2), dtype=np.complex128)
-    trans[0, 0] = 1
+    matrix = np.zeros(((N + 1)**2, (N + 1)**2), dtype=np.complex128)
+    matrix[0, 0] = 1
     if N > 0:
         idxs = (np.arange(N + 1) + 1)**2
 
         for n in range(1, N + 1):
             m1 = np.arange(n)
-            diag = np.array([1j] * n + [0] + list(-(-1)**m1))
+            diag = np.concatenate((np.full(n, 1j), (0,), -(-1)**m1))
 
             m2 = m1[::-1]
-            anti_diag = np.array(list(1j * (-1)**m2) + [0] + [1] * n)
+            anti_diag = np.concatenate((1j * (-1)**m2, (0,), np.ones(n)))
 
             block = (np.diagflat(diag) + np.diagflat(anti_diag)[:, ::-1]) / np.sqrt(2)
             block[n, n] = 1.
 
-            trans[idxs[n - 1]:idxs[n], idxs[n - 1]:idxs[n]] = block
+            matrix[idxs[n - 1]:idxs[n], idxs[n - 1]:idxs[n]] = block
 
-    temp = ''.join([chr(ord('A')+ii) for ii in range(anm.ndim-1)])
-    anm_real = xp.einsum(f'ij,j{temp}->i{temp}', xp.asarray(trans.conj()), anm).real
-
-    return anm_real
+    return matrix.conj()
 
 
 def calc_direction_vec(anm: NDArray) -> NDArray:
     """ Calculate direciton vector in DirAC
      using Complex Spherical Harmonics Coefficients
 
-    :param anm:
-    :return:
+    :param anm: (Order x ...)
+    :return: (... x 3)
     """
-    if anm.shape[0] > 4:
-        anm = anm[:4]
-    anm_real = calc_real_coeffs(anm)  # transform to real coefficient
-    v = anm_real[[3, 1, 2]]  # DirAC particle velocity vector
+    direction = 1. / np.sqrt(2) * (anm[0].conj() * anm[[3, 1, 2]]).real
 
-    return (1 / np.sqrt(2) * anm_real[0] * v).transpose(np.arange(1, anm.ndim).tolist()+[0])
+    return direction.transpose([*range(1, anm.ndim), 0])
 
 
 if __name__ == '__main__':
@@ -224,8 +229,14 @@ if __name__ == '__main__':
                         )
     parser.add_argument('--dirac', action='store_true')
     parser.add_argument('--init', action='store_true')
+    parser.add_argument('--disk-worker', '-dw',
+                        type=int, nargs='?', const=1, default=3,
+                        dest='n_disk_worker',
+                        )
     ARGS = parser.parse_args()
     USE_DIRAC = ARGS.dirac
+
+    N_DISK_WORKER = ARGS.n_disk_worker
 
     # Paths
     # DIR_DIRSPEC = DICT_PATH[f'iv_{ARGS.kind_data.lower()}']
@@ -251,23 +262,23 @@ if __name__ == '__main__':
     t_peak = np.round(RIRs.argmax(axis=2).mean(axis=1)).astype(int)
     amp_peak = RIRs.max(axis=2).mean(axis=1)
 
-    # RIRs_0 = scio.loadmat(pathjoin()(DIR_DATA, 'RIR_0_order.mat'),
-    #                       variable_names='RIR_'+ARGS.kind_data)
-    # RIRs_0 = RIRs_0['RIR_'+ARGS.kind_data].transpose((2, 0, 1))
-
     # SFT Data
     sft_dict = scio.loadmat(
         DICT_PATH['sft_data'],
         variable_names=('bmn_ka', 'bEQf', 'Yenc', 'Wnv', 'Wpv', 'Vv'),
         squeeze_me=True
     )
-    bEQf = sft_dict['bEQf'].T[:, :, np.newaxis]  # Order x N_freq
+    bEQf = sft_dict['bEQf'].T[:, :, np.newaxis]  # Order x N_freq x 1
     Yenc = sft_dict['Yenc'].T  # Order x N_MIC
 
     if USE_DIRAC:
         Ys = Ys[:, :4]
         bEQf = bEQf[:4]
+        bEQf = np.concatenate(
+            (bEQf, bEQf[:, -2:0:-1].conj()), axis=1
+        ).squeeze()  # Order x N_fft
         Yenc = Yenc[:4]
+        T_real = calc_mat_for_real_coeffs(1)
 
         bnkr = None
         Wnv = None
@@ -297,14 +308,14 @@ if __name__ == '__main__':
         bn_sel_4_0 = seltriag(1. / bnkr, 1, (-1, 0)) * seltriag(bnkr, 1, (0, 0))
         bn_sel_4_1 = seltriag(1. / bnkr, 1, (1, 0)) * seltriag(bnkr, 1, (0, 0))
 
-        bnkr = bnkr
+        T_real = None
 
     sftdata = SFTData(
-        Yenc, Wnv, Wpv, Vv, bnkr, bEQf,
+        Yenc, Wnv, Wpv, Vv, T_real, bnkr, bEQf,
         bn_sel2_0, bn_sel2_1, bn_sel3_0, bn_sel3_1, bn_sel_4_0, bn_sel_4_1
     )
 
-    del (sft_dict, Yenc, Wnv, Wpv, Vv, bnkr, bEQf,
+    del (sft_dict, Yenc, Wnv, Wpv, Vv, T_real, bnkr, bEQf,
          bn_sel2_0, bn_sel2_1, bn_sel3_0, bn_sel3_1, bn_sel_4_0, bn_sel_4_1)
 
     f_metadata = pathjoin(DIR_DIRSPEC, 'metadata.h5')
@@ -338,9 +349,7 @@ def process():
 
         win = FN_WIN(L_frame, sym=False)
 
-    print_save_info(idx_start-1)
-    # logger = mp.log_to_stderr()  # debugging subprocess
-    # logger.setLevel(mp.SUBDEBUG)  # debugging subprocess
+    print_save_info(idx_start - 1)
     pool_propagater = mp.Pool(mp.cpu_count() - N_CUDA_DEV - N_DISK_WORKER - 1)
     pool_creator = mp.Pool(N_CUDA_DEV)
     pool_saver = mp.Pool(N_DISK_WORKER)
@@ -352,7 +361,10 @@ def process():
         # creater get data from q_data, and send dirspec to q_dirspec
         pool_creator.starmap_async(
             create_dirspecs,
-            [(ii, q_data[ii], len(all_files[idx_start-1+ii::4]), q_dirspec)
+            [(ii,
+              q_data[ii],
+              len(all_files[idx_start - 1 + ii::N_CUDA_DEV]) * N_LOC,
+              q_dirspec)
              for ii in range(N_CUDA_DEV)]
         )
         pool_creator.close()
@@ -361,15 +373,16 @@ def process():
         # propagater send data to q_data
         pbar = tqdm(range(N_wavfile),
                     desc='apply', dynamic_ncols=True, initial=idx_start - 1)
-        range_file = range(idx_start-1, N_wavfile)
-        for i_wav, f_wav in zip(range_file, all_files[idx_start-1:]):
+        range_file = range(idx_start - 1, N_wavfile)
+        for i_wav, f_wav in zip(range_file, all_files[idx_start - 1:]):
             data, _ = sf.read(f_wav)
 
             for i_loc, RIR in enumerate(RIRs):
                 pool_propagater.apply_async(
                     propagate,
                     (i_wav, f_wav,
-                     data, i_loc, RIR, q_data[(i_wav - idx_start + 1) % N_CUDA_DEV])
+                     data, i_loc, RIR,
+                     q_data[(i_wav - idx_start + 1) % N_CUDA_DEV])
                 )
             pbar.update()
         pool_propagater.close()
@@ -379,7 +392,12 @@ def process():
         pbar = tqdm(range(N_wavfile),
                     desc='create', dynamic_ncols=True, initial=idx_start - 1)
         for idx in range(len(range_file) * N_LOC):
-            pool_saver.apply_async(save_dirspec, q_dirspec.get(), callback=update_pbar)
+            pool_saver.apply_async(save_dirspec, q_dirspec.get(),
+                                   callback=update_pbar)
+            pbar.set_postfix_str(
+                f'[{" ".join([f"{q.qsize()}" for q in q_data])}], '
+                f'{q_dirspec.qsize()}'
+            )
         pool_saver.close()
 
         pool_propagater.join()
@@ -390,11 +408,12 @@ def process():
 
 
 def propagate(i_wav: int, f_wav: str,
-              data: np.ndarray, i_loc: int, RIR: np.ndarray, queue: mp.Queue):
+              data: np.ndarray, i_loc: int, RIR: np.ndarray,
+              queue: mp.Queue):
     N_frame_room = int(np.ceil((data.shape[0] + L_RIR - 1) / L_hop) - 1)
 
     # RIR Filtering
-    data_room = scsig.fftconvolve(data.reshape(1, -1), RIR)
+    data_room = scsig.fftconvolve(data[np.newaxis, :], RIR)
     if data_room.shape[1] % L_hop:
         data_room = np.append(
             data_room,
@@ -427,79 +446,101 @@ def create_dirspecs(i_dev: int, q_data: mp.Queue, N_data: int, q_dirspec: mp.Que
     cp.cuda.Device(i_dev).use()
     win_cp = cp.array(win)
     Ys_cp = cp.array(Ys)
-    sftdata_cp = SFTData(*[cp.array(item) if (item is not None) else None
-                           for item in sftdata])
+    sftdata_cp = SFTData(
+        *[cp.array(item) if (item is not None) else None for item in sftdata]
+    )
 
     for _ in range(N_data):
-        i_wav, f_wav, i_loc, data, data_room, N_frame_free, N_frame_room = q_data.get()
+        i_wav, f_wav, i_loc, data, data_room, N_frame_free, N_frame_room \
+            = q_data.get()
         data_cp = cp.array(data)
         data_room_cp = cp.array(data_room)
 
         # Free-field Intensity Vector Image
         anm_time = cp.outer(Ys_cp[i_loc].conj(), data_cp) * np.sqrt(4 * np.pi)
+        if USE_DIRAC:  # real coefficients
+            anm_time = cp.einsum(f'ij,jt->it', sftdata_cp.T_real, anm_time).real
 
-        anm_spec = cp.empty((anm_time.shape[0], N_freq, N_frame_free),
-                            dtype=cp.complex128)
+        anm_spec = stft(anm_time, N_frame_free, win_cp)
+
         dirspec_free = cp.empty((N_freq, N_frame_free, 4))
-        phase_free = cp.empty((N_freq, N_frame_free, 1))
-
-        for i_frame in range(N_frame_free):
-            interval = i_frame * L_hop + np.arange(L_frame)
-            anm_spec[:, :, i_frame] \
-                = cp.fft.fft(anm_time[:, interval] * win_cp, n=N_fft)[:, :N_freq]
-
         if USE_DIRAC:
             # DirAC and a00
             dirspec_free[:, :, :3] = calc_direction_vec(anm_spec)
             dirspec_free[:, :, 3] = cp.abs(anm_spec[0])
-            phase_free[:, :, 0] = cp.angle(anm_spec[0])
+            phase_free = cp.angle(anm_spec[0])
         else:
             # IV and p00
-            pnm = anm_spec * sftdata_cp.bnkr
+            pnm_spec = anm_spec * sftdata_cp.bnkr
+
             dirspec_free[:, :, :3] = calc_intensity(
-                pnm, *sftdata_cp.get_for_intensity()
+                pnm_spec, *sftdata_cp.get_for_intensity()
             )
-            dirspec_free[:, :, 3] = cp.abs(pnm[0])
-            phase_free[:, :, 0] = cp.angle(pnm[0])
+            dirspec_free[:, :, 3] = cp.abs(pnm_spec[0])
+            phase_free = cp.angle(pnm_spec[0])
 
         # Room Intensity Vector Image
         pnm_time = sftdata_cp.Yenc @ data_room_cp
-
-        pnm_spec = cp.empty((pnm_time.shape[0], N_freq, N_frame_room),
-                            dtype=cp.complex128)
         dirspec_room = cp.empty((N_freq, N_frame_room, 4))
-        phase_room = cp.empty((N_freq, N_frame_room, 1))
-        for i_frame in range(N_frame_room):
-            interval = i_frame * L_hop + np.arange(L_frame)
-            pnm_spec[:, :, i_frame] \
-                = cp.fft.fft(pnm_time[:, interval] * win_cp, n=N_fft)[:, :N_freq]
-
         if USE_DIRAC:
             # DirAC and a00
-            anm_spec = pnm_spec * sftdata_cp.bEQf
-            dirspec_room[:, :, :3] = calc_direction_vec(anm_spec)
-            dirspec_room[:, :, 3] = cp.abs(anm_spec[0])
-            phase_room[:, :, 0] = cp.angle(anm_spec[0])
+            # bnkr equalization in frequency domain
+            length = pnm_time.shape[1]
+            pnm_time = cp.pad(pnm_time,
+                              ((0, 0), (int(N_fft // 2), int(N_fft // 2))),
+                              mode='reflect')
+            N_frame = int(np.ceil(length / L_hop))
+            anm_time = cp.zeros((pnm_time.shape[0], (N_frame + 1) * L_hop),
+                                dtype=cp.complex128)
+            interval = cp.arange(L_frame)
+            for i_frame in range(N_frame):
+                pnm_spec = cp.fft.fft(pnm_time[:, interval] * win_cp, n=N_fft)
+                anm_time[:, interval] \
+                    += cp.fft.ifft(pnm_spec * sftdata_cp.bEQf, n=N_fft) * win_cp
+                interval += L_hop
+
+            # compensate artifact of stft/istft
+            # noinspection PyTypeChecker
+            artifact = librosa.filters.window_sumsquare(
+                'hann',
+                N_frame, win_length=L_frame, n_fft=N_fft, hop_length=L_hop,
+                dtype=np.float64
+            )
+            idxs_artifact = artifact > librosa.util.tiny(artifact)
+            artifact = cp.array(artifact[idxs_artifact])
+
+            anm_time[:, idxs_artifact] /= artifact
+            anm_time = anm_time[:, int(N_fft // 2):int(N_fft // 2) + length]
+
+            # real coefficients
+            anm_t_real = cp.einsum(f'ij,jt->it', sftdata_cp.T_real, anm_time).real
+            anm_spec_real = stft(anm_t_real, N_frame_room, win_cp)
+
+            dirspec_room[:, :, :3] = calc_direction_vec(anm_spec_real)
+            dirspec_room[:, :, 3] = cp.abs(anm_spec_real[0])
+            phase_room = cp.angle(anm_spec_real[0])
         else:
             # IV and p00
+            pnm_spec = stft(pnm_time, N_frame_room, win_cp)
+
             dirspec_room[:, :, :3] = calc_intensity(
                 pnm_spec, *sftdata_cp.get_for_intensity()
             )
             dirspec_room[:, :, 3] = cp.abs(pnm_spec[0])
-            phase_room[:, :, 0] = cp.angle(pnm_spec[0])
+            phase_room = cp.angle(pnm_spec[0])
 
         # Save
         dict_dirspec = dict(fname_wav=f_wav,
                             dirspec_free=cp.asnumpy(dirspec_free),
                             dirspec_room=cp.asnumpy(dirspec_room),
-                            phase_free=cp.asnumpy(phase_free),
-                            phase_room=cp.asnumpy(phase_room),
+                            phase_free=cp.asnumpy(phase_free)[..., np.newaxis],
+                            phase_room=cp.asnumpy(phase_room)[..., np.newaxis],
                             # IV_0=cp.asnumpy(iv_0),
                             )
         q_dirspec.put((i_wav, i_loc, dict_dirspec))
 
 
-def save_dirspec(i_wav: int, i_loc: int, dict_dirspec: dict):
+def save_dirspec(i_wav: int, i_loc: int, dict_dirspec: dict) -> int:
     dd.io.save(pathjoin(DIR_DIRSPEC, FORM % (i_wav, i_loc)), dict_dirspec,
                compression=None)
     return i_wav
