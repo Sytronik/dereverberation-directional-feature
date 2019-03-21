@@ -1,5 +1,6 @@
 from itertools import islice
 from typing import Any, Callable, Dict, List, Sequence, Tuple, Type
+from multiprocessing import Queue
 
 import deepdish as dd
 import numpy as np
@@ -14,7 +15,7 @@ from .normalize import INormalizer, MeanStdNormalizer, MinMaxNormalizer
 from .transform import (ITransformer,
                         LogMagTransformer, LogReImTransformer,
                         MagTransformer, ReImTransformer,
-                        LogMagBPDTransformer
+                        LogMagBPDTransformer,
                         )
 
 
@@ -47,7 +48,7 @@ class TranNormModule:
 
         module = cls(*cls.DICT_MODULE_ARGS[key])
 
-        consts = list(module._normalizer.calc_consts(module._calc_per_file,
+        consts = list(module._normalizer.calc_consts(module._load_data, module._calc_per_data,
                                                      all_files,
                                                      **kwargs_normalizer))
         if consts[0].dtype == np.float64:
@@ -78,7 +79,21 @@ class TranNormModule:
         self.__cpu: Sequence[Tensor] = None
         self.__cuda: Dict[torch.device, Sequence[Tensor]] = dict()
 
-    def _calc_per_file(self, fname: str,
+    def _load_data(self, fname: str, queue: Queue) -> None:
+        if self._transformer.use_phase():
+            result = dd.io.load(fname, group=(cfg.SPEC_DATA_NAME['x'],
+                                              cfg.SPEC_DATA_NAME['x_phase'],
+                                              cfg.SPEC_DATA_NAME['y'],
+                                              cfg.SPEC_DATA_NAME['y_phase'],
+                                              ))
+            queue.put(result)
+        else:
+            x, y = dd.io.load(fname, group=(cfg.SPEC_DATA_NAME['x'],
+                                            cfg.SPEC_DATA_NAME['y'],
+                                            ))
+            queue.put((x, y, None, None))
+
+    def _calc_per_data(self, x, y, x_phase, y_phase,
                        list_func: Sequence[Callable],
                        args_x: Sequence = None,
                        args_y: Sequence = None,
@@ -92,20 +107,6 @@ class TranNormModule:
         :param args_y:
         :return:
         """
-
-        if self._transformer.use_phase():
-            x, x_phase, y, y_phase \
-                = dd.io.load(fname, group=(cfg.SPEC_DATA_NAME['x'],
-                                           cfg.SPEC_DATA_NAME['x_phase'],
-                                           cfg.SPEC_DATA_NAME['y'],
-                                           cfg.SPEC_DATA_NAME['y_phase'],
-                                           ))
-        else:
-            x, y = dd.io.load(fname, group=(cfg.SPEC_DATA_NAME['x'],
-                                            cfg.SPEC_DATA_NAME['y'],
-                                            ))
-            x_phase = None
-            y_phase = None
 
         x = self._transformer.transform_(x, x_phase)
         y = self._transformer.transform_(y, y_phase)
@@ -126,7 +127,7 @@ class TranNormModule:
         else:
             result_y = {f: f(y) for f in list_func}
 
-        print('.', end='', flush=True)
+        # print('.', end='', flush=True)
         return result_x, result_y
 
     @staticmethod
@@ -189,7 +190,7 @@ class TranNormModule:
     def process(self, xy: str, a: TensArr, a_phase: TensArr) -> TensArr:
         b = self._transformer.transform(a, a_phase)
         if self._transformer.no_norm_channels:
-            channels = [i for i in np.arange(-b.shape[-1], 0)
+            channels = [i for i in range(-b.shape[-1], 0)
                         if i not in self._transformer.no_norm_channels]
             if a is b:
                 b = a[:]
@@ -209,7 +210,7 @@ class TranNormModule:
     def process_(self, xy: str, a: TensArr, a_phase: TensArr) -> TensArr:
         a = self._transformer.transform_(a, a_phase)
         if self._transformer.no_norm_channels:
-            channels = [i for i in np.arange(-a.shape[-1], 0)
+            channels = [i for i in range(-a.shape[-1], 0)
                         if i not in self._transformer.no_norm_channels]
             a_norm = a[..., channels]
             consts = self._get_consts_like(xy, a_norm)
@@ -228,7 +229,7 @@ class TranNormModule:
 
     def inverse(self, xy: str, a: TensArr) -> TensArrOrSeq:
         if self._transformer.no_norm_channels:
-            channels = [i for i in np.arange(-a.shape[-1], 0)
+            channels = [i for i in range(-a.shape[-1], 0)
                         if i not in self._transformer.no_norm_channels]
             a_norm = a[..., channels]
             consts = self._get_consts_like(xy, a_norm)
@@ -243,7 +244,7 @@ class TranNormModule:
 
     def inverse_(self, xy: str, a: TensArr) -> TensArrOrSeq:
         if self._transformer.no_norm_channels:
-            channels = [i for i in np.arange(-a.shape[-1], 0)
+            channels = [i for i in range(-a.shape[-1], 0)
                         if i not in self._transformer.no_norm_channels]
             a_norm = a[..., channels]
             consts = self._get_consts_like(xy, a_norm)

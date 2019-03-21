@@ -1,9 +1,10 @@
 import multiprocessing as mp
 from abc import ABCMeta, abstractmethod
-from typing import Callable, List
+from typing import Callable, List, Tuple
 
 import numpy as np
 from numpy import ndarray
+from tqdm import tqdm
 
 from generic import TensArr, TensArrOrSeq
 
@@ -18,7 +19,8 @@ class INormalizer(metaclass=ABCMeta):
 
     @classmethod
     @abstractmethod
-    def calc_consts(cls, fn_calc_per_file: Callable, all_files: List[str], **kwargs) -> tuple:
+    def calc_consts(cls, fn_load_data: Callable, fn_calc_per_data: Callable, all_files: List[str],
+                    **kwargs) -> tuple:
         pass
 
     @staticmethod
@@ -56,16 +58,27 @@ class MeanStdNormalizer(INormalizer):
         return ((a - mean_a)**2).sum(axis=1, keepdims=True)
 
     @classmethod
-    def calc_consts(cls, fn_calc_per_file: Callable, all_files: List[str], **kwargs) -> tuple:
+    def calc_consts(cls, fn_load_data: Callable, fn_calc_per_data: Callable, all_files: List[str],
+                    **kwargs) -> tuple:
         need_mean = kwargs.get('need_mean', True)
 
         # Calculate summation & size (parallel)
         list_fn = (np.size, cls._sum) if need_mean else (np.size,)
-        pool = mp.Pool(mp.cpu_count())
-        result = pool.starmap(
-            fn_calc_per_file,
-            [(fname, list_fn) for fname in all_files]
-        )
+        pool_loader = mp.Pool(3)
+        pool_calc = mp.Pool(mp.cpu_count()-4)
+        with mp.Manager() as manager:
+            queue_data = manager.Queue()
+            pool_loader.starmap_async(fn_load_data,
+                                      [(f, queue_data) for f in all_files])
+            result: List[mp.pool.AsyncResult] = [None] * len(all_files)
+            for idx in tqdm(range(len(all_files)), desc='mean', dynamic_ncols=True):
+                data = queue_data.get()
+                result[idx] = pool_calc.apply_async(
+                    fn_calc_per_data,
+                    (*data, list_fn)
+                )
+
+        result: Tuple[dict] = [item.get() for item in result]
         print()
 
         sum_size_x = np.sum([item[0][np.size] for item in result])
@@ -83,11 +96,22 @@ class MeanStdNormalizer(INormalizer):
         print('Calculated Size/Mean')
 
         # Calculate squared deviation (parallel)
-        result = pool.starmap(
-            fn_calc_per_file,
-            [(fname, (cls._sq_dev,), (mean_x,), (mean_y,)) for fname in all_files]
-        )
-        pool.close()
+        with mp.Manager() as manager:
+            queue_data = manager.Queue()
+            pool_loader.starmap_async(fn_load_data,
+                                      [(f, queue_data) for f in all_files])
+            result: List[mp.pool.AsyncResult] = [None] * len(all_files)
+            for idx in tqdm(range(len(all_files)), desc='std', dynamic_ncols=True):
+                data = queue_data.get()
+                result[idx] = pool_calc.apply_async(
+                    fn_calc_per_data,
+                    (*data, (cls._sq_dev,), (mean_x,), (mean_y,))
+                )
+
+        pool_loader.close()
+        pool_calc.close()
+        result: Tuple[dict] = [item.get() for item in result]
+        print()
 
         sum_sq_dev_x = np.sum([item[0][cls._sq_dev] for item in result], axis=0)
         sum_sq_dev_y = np.sum([item[1][cls._sq_dev] for item in result], axis=0)
@@ -135,14 +159,24 @@ class MinMaxNormalizer(INormalizer):
         return a.max(axis=1, keepdims=True)
 
     @classmethod
-    def calc_consts(cls, fn_calc_per_file: Callable, all_files: List[str], **kwargs) -> tuple:
+    def calc_consts(cls, fn_load_data: Callable, fn_calc_per_data: Callable, all_files: List[str],
+                    **kwargs) -> tuple:
         # Calculate summation & no. of total frames (parallel)
+        pool_loader = mp.Pool(3)
         pool = mp.Pool(mp.cpu_count())
-        result = pool.starmap(
-            fn_calc_per_file,
-            [(fname, (cls._min, cls._max)) for fname in all_files]
-        )
+        with mp.Manager() as manager:
+            queue_data = manager.Queue()
+            pool_loader.starmap_async(fn_load_data,
+                                      [(f, queue_data) for f in all_files])
+            result: List[mp.pool.AsyncResult] = [None] * len(all_files)
+            for idx in range(len(all_files)):
+                data = queue_data.get()
+                result[idx] = pool.apply_async(
+                    fn_calc_per_data,
+                    (*data, (cls._min, cls._max),)
+                )
         pool.close()
+        result: Tuple[dict] = [item.get() for item in result]
 
         min_x = np.min([res[0][cls._min] for res in result], axis=0)
         min_y = np.min([res[1][cls._min] for res in result], axis=0)

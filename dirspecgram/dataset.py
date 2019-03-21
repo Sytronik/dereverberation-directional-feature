@@ -19,6 +19,7 @@ StrOrSeq = TypeVar('StrOrSeq', str, Sequence[str])
 TupOrSeq = TypeVar('TupOrSeq', tuple, Sequence[tuple])
 DataDict = Dict[str, Any]
 
+
 class DirSpecDataset(Dataset):
     """ Directional Spectrogram Dataset
 
@@ -35,9 +36,9 @@ class DirSpecDataset(Dataset):
     __slots__ = ('_PATH', '_needs', '_trannorm', '_all_files')
 
     def __init__(self, kind_data: str,
-                 n_file=-1, keys_trannorm: TupOrSeq = None,
+                 n_file=-1, keys_trannorm: TupOrSeq = (None,),
                  random_by_utterance=False, **kwargs):
-        self._PATH = cfg.DICT_PATH[f'iv_{kind_data}']
+        self._PATH = cfg.DICT_PATH[f'dirspec_{kind_data}']
 
         # default needs
         self._needs = dict(x='all', y='alpha',
@@ -45,9 +46,9 @@ class DirSpecDataset(Dataset):
                            fname_wav=True)
         self.set_needs(**kwargs)
 
+        # _all_files (local var): basename of file paths
+        # self._all_files: full paths
         self._all_files = None
-        if not keys_trannorm or type(keys_trannorm[0]) != tuple:
-            keys_trannorm = (keys_trannorm,)
         trannorm: List[TranNormModule] = [None] * len(keys_trannorm)
 
         # f_normconst: The name of the file
@@ -56,14 +57,14 @@ class DirSpecDataset(Dataset):
         for idx, key_tn in enumerate(keys_trannorm):
             f_normconst = cfg.DICT_PATH[f'normconst_{kind_data}'].format(n_file, key_tn)
 
+            should_calc_save = False
             if f_normconst in list_f_norm:
+                # when normconst file exists
                 _all_files, normconst = dd.io.load(f_normconst)
-                should_calc_save = False
             elif not self._all_files:
                 if len(list_f_norm) > 0:
+                    # load file list from another normconst file
                     _all_files, _ = dd.io.load(list_f_norm[0])
-                    normconst = None
-                    should_calc_save = True
                 else:
                     # search all data files
                     _all_files = [f.name for f in os.scandir(self._PATH) if cfg.is_ivfile(f)]
@@ -79,14 +80,15 @@ class DirSpecDataset(Dataset):
                         else:
                             _all_files = np.random.permutation(_all_files)
                             _all_files = _all_files[:n_file]
-                    normconst = None
-                    should_calc_save = True
+                normconst = None
+                should_calc_save = True
             else:
+                # if already has file list
                 _all_files = [os.path.basename(f) for f in self._all_files]
                 normconst = None
                 should_calc_save = True
 
-            # full paths of existing files
+            # full paths of only existing files
             if not self._all_files:
                 self._all_files = [pathjoin(self._PATH, f) for f in _all_files]
                 self._all_files = [f for f in self._all_files if os.path.isfile(f)]
@@ -95,10 +97,10 @@ class DirSpecDataset(Dataset):
                 should_calc_save = True
 
             if key_tn:
-                if not should_calc_save:
-                    trannorm[idx] = TranNormModule.load_module(key_tn, normconst)
-                else:
+                if should_calc_save:
                     trannorm[idx] = TranNormModule.create_module(key_tn, self._all_files)
+                else:
+                    trannorm[idx] = TranNormModule.load_module(key_tn, normconst)
 
             if should_calc_save:
                 if trannorm[idx]:
