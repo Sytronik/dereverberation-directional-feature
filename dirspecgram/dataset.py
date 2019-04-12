@@ -1,8 +1,8 @@
 import os
 from copy import copy
 from glob import glob
-from os.path import join as pathjoin
-from typing import Dict, List, Sequence, Tuple, TypeVar, Any
+from pathlib import Path
+from typing import Any, Dict, List, Sequence, TypeVar, Union
 
 import deepdish as dd
 import numpy as np
@@ -10,10 +10,10 @@ import scipy.io as scio
 import torch
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
-from .trannorm import TranNormModule
 
 import config as cfg
 from generic import TensArr
+from .trannorm import TranNormModule, XY
 
 StrOrSeq = TypeVar('StrOrSeq', str, Sequence[str])
 TupOrSeq = TypeVar('TupOrSeq', tuple, Sequence[tuple])
@@ -37,13 +37,13 @@ class DirSpecDataset(Dataset):
 
     def __init__(self, kind_data: str,
                  n_file=-1, keys_trannorm: TupOrSeq = (None,),
-                 random_by_utterance=False, **kwargs):
+                 random_by_utterance=False, **kwargs: cfg.Channel):
         self._PATH = cfg.DICT_PATH[f'dirspec_{kind_data}']
 
         # default needs
-        self._needs = dict(x='all', y='alpha',
-                           x_phase=False, y_phase=False,
-                           fname_wav=True)
+        self._needs = dict(x=cfg.Channel.ALL, y=cfg.Channel.MAG,
+                           x_phase=cfg.Channel.NONE, y_phase=cfg.Channel.NONE,
+                           fname_wav=cfg.Channel.ALL)
         self.set_needs(**kwargs)
 
         # _all_files (local var): basename of file paths
@@ -53,45 +53,51 @@ class DirSpecDataset(Dataset):
 
         # f_normconst: The name of the file
         # that has information about data file list, mean, std, ...
-        list_f_norm = glob(cfg.DICT_PATH[f'normconst_{kind_data}'].format(n_file, '*'))
+        list_f_norm \
+            = glob(cfg.DICT_PATH[f's_normconst_{kind_data}'].format(n_file, '*'))
         for idx, key_tn in enumerate(keys_trannorm):
-            f_normconst = cfg.DICT_PATH[f'normconst_{kind_data}'].format(n_file, key_tn)
+            s_f_normconst \
+                = cfg.DICT_PATH[f's_normconst_{kind_data}'].format(n_file, key_tn)
 
             should_calc_save = False
-            if f_normconst in list_f_norm:
+            if s_f_normconst in list_f_norm:
                 # when normconst file exists
-                _all_files, normconst = dd.io.load(f_normconst)
+                s_all_files, normconst = dd.io.load(s_f_normconst)
             elif not self._all_files:
                 if len(list_f_norm) > 0:
                     # load file list from another normconst file
-                    _all_files, _ = dd.io.load(list_f_norm[0])
+                    s_all_files, _ = dd.io.load(list_f_norm[0])
                 else:
                     # search all data files
-                    _all_files = [f.name for f in os.scandir(self._PATH) if cfg.is_ivfile(f)]
-                    _all_files = sorted(_all_files)
+                    s_all_files = [
+                        f.name for f in os.scandir(self._PATH) if cfg.is_ivfile(f)
+                    ]
+                    s_all_files = sorted(s_all_files)
                     if n_file != -1:
                         if random_by_utterance:
                             utterances = np.random.randint(
-                                len(_all_files) // cfg.N_LOC[kind_data],
+                                len(s_all_files) // cfg.N_LOC[kind_data],
                                 size=n_file // cfg.N_LOC[kind_data]
                             )
                             utterances = [f'{u:4d}_' for u in utterances]
-                            _all_files = [f for f in _all_files if f.startswith(utterances)]
+                            s_all_files = [
+                                f for f in s_all_files if f.startswith(utterances)
+                            ]
                         else:
-                            _all_files = np.random.permutation(_all_files)
-                            _all_files = _all_files[:n_file]
+                            s_all_files = np.random.permutation(s_all_files)
+                            s_all_files = s_all_files[:n_file]
                 normconst = None
                 should_calc_save = True
             else:
                 # if already has file list
-                _all_files = [os.path.basename(f) for f in self._all_files]
+                s_all_files = [f.name for f in self._all_files]
                 normconst = None
                 should_calc_save = True
 
             # full paths of only existing files
             if not self._all_files:
-                self._all_files = [pathjoin(self._PATH, f) for f in _all_files]
-                self._all_files = [f for f in self._all_files if os.path.isfile(f)]
+                self._all_files = [self._PATH / f for f in s_all_files]
+                self._all_files = [f for f in self._all_files if f.exists()]
 
             if cfg.REFRESH_CONST:
                 should_calc_save = True
@@ -102,19 +108,20 @@ class DirSpecDataset(Dataset):
                 else:
                     trannorm[idx] = TranNormModule.load_module(key_tn, normconst)
 
-            if should_calc_save:
-                if trannorm[idx]:
-                    dd.io.save(f_normconst, (_all_files, trannorm[idx].consts))
-                    scio.savemat(f_normconst.replace('.h5', '.mat'),
-                                 dict(all_files=_all_files,
-                                      **trannorm[idx].consts_as_dict()
-                                      )
-                                 )
-                else:
-                    dd.io.save(f_normconst, (_all_files, None))
-                    scio.savemat(f_normconst.replace('.h5', '.mat'),
-                                 dict(all_files=_all_files)
-                                 )
+            if trannorm[idx]:
+                if should_calc_save:
+                    dd.io.save(s_f_normconst, (s_all_files, trannorm[idx].consts))
+                scio.savemat(s_f_normconst.replace('.h5', '.mat'),
+                             dict(all_files=s_all_files,
+                                  **trannorm[idx].consts_as_dict()
+                                  )
+                             )
+            else:
+                if should_calc_save:
+                    dd.io.save(s_f_normconst, (s_all_files, None))
+                scio.savemat(s_f_normconst.replace('.h5', '.mat'),
+                             dict(all_files=s_all_files)
+                             )
 
             print(trannorm[idx])
 
@@ -133,10 +140,10 @@ class DirSpecDataset(Dataset):
         """
         sample = dict()
         for k, v in self._needs.items():
-            if v:
+            if v.value:
                 data = dd.io.load(self._all_files[idx],
                                   group=cfg.SPEC_DATA_NAME[k],
-                                  sel=cfg.CH_SLICES[v])
+                                  **v.value)
                 if type(data) == np.str_:
                     sample[k] = str(data)
                 else:
@@ -201,21 +208,21 @@ class DirSpecDataset(Dataset):
             if type(value) == str:
                 result[key] = value
             elif type(value) == list:
-                result[key] = value[key]
+                result[key] = value[idx]
             elif not key.startswith('T_'):
                 T_xy = 'T_xs' if 'x' in key else 'T_ys'
                 result[key] = value[idx, :, :batch[T_xy][idx], :].numpy()
         return result
 
     @staticmethod
-    def save_dirspec(fname: str, **kwargs):
+    def save_dirspec(fname: Union[str, Path], **kwargs):
         """ save directional spectrograms.
 
         :param fname:
         :param kwargs:
         :return:
         """
-        scio.savemat(fname,
+        scio.savemat(str(fname),
                      {cfg.SPEC_DATA_NAME[k][1:]: v
                       for k, v in kwargs.items() if k in cfg.SPEC_DATA_NAME}
                      )
@@ -228,18 +235,16 @@ class DirSpecDataset(Dataset):
         """
         self._trannorm = other._trannorm
 
-    def set_needs(self, **kwargs):
+    def set_needs(self, **kwargs: cfg.Channel):
         """ set which data are needed.
 
         :param kwargs: available keywords are [x, y, x_phase, y_phase, fname_wav]
         """
         for k in self._needs:
             if k in kwargs:
-                assert (kwargs[k] == 'all' or kwargs[k] == 'alpha'
-                        or type(kwargs[k]) == bool)
                 self._needs[k] = kwargs[k]
 
-    def preprocess(self, xy: str, a: TensArr, a_phase: TensArr = None, idx=0) -> TensArr:
+    def preprocess(self, xy: XY, a: TensArr, a_phase: TensArr = None, idx=0) -> TensArr:
         """
 
         :param xy: one of 'x' or 'y'
@@ -250,7 +255,7 @@ class DirSpecDataset(Dataset):
         """
         return self._trannorm[idx].process(xy, a, a_phase)
 
-    def preprocess_(self, xy: str, a: TensArr, a_phase: TensArr = None, idx=0) -> TensArr:
+    def preprocess_(self, xy: XY, a: TensArr, a_phase: TensArr = None, idx=0) -> TensArr:
         """
 
         :param xy: one of 'x' or 'y'
@@ -264,7 +269,7 @@ class DirSpecDataset(Dataset):
     def set_transformer_var(self, idx=0, **kwargs):
         self._trannorm[idx].set_transformer_var(**kwargs)
 
-    def postprocess(self, xy: str, a: TensArr, idx=0) -> TensArr:
+    def postprocess(self, xy: XY, a: TensArr, idx=0) -> TensArr:
         """
 
         :param xy: one of 'x' or 'y'
@@ -274,7 +279,7 @@ class DirSpecDataset(Dataset):
         """
         return self._trannorm[idx].inverse(xy, a)
 
-    def postprocess_(self, xy: str, a: TensArr, idx=0) -> TensArr:
+    def postprocess_(self, xy: XY, a: TensArr, idx=0) -> TensArr:
         """
 
         :param xy: one of 'x' or 'y'

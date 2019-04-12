@@ -1,7 +1,8 @@
 import contextlib
 import gc
 import os
-from typing import Callable, List
+from pathlib import Path
+from typing import Callable, List, Union
 
 import numpy as np
 import torch
@@ -112,7 +113,7 @@ def print_cuda_tensors():
             pass
 
 
-def print_to_file(fname: str, fn: Callable, args=None, kwargs=None):
+def print_to_file(fname: Union[str, Path], fn: Callable, args=None, kwargs=None):
     """ All `print` function calls in `fn(*args, **kwargs)`
       uses a text file `fname`.
 
@@ -122,14 +123,14 @@ def print_to_file(fname: str, fn: Callable, args=None, kwargs=None):
     :param kwargs: kwargs for fn
     :return:
     """
-    if fname and not fname.endswith('.txt'):
-        fname = f'{fname}.txt'
+    if fname:
+        fname = Path(fname).with_suffix('.txt')
 
     if args is None:
         args = tuple()
     if kwargs is None:
         kwargs = dict()
 
-    with (open(fname, 'w') if fname else open(os.devnull, 'w')) as file:
+    with (fname.open('w') if fname else open(os.devnull, 'w')) as file:
         with contextlib.redirect_stdout(file):
             fn(*args, **kwargs)

@@ -1,15 +1,16 @@
+from enum import IntEnum
 from itertools import islice
-from typing import Any, Callable, Dict, List, Sequence, Tuple, Type
 from multiprocessing import Queue
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Sequence, Tuple, Type, Union, ClassVar
 
 import deepdish as dd
 import numpy as np
 import torch
-from torch import Tensor
 from numpy import ndarray
+from torch import Tensor
 
 import config as cfg
-import generic as gen
 from generic import TensArr, TensArrOrSeq
 from .normalize import INormalizer, MeanStdNormalizer, MinMaxNormalizer
 from .transform import (ITransformer,
@@ -19,10 +20,15 @@ from .transform import (ITransformer,
                         )
 
 
+class XY(IntEnum):
+    x = 0
+    y = 1
+
+
 class TranNormModule:
     __slots__ = 'consts', '__cpu', '__cuda', '_transformer', '_normalizer'
 
-    DICT_MODULE_ARGS = {
+    DICT_MODULE_ARGS: ClassVar[Dict[tuple, tuple]] = {
         ('mag', 'meanstd', True): (LogMagTransformer, MeanStdNormalizer),
         ('mag', 'meanstd', False): (MagTransformer, MeanStdNormalizer),
         ('mag', 'minmax', True): (LogMagTransformer, MinMaxNormalizer),
@@ -79,7 +85,7 @@ class TranNormModule:
         self.__cpu: Sequence[Tensor] = None
         self.__cuda: Dict[torch.device, Sequence[Tensor]] = dict()
 
-    def _load_data(self, fname: str, queue: Queue) -> None:
+    def _load_data(self, fname: Union[str, Path], queue: Queue) -> None:
         if self._transformer.use_phase():
             result = dd.io.load(fname, group=(cfg.SPEC_DATA_NAME['x'],
                                               cfg.SPEC_DATA_NAME['x_phase'],
@@ -135,7 +141,7 @@ class TranNormModule:
             -> Sequence[Tensor]:
         return [torch.tensor(a, device=device) for a in seq]
 
-    def _get_consts_like(self, xy: str, a: TensArr) -> List[TensArr]:
+    def _get_consts_like(self, xy: XY, a: TensArr) -> List[TensArr]:
         """ get consts for `xy` in the type of `a`
          (if `a` is a Ttensor, in the same device as `a`)
 
@@ -144,8 +150,7 @@ class TranNormModule:
         :return:
         """
 
-        assert xy == 'x' or xy == 'y'
-        shft = int(xy == 'y') if not cfg.NORM_USING_ONLY_X else 0
+        shft = int(xy) if not cfg.NORM_USING_ONLY_X else 0
 
         ch = slice(-a.shape[-1], None)
 
@@ -164,7 +169,7 @@ class TranNormModule:
         return [c[..., ch] if c.shape else c for c in islice(result, shft, None, 2)]
 
     def consts_as_dict(self) -> Dict[str, ndarray]:
-        xy = ['x', 'y']
+        xy = ('x', 'y')
         keys = [f'{self._normalizer.names()[i // 2]}_{xy[i % 2]}'
                 for i in range(len(self.consts))]
         return {key: const.squeeze() for key, const in zip(keys, self.consts)}
@@ -173,21 +178,21 @@ class TranNormModule:
         return len(self.consts)
 
     def __str__(self):
-        result = (f'{self._transformer.__name__} & '
-                  f'{self._normalizer.__name__}\n')
+        result = ['']*(len(self._normalizer.names())+1)
+        result[0] = f'{self._transformer.__name__} & {self._normalizer.__name__}'
         for idx, name in enumerate(self._normalizer.names()):
             x = self.consts[2 * idx]
             y = self.consts[2 * idx + 1]
 
-            result += f'{name}: '
+            result[idx+1] = f'{name}: '
             if hasattr(x, 'shape') and x.shape:
-                result += f'{x.shape}, {y.shape}\t'
+                result[idx+1] += f'{x.shape}, {y.shape}\t'
             else:
-                result += f'{x}, {y}\t'
+                result[idx+1] += f'{x}, {y}\t'
 
-        return result[:-1]
+        return '\n'.join(result)
 
-    def process(self, xy: str, a: TensArr, a_phase: TensArr) -> TensArr:
+    def process(self, xy: XY, a: TensArr, a_phase: TensArr) -> TensArr:
         b = self._transformer.transform(a, a_phase)
         if self._transformer.no_norm_channels:
             channels = [i for i in range(-b.shape[-1], 0)
@@ -207,7 +212,7 @@ class TranNormModule:
             else:
                 return self._normalizer.normalize_(b, *consts)
 
-    def process_(self, xy: str, a: TensArr, a_phase: TensArr) -> TensArr:
+    def process_(self, xy: XY, a: TensArr, a_phase: TensArr) -> TensArr:
         a = self._transformer.transform_(a, a_phase)
         if self._transformer.no_norm_channels:
             channels = [i for i in range(-a.shape[-1], 0)
@@ -227,7 +232,7 @@ class TranNormModule:
             if hasattr(self._transformer, k):
                 setattr(self._transformer, k, v)
 
-    def inverse(self, xy: str, a: TensArr) -> TensArrOrSeq:
+    def inverse(self, xy: XY, a: TensArr) -> TensArrOrSeq:
         if self._transformer.no_norm_channels:
             channels = [i for i in range(-a.shape[-1], 0)
                         if i not in self._transformer.no_norm_channels]
@@ -242,7 +247,7 @@ class TranNormModule:
 
         return tup[0] if tup[1] is None else tup
 
-    def inverse_(self, xy: str, a: TensArr) -> TensArrOrSeq:
+    def inverse_(self, xy: XY, a: TensArr) -> TensArrOrSeq:
         if self._transformer.no_norm_channels:
             channels = [i for i in range(-a.shape[-1], 0)
                         if i not in self._transformer.no_norm_channels]

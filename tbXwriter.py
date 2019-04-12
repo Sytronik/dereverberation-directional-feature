@@ -1,4 +1,4 @@
-from os.path import join as pathjoin
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -21,7 +21,7 @@ class CustomWriter(SummaryWriter):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.flogtxt = open(pathjoin(self.log_dir, 'log.txt'), 'w')
+        self.flogtxt = Path(self.log_dir, cfg.F_LOG).open('w')
         self.one_sample = dict()
         self.recon_sample = dict()
         self.measure_x = dict()
@@ -34,7 +34,7 @@ class CustomWriter(SummaryWriter):
 
     def close(self):
         if self.scalar_dict:
-            self.export_scalars_to_json(pathjoin(self.log_dir, 'scalars.json'))
+            self.export_scalars_to_json(str(Path(self.log_dir, cfg.F_SCALARS)))
         super().close()
 
     def write_one(self, step: int, group='',

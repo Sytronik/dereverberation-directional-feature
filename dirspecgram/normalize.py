@@ -1,5 +1,6 @@
 import multiprocessing as mp
 from abc import ABCMeta, abstractmethod
+from pathlib import Path
 from typing import Callable, List, Tuple
 
 import numpy as np
@@ -58,13 +59,13 @@ class MeanStdNormalizer(INormalizer):
         return ((a - mean_a)**2).sum(axis=1, keepdims=True)
 
     @classmethod
-    def calc_consts(cls, fn_load_data: Callable, fn_calc_per_data: Callable, all_files: List[str],
+    def calc_consts(cls, fn_load_data: Callable, fn_calc_per_data: Callable, all_files: List[Path],
                     **kwargs) -> tuple:
         need_mean = kwargs.get('need_mean', True)
 
         # Calculate summation & size (parallel)
         list_fn = (np.size, cls._sum) if need_mean else (np.size,)
-        pool_loader = mp.Pool(3)
+        pool_loader = mp.Pool(2)
         pool_calc = mp.Pool(mp.cpu_count()-4)
         with mp.Manager() as manager:
             queue_data = manager.Queue()

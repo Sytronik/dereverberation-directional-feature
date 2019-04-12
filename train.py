@@ -1,5 +1,4 @@
-import os
-from os.path import join as pathjoin
+from pathlib import Path
 from typing import Dict, Sequence, Tuple
 
 import numpy as np
@@ -13,10 +12,9 @@ from tqdm import tqdm
 import config as cfg
 import stft
 from adamwr import AdamW, CosineLRWithRestarts
-from audio_utils import delta
-from dirspecgram import DirSpecDataset
+from dirspecgram import DirSpecDataset, XY
 from dirspecgram.transform import BPD
-from models import UNet
+from models import UNet, UNetNALU
 from tbXwriter import CustomWriter
 from utils import (arr2str,
                    MultipleOptimizer,
@@ -60,10 +58,8 @@ class Trainer(metaclass=TrainerMeta):
     def __init__(self, model_name: str, use_cuda=True):
         self.model_name = model_name
         self.use_cuda = use_cuda
-        if model_name == 'UNet':
-            module = UNet
-        else:
-            raise NotImplementedError
+        module = eval(model_name)
+
         self.model = nn.DataParallel(module(*cfg.hp.get_for_UNet()),
                                      device_ids=cfg.CUDA_DEVICES,
                                      output_device=cfg.OUT_CUDA_DEV)
@@ -93,9 +89,8 @@ class Trainer(metaclass=TrainerMeta):
                    T_ys: Sequence[int], dataset: DirSpecDataset) -> Tensor:
         pass
 
-    def train(self, loader_train: DataLoader, loader_valid: DataLoader, dir_result: str,
-              first_epoch=0, f_state_dict=''):
-        f_prefix = pathjoin(dir_result, f'{self.model_name}_')
+    def train(self, loader_train: DataLoader, loader_valid: DataLoader, dir_result: Path,
+              first_epoch=0, f_state_dict: Path=None):
 
         # Optimizer
         param1 = [p for m in self.model.modules() if not isinstance(m, nn.PReLU)
@@ -136,9 +131,9 @@ class Trainer(metaclass=TrainerMeta):
 
         avg_loss = torch.zeros(cfg.N_LOSS_TERM, device=self.y_device)
 
-        self.writer = CustomWriter(dir_result, purge_step=first_epoch)
+        self.writer = CustomWriter(str(dir_result), purge_step=first_epoch)
         print_to_file(
-            pathjoin(dir_result, 'summary'),
+            dir_result / 'summary',
             summary,
             (self.model.module, (cfg.hp.get_for_UNet()[0], cfg.N_freq, 256)),
         )
@@ -191,7 +186,7 @@ class Trainer(metaclass=TrainerMeta):
                     self.writer.add_scalar(f'{tag}/{idx + 1}. {n}', ll.item(), epoch)
 
             # Validation
-            self.validate(loader_valid, f_prefix, epoch)
+            self.validate(loader_valid, dir_result, epoch)
 
             # save loss & model
             if epoch % cfg.PERIOD_SAVE_STATE == cfg.PERIOD_SAVE_STATE - 1:
@@ -199,15 +194,15 @@ class Trainer(metaclass=TrainerMeta):
                     (self.model.module.state_dict(),
                      optimizer.state_dict(),
                      ),
-                    f'{f_prefix}{epoch}.pt'
+                    dir_result / f'{self.model_name}_{epoch}.pt'
                 )
 
     @torch.no_grad()
-    def validate(self, loader: DataLoader, f_prefix: str, epoch: int):
+    def validate(self, loader: DataLoader, dir_result: str, epoch: int):
         """ Evaluate the performance of the model.
 
         :param loader: DataLoader to use.
-        :param f_prefix: path and prefix of the result files.
+        :param dir_result: path of the result files.
         :param epoch:
         """
 
@@ -215,14 +210,14 @@ class Trainer(metaclass=TrainerMeta):
 
         avg_loss = torch.zeros(cfg.N_LOSS_TERM, device=self.y_device)
 
-        pbar = tqdm(loader, desc=f'validate ', postfix='[0]', dynamic_ncols=True)
+        pbar = tqdm(loader, desc='validate ', postfix='[0]', dynamic_ncols=True)
         for i_iter, data in enumerate(pbar):
             # get data
             x, y = self._pre(data, loader.dataset, for_summary=(i_iter==0))  # B, C, F, T
             T_ys = data['T_ys']
 
             # forward
-            output = self.model(x)[..., :y.shape[-1]]
+            output = self.model(x)  # [..., :y.shape[-1]]
 
             # loss
             loss = self._calc_loss(y, output, T_ys, loader.dataset)
@@ -242,7 +237,7 @@ class Trainer(metaclass=TrainerMeta):
                             = (np.pi*x[0, -1:, :, :data['T_xs'][0]]).cpu().numpy()
                         self.writer.one_sample['y_bpd'] \
                             = (np.pi*y[0, -1:, :, :T_ys[0]]).cpu().numpy()
-                        if self.model_name == 'UNet':
+                        if self.model_name.startswith('UNet'):
                             self.writer.one_sample['x_bpd'] \
                                 = self.writer.one_sample['x_bpd'].transpose((1, 2, 0))
                             self.writer.one_sample['y_bpd'] \
@@ -250,7 +245,7 @@ class Trainer(metaclass=TrainerMeta):
 
                 out_one = self._post_one(output, T_ys, 0, loader.dataset)
 
-                DirSpecDataset.save_dirspec(f'{f_prefix}dirspec_{epoch}',
+                DirSpecDataset.save_dirspec(dir_result / cfg.S_F_RESULT.format(epoch),
                                             **self.writer.one_sample, **out_one)
 
                 # Process(
@@ -271,14 +266,14 @@ class Trainer(metaclass=TrainerMeta):
         return avg_loss
 
     @torch.no_grad()
-    def test(self, loader: DataLoader, dir_result: str, f_state_dict: str):
+    def test(self, loader: DataLoader, dir_result: Path, f_state_dict: Path):
         if self.use_cuda:
             self.model.module.load_state_dict(torch.load(f_state_dict)[0])
         else:
             self.model.load_state_dict(torch.load(f_state_dict)[0])
-        self.writer = CustomWriter(dir_result)
+        self.writer = CustomWriter(str(dir_result))
 
-        group = os.path.basename(dir_result)
+        group = dir_result.name.split('_')[0]
 
         avg_measure = None
         self.model.eval()
@@ -290,7 +285,7 @@ class Trainer(metaclass=TrainerMeta):
             T_ys = data['T_ys']
 
             # forward
-            output = self.model(x)[..., :y.shape[-1]]
+            output = self.model(x)  # [..., :y.shape[-1]]
 
             # write summary
             one_sample = DirSpecDataset.decollate_padded(data, 0)  # F, T, C
@@ -298,14 +293,14 @@ class Trainer(metaclass=TrainerMeta):
                 # C, F, T
                 one_sample['x_bpd'] = (np.pi*x[0, -1:, :, :data['T_xs'][0]]).cpu().numpy()
                 one_sample['y_bpd'] = (np.pi*y[0, -1:, :, :T_ys[0]]).cpu().numpy()
-                if self.model_name == 'UNet':
+                if self.model_name.startswith('UNet'):
                     # F, T, C
                     one_sample['x_bpd'] = one_sample['x_bpd'].transpose((1, 2, 0))
                     one_sample['y_bpd'] = one_sample['y_bpd'].transpose((1, 2, 0))
 
             out_one = self._post_one(output, T_ys, 0, loader.dataset)
 
-            DirSpecDataset.save_dirspec(pathjoin(dir_result, f'dirspec_{i_iter}'),
+            DirSpecDataset.save_dirspec(dir_result / cfg.S_F_RESULT.format(i_iter),
                                         **one_sample, **out_one)
 
             measure = self.writer.write_one(i_iter, **out_one, group=group, **one_sample)
@@ -341,10 +336,10 @@ class MagTrainer(Trainer):
         x = x.to(self.x_device)
         y = y.to(self.y_device)
 
-        x = dataset.preprocess_('x', x)
-        y = dataset.preprocess_('y', y)
+        x = dataset.preprocess_(XY.x, x)
+        y = dataset.preprocess_(XY.y, y)
 
-        if self.model_name == 'UNet':
+        if self.model_name.startswith('UNet'):
             # B, C, F, T
             x = x.permute(0, -1, -3, -2)
             y = y.permute(0, -1, -3, -2)
@@ -354,13 +349,14 @@ class MagTrainer(Trainer):
     @torch.no_grad()
     def _post_one(self, output: Tensor, Ts: ndarray,
                   idx: int, dataset: DirSpecDataset) -> Dict[str, ndarray]:
-        if self.model_name == 'UNet':
+        if self.model_name.startswith('UNet'):
             one = output[idx, :, :, :Ts[idx]].permute(1, 2, 0)  # F, T, C
+            # one = output[idx].permute(1, 2, 0)  # warning
         else:
             # one = output[idx, :, :, :Ts[idx]]  # C, F, T
             raise NotImplementedError
 
-        one = dataset.postprocess_('y', one)
+        one = dataset.postprocess_(XY.y, one)
         one = one.cpu().numpy()
 
         return dict(out=one)
@@ -414,10 +410,10 @@ class ComplexTrainer(Trainer):
         x_phase = x_phase.to(self.x_device)
         y_phase = y_phase.to(self.y_device)
 
-        x = dataset.preprocess_('x', x, x_phase)
-        y = dataset.preprocess_('y', y, y_phase)
+        x = dataset.preprocess_(XY.x, x, x_phase)
+        y = dataset.preprocess_(XY.y, y, y_phase)
 
-        if self.model_name == 'UNet':
+        if self.model_name.startswith('UNet'):
             # B, C, F, T
             x = x.permute(0, -1, -3, -2)
             y = y.permute(0, -1, -3, -2)
@@ -427,13 +423,13 @@ class ComplexTrainer(Trainer):
     @torch.no_grad()
     def _post_one(self, output: Tensor, Ts: ndarray,
                   idx: int, dataset: DirSpecDataset) -> Dict[str, ndarray]:
-        if self.model_name == 'UNet':
+        if self.model_name.startswith('UNet'):
             one = output[idx, :, :, :Ts[idx]].permute(1, 2, 0)  # F, T, C
         else:
             # one = output[idx, :, :, :Ts[idx]]  # C, F, T
             raise NotImplementedError
 
-        one, one_phase = dataset.postprocess_('y', one)
+        one, one_phase = dataset.postprocess_(XY.y, one)
         one = one.cpu().numpy()
         one_phase = one_phase.cpu().numpy()
 
@@ -453,14 +449,14 @@ class ComplexTrainer(Trainer):
                 continue
             # F, T, C
             mag_out, phase_out \
-                = dataset.postprocess('y', item_out[:, :, :T].permute(1, 2, 0))
+                = dataset.postprocess(XY.y, item_out[:, :, :T].permute(1, 2, 0))
             mag_y, phase_y \
-                = dataset.postprocess('y', item_y[:, :, :T].permute(1, 2, 0))
+                = dataset.postprocess(XY.y, item_y[:, :, :T].permute(1, 2, 0))
 
             if cfg.hp.weight_loss[1] > 0:
                 # F, T, C
-                mag_norm_out = dataset.preprocess('y', mag_out, idx=1)
-                mag_norm_y = dataset.preprocess('y', mag_y, idx=1)
+                mag_norm_out = dataset.preprocess(XY.y, mag_out, idx=1)
+                mag_norm_y = dataset.preprocess(XY.y, mag_y, idx=1)
 
                 loss[1] += self.criterion(mag_norm_out, mag_norm_y) / int(T)
             if len(cfg.hp.weight_loss) >= 3 and cfg.hp.weight_loss[2] > 0:
@@ -494,16 +490,16 @@ class MagPhaseTrainer(Trainer):
         x_phase = x_phase.to(self.x_device)
         y_phase = y_phase.to(self.y_device)
 
-        x = dataset.preprocess_('x', x)
+        x = dataset.preprocess_(XY.x, x)
         x_phase /= np.pi
         x = torch.cat((x, x_phase), dim=-1)
 
-        y = dataset.preprocess_('y', y)
+        y = dataset.preprocess_(XY.y, y)
         y_phase /= np.pi
         y = torch.cat((y,y_phase), dim=-1)
-        # y = dataset.preprocess_('y', y, y_phase, idx=1)
+        # y = dataset.preprocess_(XY.y, y, y_phase, idx=1)
 
-        if self.model_name == 'UNet':
+        if self.model_name.startswith('UNet'):
             # B, C, F, T
             x = x.permute(0, -1, -3, -2)
             y = y.permute(0, -1, -3, -2)
@@ -513,15 +509,15 @@ class MagPhaseTrainer(Trainer):
     @torch.no_grad()
     def _post_one(self, output: Tensor, Ts: ndarray,
                   idx: int, dataset: DirSpecDataset) -> Dict[str, ndarray]:
-        if self.model_name == 'UNet':
+        if self.model_name.startswith('UNet'):
             one = output[idx, :, :, :Ts[idx]].permute(1, 2, 0)  # F, T, C
         else:
             # one = output[idx, :, :, :Ts[idx]]  # C, F, T
             raise NotImplementedError
 
         one_phase = one[..., -1:] * np.pi
-        one = dataset.postprocess_('y', one[..., :-1])
-        # one, one_phase = dataset.postprocess_('y', one, idx=1)
+        one = dataset.postprocess_(XY.y, one[..., :-1])
+        # one, one_phase = dataset.postprocess_(XY.y, one, idx=1)
         one_phase = one_phase.cpu().numpy()
         one = one.cpu().numpy()
 
@@ -545,8 +541,8 @@ class MagPhaseTrainer(Trainer):
                 phase_out = item_out[-1:, :, :T].permute(1, 2, 0) * np.pi
                 phase_y = item_y[-1:, :, :T].permute(1, 2, 0) * np.pi
 
-                out = dataset.preprocess_('x', mag_out, phase_out, idx=1)
-                y = dataset.preprocess_('x', mag_y, phase_y, idx=1)
+                out = dataset.preprocess_(XY.y, mag_out, phase_out, idx=1)
+                y = dataset.preprocess_(XY.y, mag_y, phase_y, idx=1)
 
                 temp = self.criterion(out, y) / int(T)
                 if not torch.isnan(temp) and temp < 10**4:
@@ -569,11 +565,11 @@ class MagPhaseTrainer(Trainer):
             # if cfg.hp.weight_loss[1] > 0:
             #     # F, T, C
             #     mag_out, _ \
-            #         = dataset.postprocess('y', item_out[:, :, :T].permute(1, 2, 0), idx=1)
+            #         = dataset.postprocess(XY.y, item_out[:, :, :T].permute(1, 2, 0), idx=1)
             #     mag_y, _ \
-            #         = dataset.postprocess('y', item_y[:, :, :T].permute(1, 2, 0), idx=1)
-            #     mag_norm_out = dataset.preprocess('y', mag_out, idx=0)
-            #     mag_norm_y = dataset.preprocess('y', mag_y, idx=0)
+            #         = dataset.postprocess(XY.y, item_y[:, :, :T].permute(1, 2, 0), idx=1)
+            #     mag_norm_out = dataset.preprocess(XY.y, mag_out, idx=0)
+            #     mag_norm_y = dataset.preprocess(XY.y, mag_y, idx=0)
             #
             #     loss[1] += self.criterion(mag_norm_out, mag_norm_y) / int(T)
 
@@ -614,10 +610,10 @@ class MagBPDTrainer(Trainer):
                 along_freq=True,
             )
 
-        x = dataset.preprocess_('x', x, x_phase)
-        y = dataset.preprocess_('y', y, y_phase)
+        x = dataset.preprocess_(XY.x, x, x_phase)
+        y = dataset.preprocess_(XY.y, y, y_phase)
 
-        if self.model_name == 'UNet':
+        if self.model_name.startswith('UNet'):
             # B, C, F, T
             x = x.permute(0, -1, -3, -2)
             y = y.permute(0, -1, -3, -2)
@@ -627,14 +623,14 @@ class MagBPDTrainer(Trainer):
     @torch.no_grad()
     def _post_one(self, output: Tensor, Ts: ndarray,
                   idx: int, dataset: DirSpecDataset) -> Dict[str, ndarray]:
-        if self.model_name == 'UNet':
+        if self.model_name.startswith('UNet'):
             one = output[idx, :, :, :Ts[idx]].permute(1, 2, 0)  # F, T, C
         else:
             # one = output[idx, :, :, :Ts[idx]]  # C, F, T
             raise NotImplementedError
 
         one_bpd = (np.pi* one[:, :, -1:]).cpu().numpy()
-        one, one_phase = dataset.postprocess_('y', one)
+        one, one_phase = dataset.postprocess_(XY.y, one)
         one = one.cpu().numpy()
         one_phase = one_phase.cpu().numpy()
 

@@ -2,14 +2,13 @@ from abc import ABCMeta, abstractmethod
 from itertools import islice
 
 import numpy as np
-import torch
 import scipy.signal as scsig
+import torch
 from numpy import ndarray
-from torch import Tensor
 
 import config as cfg
 import generic as gen
-from generic import TensArr, TensArrOrSeq, DataPerDevice
+from generic import DataPerDevice, TensArr, TensArrOrSeq
 
 _KWARGS_SUM = {np: dict(keepdims=True), torch: dict(keepdim=True)}
 

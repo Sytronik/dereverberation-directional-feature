@@ -2,10 +2,12 @@
 import matlab.engine
 
 import os
+import shutil
 from argparse import ArgumentError, ArgumentParser
-from os.path import join as pathjoin
 
 import deepdish as dd
+# noinspection PyCompatibility
+from dataclasses import asdict
 from torch.utils.data import DataLoader
 
 import config as cfg
@@ -30,7 +32,7 @@ parser.add_argument(
     dest='epoch', metavar='EPOCH',
 )
 parser.add_argument(
-    '--disk-worker', '-dw', type=int, nargs='?', const=0, default=3,
+    '--disk-worker', '-dw', type=int, nargs='?', const=1, default=3,
     dest='num_workers',
 )  # number of subprocesses for dataloaders
 ARGS = parser.parse_args()
@@ -41,12 +43,32 @@ if ARGS.train and ARGS.test or ARGS.epoch < -1:
 model_name = ARGS.model_name
 
 # directory
-DIR_TRAIN = pathjoin(cfg.DICT_PATH[model_name], 'train')
-if not os.path.isdir(DIR_TRAIN):
+DIR_TRAIN = cfg.DICT_PATH[model_name] / 'train'
+if DIR_TRAIN.exists():
+    if ARGS.train and list(DIR_TRAIN.glob('events.out.tfevents.*')):
+            print(f'The folder "{DIR_TRAIN}" already has tfevent files. Continue? [y/n]')
+            ans = input()
+            if ans.lower().startswith('y'):
+                shutil.rmtree(DIR_TRAIN)
+            else:
+                exit()
+else:
     os.makedirs(DIR_TRAIN)
 if ARGS.test:
-    DIR_TEST = pathjoin(cfg.DICT_PATH[model_name], ARGS.test)
-    if not os.path.isdir(DIR_TEST):
+    DIR_TEST = cfg.DICT_PATH[model_name]
+    if cfg.ROOM == cfg.ROOM_TRAINED:
+        DIR_TEST /= ARGS.test
+    else:
+        DIR_TEST /= f'{ARGS.test}_{cfg.ROOM}'
+    if DIR_TEST.exists():
+        if list(DIR_TEST.glob('events.out.tfevents.*')):
+            print(f'The folder "{DIR_TEST}" already has tfevent files. Continue? [y/n]')
+            ans = input()
+            if ans.lower().startswith('y'):
+                shutil.rmtree(DIR_TEST)
+            else:
+                exit()
+    else:
         os.makedirs(DIR_TEST)
 else:
     DIR_TEST = ''
@@ -54,12 +76,12 @@ else:
 # epoch, state dict
 FIRST_EPOCH = ARGS.epoch + 1
 if FIRST_EPOCH > 0:
-    F_STATE_DICT = pathjoin(DIR_TRAIN, f'{model_name}_{ARGS.epoch}.pt')
+    F_STATE_DICT = DIR_TRAIN / f'{model_name}_{ARGS.epoch}.pt'
 else:
-    F_STATE_DICT = ''
+    F_STATE_DICT = None
 
-if F_STATE_DICT and not os.path.isfile(F_STATE_DICT):
-    raise FileNotFoundError
+if F_STATE_DICT and not F_STATE_DICT.exists():
+    raise FileNotFoundError(F_STATE_DICT)
 
 # Training + Validation Set
 dataset_temp = DirSpecDataset('train',
@@ -88,11 +110,12 @@ if ARGS.train:
                               collate_fn=dataset_train.pad_collate,
                               pin_memory=True,
                               )
-    # noinspection PyProtectedMember
-    dd.io.save(pathjoin(DIR_TRAIN, cfg.F_HPARAMS),
-               dict(cfg.hp.asdict()))
 
-    trainer = Trainer.create('UNet')
+    dd.io.save(DIR_TRAIN / cfg.F_HPARAMS, asdict(cfg.hp))
+    with (DIR_TRAIN / cfg.F_HPARAMS).with_suffix('.txt').open('w') as f:
+        f.write(repr(asdict(cfg.hp)))
+
+    trainer = Trainer.create(model_name)
     trainer.train(loader_train, loader_valid, DIR_TRAIN,
                   FIRST_EPOCH, F_STATE_DICT)
 elif ARGS.test:
@@ -113,7 +136,7 @@ elif ARGS.test:
                             collate_fn=dataset_test.pad_collate,
                             )
 
-    trainer = Trainer.create('UNet', use_cuda=True)
+    trainer = Trainer.create(model_name, use_cuda=True)
     trainer.test(loader, DIR_TEST, F_STATE_DICT)
 else:
     raise ArgumentError
