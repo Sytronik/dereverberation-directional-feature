@@ -1,5 +1,5 @@
 from collections import OrderedDict as ODict
-from typing import Sequence, Tuple, Union, IO
+from typing import IO, Sequence, Tuple, Union
 
 import librosa
 import numpy as np

@@ -1,4 +1,4 @@
-from typing import Union, Dict, Tuple
+from typing import Dict, Tuple, Union
 
 import numpy as np
 import scipy.signal as scsig
