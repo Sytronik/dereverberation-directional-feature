@@ -10,6 +10,7 @@ from torch import nn, Tensor
 import torch.nn.functional as F
 
 import config as cfg
+from .cbam import CBAM
 
 
 def force_size_same(a: Tensor, b: Tensor) -> Tuple[Tensor, Tensor]:
@@ -77,7 +78,8 @@ class ResNeXtBlock(nn.Module):
 
 # Residual block
 class ResidualBlock(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, act_fn: nn.Module, last_act_fn=True):
+    def __init__(self, in_ch: int, out_ch: int, act_fn: nn.Module,
+                 last_act_fn=True, use_cbam=cfg.hp.use_cbam):
         super().__init__()
         self.skipcba = ConvBNAct(in_ch, out_ch, None, kernel_size=(1, 1), padding=(0, 0))
 
@@ -85,13 +87,15 @@ class ResidualBlock(nn.Module):
         self.cba2 = ConvBNAct(out_ch, out_ch, None)
 
         self.act_fn = act_fn if last_act_fn else None
+        self.cbam = CBAM(out_ch) if use_cbam else None
 
     def forward(self, x):
         residual = self.skipcba(x)
 
         out = self.cba1(x)
         out = self.cba2(out)
-
+        if self.cbam:
+            out = self.cbam(out)
         out += residual
         if self.act_fn:
             out = self.act_fn(out)
