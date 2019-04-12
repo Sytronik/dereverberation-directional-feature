@@ -14,23 +14,21 @@ python create_dirspec.py TRAIN --dirac --init
 import logging
 import multiprocessing as mp
 import os
-import time
-from argparse import ArgumentParser
-from glob import glob
-from os.path import join as pathjoin
-from typing import List, NamedTuple, Tuple, TypeVar
+from argparse import ArgumentParser, ArgumentError
 from collections import defaultdict
+from pathlib import Path
+from typing import NamedTuple, Tuple, TypeVar
 
 import cupy as cp
 import deepdish as dd
+import librosa
 import numpy as np
 import scipy.io as scio
 import scipy.signal as scsig
 import soundfile as sf
 from tqdm import tqdm
-import librosa
 
-from mypath import DICT_PATH
+from mypath import PATH_DATAROOT, DICT_PATH
 
 NDArray = TypeVar('NDArray', np.ndarray, cp.ndarray)
 
@@ -79,22 +77,6 @@ class SFTData(NamedTuple):
                 self.bn_sel2_0, self.bn_sel2_1,
                 self.bn_sel3_0, self.bn_sel3_1,
                 self.bn_sel_4_0, self.bn_sel_4_1)
-
-
-def search_all_files(directory: str, id_: str) -> List[str]:
-    """ search all files that matches the pattern `id_` in `direcotry` recursively.
-
-    :param directory:
-    :param id_:
-    :return:
-    """
-    result = []
-    for folder, _, _ in os.walk(directory):
-        files = glob(pathjoin(folder, id_))
-        if files:
-            result += files
-
-    return result
 
 
 def stft(data: NDArray, N_frame: int, _win: NDArray):
@@ -228,7 +210,8 @@ if __name__ == '__main__':
                                  ),
                         )
     parser.add_argument('--dirac', action='store_true')
-    parser.add_argument('--init', action='store_true')
+    parser.add_argument('--from', type=int, default=-1,
+                        dest='from_idx')
     parser.add_argument('--disk-worker', '-dw',
                         type=int, nargs='?', const=1, default=3,
                         dest='n_disk_worker',
@@ -240,20 +223,20 @@ if __name__ == '__main__':
 
     # Paths
     # DIR_DIRSPEC = DICT_PATH[f'iv_{ARGS.kind_data.lower()}']
-    DIR_DIRSPEC = pathjoin(DICT_PATH['root'], ARGS.DIR_DIRSPEC)
+    DIR_DIRSPEC = PATH_DATAROOT / ARGS.DIR_DIRSPEC
 
     if ARGS.kind_data.lower() == 'train':
         DIR_WAVFILE = DICT_PATH['wav_train']
     else:
-        DIR_DIRSPEC = pathjoin(DIR_DIRSPEC, 'TEST')
+        DIR_DIRSPEC = DIR_DIRSPEC / 'TEST'
         DIR_WAVFILE = DICT_PATH['wav_test']
 
-    DIR_DIRSPEC = pathjoin(DIR_DIRSPEC, ARGS.kind_data.upper())
-    if not os.path.exists(DIR_DIRSPEC):
+    DIR_DIRSPEC = DIR_DIRSPEC / ARGS.kind_data.upper()
+    if not DIR_DIRSPEC.exists():
         os.makedirs(DIR_DIRSPEC)
 
     # RIR Data
-    transfer_dict = scio.loadmat(DICT_PATH['RIR_Ys'], squeeze_me=True)
+    transfer_dict = scio.loadmat(str(DICT_PATH['RIR_Ys']), squeeze_me=True)
     kind_RIR = 'TEST' if ARGS.kind_data.lower() == 'unseen' else 'TRAIN'
     RIRs = transfer_dict[f'RIR_{kind_RIR}'].transpose((2, 0, 1))
     N_LOC, N_MIC, L_RIR = RIRs.shape
@@ -264,7 +247,7 @@ if __name__ == '__main__':
 
     # SFT Data
     sft_dict = scio.loadmat(
-        DICT_PATH['sft_data'],
+        str(DICT_PATH['sft_data']),
         variable_names=('bmn_ka', 'bEQf', 'Yenc', 'Wnv', 'Wpv', 'Vv'),
         squeeze_me=True
     )
@@ -318,30 +301,46 @@ if __name__ == '__main__':
     del (sft_dict, Yenc, Wnv, Wpv, Vv, T_real, bnkr, bEQf,
          bn_sel2_0, bn_sel2_1, bn_sel3_0, bn_sel3_1, bn_sel_4_0, bn_sel_4_1)
 
-    f_metadata = pathjoin(DIR_DIRSPEC, 'metadata.h5')
-    if os.path.isfile(f_metadata):
+    f_metadata = DIR_DIRSPEC / 'metadata.h5'
+    if f_metadata.exists():
         all_files = dd.io.load(f_metadata)['path_wavfiles']
     else:
-        all_files = search_all_files(DIR_WAVFILE, '*.WAV')
+        all_files = list(DIR_WAVFILE.glob('**/*.WAV')) + list(DIR_WAVFILE.glob('**/*.wav'))
+
+    N_wavfile = len(all_files)
+    if N_wavfile < ARGS.from_idx:
+        raise ArgumentError
 
     # there is the last main code at the last part of this file
 
 
 def process():
-    global Fs, N_freq, L_hop, win, N_wavfile, L_frame, N_fft, pbar
+    global Fs, N_freq, L_hop, win, L_frame, N_fft, pbar
 
     # The index of the first wave file that have to be processed
-    if ARGS.init:
-        idx_start = 1
+    idx_exist = -1
+    should_ask_cont = False
+    for i_wav in range(N_wavfile):
+        if len(list(DIR_DIRSPEC.glob(f'{i_wav:04d}_*.h5'))) < N_LOC:
+            idx_exist = i_wav - 1
+            break
+    if ARGS.from_idx == -1:
+        if idx_exist == -1:
+            print_save_info(N_wavfile)
+            exit(0)
+        idx_start = idx_exist + 1
     else:
-        idx_start = len(glob(pathjoin(DIR_DIRSPEC, f'*_{N_LOC - 1:02d}.h5'))) + 1
+        idx_start = ARGS.from_idx
+        should_ask_cont = True
 
-    N_wavfile = len(all_files)
+    print(f'Start processing from the {idx_start}-th wave file.')
+    if should_ask_cont:
+        ans = input(f'{idx_exist} wave files were already processed. continue? (y/n)')
+        if not ans.startswith('y'):
+            exit(0)
 
-    # idx_start = 4127
-    print(f'Start processing from the {idx_start}-th wave file')
     if not Fs:
-        _, Fs = sf.read(all_files[idx_start - 1])
+        _, Fs = sf.read(str(all_files[idx_start]))
         L_frame = int(Fs * L_WIN_MS // 1000)
         N_fft = L_frame
         N_freq = N_fft // 2 + 1
@@ -349,7 +348,7 @@ def process():
 
         win = FN_WIN(L_frame, sym=False)
 
-    print_save_info(idx_start - 1)
+    print_save_info(idx_start)
     pool_propagater = mp.Pool(mp.cpu_count() - N_CUDA_DEV - N_DISK_WORKER - 1)
     pool_creator = mp.Pool(N_CUDA_DEV)
     pool_saver = mp.Pool(N_DISK_WORKER)
@@ -363,7 +362,7 @@ def process():
             create_dirspecs,
             [(ii,
               q_data[ii],
-              len(all_files[idx_start - 1 + ii::N_CUDA_DEV]) * N_LOC,
+              len(all_files[idx_start + ii:3396:N_CUDA_DEV]) * N_LOC,
               q_dirspec)
              for ii in range(N_CUDA_DEV)]
         )
@@ -372,17 +371,17 @@ def process():
         # apply propagater
         # propagater send data to q_data
         pbar = tqdm(range(N_wavfile),
-                    desc='apply', dynamic_ncols=True, initial=idx_start - 1)
-        range_file = range(idx_start - 1, N_wavfile)
-        for i_wav, f_wav in zip(range_file, all_files[idx_start - 1:]):
-            data, _ = sf.read(f_wav)
+                    desc='apply', dynamic_ncols=True, initial=idx_start)
+        range_file = range(idx_start, N_wavfile)
+        for i_wav, f_wav in zip(range_file, all_files[idx_start:]):
+            data, _ = sf.read(str(f_wav))
 
             for i_loc, RIR in enumerate(RIRs):
                 pool_propagater.apply_async(
                     propagate,
                     (i_wav, f_wav,
                      data, i_loc, RIR,
-                     q_data[(i_wav - idx_start + 1) % N_CUDA_DEV])
+                     q_data[(i_wav - idx_start) % N_CUDA_DEV])
                 )
             pbar.update()
         pool_propagater.close()
@@ -390,26 +389,27 @@ def process():
         # apply saver
         # saver get dirspec from q_dirspec
         pbar = tqdm(range(N_wavfile),
-                    desc='create', dynamic_ncols=True, initial=idx_start - 1)
+                    desc='create', dynamic_ncols=True, initial=idx_start)
         for idx in range(len(range_file) * N_LOC):
             pool_saver.apply_async(save_dirspec, q_dirspec.get(),
                                    callback=update_pbar)
-            pbar.set_postfix_str(
-                f'[{" ".join([f"{q.qsize()}" for q in q_data])}], '
-                f'{q_dirspec.qsize()}'
-            )
+            str_qsizes = ' '.join([f'{q.qsize()}' for q in q_data])
+            pbar.set_postfix_str(f'[{str_qsizes}], {q_dirspec.qsize()}')
         pool_saver.close()
 
         pool_propagater.join()
         pool_creator.join()
         pool_saver.join()
 
-    print_save_info(sum([1 for v in dict_count.values() if v >= N_LOC]))
+    print_save_info(idx_start
+                    + sum([1 for v in dict_count.values() if v >= N_LOC]))
 
 
-def propagate(i_wav: int, f_wav: str,
+def propagate(i_wav: int, f_wav: Path,
               data: np.ndarray, i_loc: int, RIR: np.ndarray,
               queue: mp.Queue):
+    # if (DIR_DIRSPEC / FORM % (i_wav, i_loc)).exists():
+    #     return
     N_frame_room = int(np.ceil((data.shape[0] + L_RIR - 1) / L_hop) - 1)
 
     # RIR Filtering
@@ -540,14 +540,16 @@ def create_dirspecs(i_dev: int, q_data: mp.Queue, N_data: int, q_dirspec: mp.Que
         q_dirspec.put((i_wav, i_loc, dict_dirspec))
 
 
-def save_dirspec(i_wav: int, i_loc: int, dict_dirspec: dict) -> int:
-    dd.io.save(pathjoin(DIR_DIRSPEC, FORM % (i_wav, i_loc)), dict_dirspec,
+def save_dirspec(i_wav: int, i_loc: int, dict_dirspec: dict) -> Tuple[int, int]:
+    dd.io.save(DIR_DIRSPEC / (FORM % (i_wav, i_loc)), dict_dirspec,
                compression=None)
-    return i_wav
+    return i_wav, i_loc
 
 
-def update_pbar(i_wav: int):
+def update_pbar(tup):
     global dict_count
+    i_wav, i_loc = tup
+    # pbar.display(FORM % (i_wav, i_loc))
     dict_count[i_wav] += 1
     if dict_count[i_wav] >= N_LOC:
         pbar.update()
@@ -557,11 +559,9 @@ def print_save_info(i_wav):
     """ Print and save metadata.
 
     """
-    print(f'Wave Files Processed/Total: '
-          f'{i_wav}/{len(all_files)}\n'
+    print(f'Wave Files Processed/Total: {i_wav}/{len(all_files)}\n'
           f'Sample Rate: {Fs}\n'
-          f'Number of source location: {N_LOC}\n'
-          )
+          f'Number of source location: {N_LOC}\n')
 
     metadata = dict(Fs=Fs,
                     N_fft=N_fft,
