@@ -24,68 +24,71 @@ python convert_db.py [--no-duplicate]
 * Avaiable types of original file: .mat, .h5, .npy, .pt
 """
 import multiprocessing as mp
-import os
 from argparse import ArgumentParser
-from glob import glob
+from pathlib import Path
 
 import deepdish as dd
 import numpy as np
 import scipy.io as scio
 import torch
 
-from utils import static_vars
-
 
 def main():
     parser = ArgumentParser()
     for arg_for_path in LIST_ARGS_FOR_PATH:
-        parser.add_argument(*arg_for_path, nargs='+', metavar='PATH')
-    parser.add_argument('--no-duplicate', '--nd', action='store_true')
+        parser.add_argument(*arg_for_path, action='append', nargs='+', metavar='PATH')
+    parser.add_argument('--no-duplicate', '--nd', action='store_false')
 
     args = parser.parse_args()
-    convert.duplicate = not args.no_duplicate
-    del args.no_duplicate
+    duplicate = args.no_duplicate
+    del parser, args.no_duplicate
 
+    pool = mp.Pool(3)
     for to, paths in args.__dict__.items():
-        convert.to = to
         if not paths:
             continue
+        paths = [p for path in paths for p in path]
         for path in paths:
-            if os.path.isdir(path):
-                pool = mp.Pool(mp.cpu_count())
-                for folder, _, _ in os.walk(path):
-                    files = glob(os.path.join(folder, '*.*'))
-                    files = [f for f in files if is_db(f)]
-                    if files:
-                        pool.map_async(convert, files)
-                pool.close()
-                pool.join()
-            elif os.path.isfile(path):
-                convert(path, show=True)
+            path = Path(path)
+            if path.is_dir():
+                file_args = (
+                    (f, to, duplicate) for f in path.glob('**/*.*') if is_db(f)
+                )
+                if not file_args:
+                    continue
+                pool.starmap_async(convert, file_args)
+            elif path.is_file():
+                pool.apply_async(
+                    convert,
+                    (path,), dict(to=to, show=True, duplicate=duplicate)
+                )
             else:
                 raise FileExistsError
 
+    pool.close()
+    pool.join()
 
-def open_mat(fname: str):
-    contents = scio.loadmat(fname, squeeze_me=True)
+
+def open_mat(fpath: Path):
+    contents = scio.loadmat(str(fpath), squeeze_me=True)
     return {key: value
             for key, value in contents.items()
             if not (key.startswith('__') and key.endswith('__'))
             }
 
 
-def open_h5(fname: str):
-    return dd.io.load(fname)
+def open_h5(fpath: Path):
+    return dd.io.load(fpath)
 
 
-def open_npy(fname: str):
-    contents = np.load(fname)
+def open_npy(fpath: Path):
+    contents = np.load(str(fpath))
     if contents.size == 1:
         contents = contents.item()
     return contents
 
 
-def open_pt(fname: str):
+def open_pt(fpath: Path):
     def construct_dict(data):
         if hasattr(data, 'items'):
             if len(data) == 1:
@@ -110,7 +113,7 @@ def open_pt(fname: str):
 
         return data
 
-    contents = torch.load(fname, map_location=torch.device('cpu'))
+    contents = torch.load(fpath, map_location=torch.device('cpu'))
     contents = construct_dict(contents)
 
     return contents
@@ -132,28 +135,34 @@ def remove_none(a):
             return a
 
 
-def save_mat(fname: str, contents):
+def save_mat(fpath: Path, contents):
     if type(contents) != dict:  # make contents dict
-        contents = {os.path.basename(fname).replace('.mat', ''): remove_none(contents)}
-    scio.savemat(fname, contents, long_field_names=True)
+        contents = {fpath.stem: remove_none(contents)}
+    scio.savemat(fpath, contents, long_field_names=True)
 
 
-def save_h5(fname: str, contents):
+def save_h5(fpath: Path, contents):
     if type(contents) == dict and len(contents) == 1:
-        exec(f'{list(contents)[0]} = {contents[list(contents)[0]]}')
-        dd.io.save(fname, eval(list(contents)[0]), compression=None)
+        key = list(contents)[0]
+        exec(f'{key} = contents[key]')
+        dd.io.save(fpath, eval(key), compression=None)
     else:
-        dd.io.save(fname, contents, compression=None)
+        dd.io.save(fpath, contents, compression=None)
 
 
-def save_npy(fname: str, contents):
-    if type(contents) == dict and len(contents) == 1:
-        contents = contents[list(contents)[0]]
-    np.save(fname, contents)
+def save_npy(fpath: Path, contents):
+    if type(contents) == dict:
+        if len(contents) == 1:
+            contents = contents[list(contents)[0]]
+        else:
+            np.savez(str(fpath), **contents)
+            return
+
+    np.save(str(fpath), contents)
 
 
-def save_txt(fname: str, contents):
-    with open(fname, 'w') as f:
+def save_txt(fpath: Path, contents):
+    with fpath.open('w', encoding='utf-8'):
         f.write(str(contents))
 
 
@@ -176,20 +185,19 @@ SAVE = {'.mat': save_mat,
         }
 
 
-def is_db(fname: str):
-    return any([fname.endswith(ext) for ext in OPEN.keys()])
+def is_db(f: Path):
+    return any([f.suffix == ext for ext in OPEN.keys()])
 
 
 def str_simple(contents) -> str:
     if type(contents) == dict:
         length = max([len(k) for k in contents.keys()])
         spaces = '\n' + ' ' * (length + 2)
-        result = ''
-        for key, value in contents.items():
+        result = [''] * len(contents)
+        for idx, (key, value) in enumerate(contents.items()):
             value_simple = str_simple(value).replace('\n', spaces)
-            result += (f'{key:<{length}}: '
-                       f'{value_simple}\n')
-        result = result[:-1]
+            result[idx] = f'{key:<{length}}: {value_simple}'
+        result = '\n'.join(result)
     elif type(contents) == list:
         result = f'list of len {len(contents)}'
     elif type(contents) == tuple:
@@ -202,35 +210,30 @@ def str_simple(contents) -> str:
     return result
 
 
-@static_vars(to='', duplicate=True)
-def convert(fname: str, show=False,
-            # *args
-            ):
-    # if args:
-    #     convert.to, convert.duplicate = args
-
+def convert(fpath: Path, to: str, show=False, duplicate=True):
     # Open
-    ext = os.path.splitext(fname)[-1]
-    contents = OPEN[ext](fname)
+    ext = fpath.suffix
+    contents = OPEN[ext](fpath)
 
     # Print
-    if convert.to == 'show_full':
+    print(fpath)
+    if to == 'show_full':
         print(contents)
-        return
-    elif convert.to == 'show':
+    elif to == 'show':
         print(str_simple(contents))
     else:
-        if not convert.to.startswith('.'):
-            convert.to = f'.{convert.to}'
+        # Convert and Print
+        if not to.startswith('.'):
+            to = f'.{to}'
         if show:
             print(str_simple(contents))
-        fname_new = fname.replace(ext, convert.to)
-        if os.path.isfile(fname_new) and not convert.duplicate:
-            print('Didn\'t convert for avoiding duplicate')
-            return
+        f_new = fpath.with_suffix(to)
+        if f_new.exists() and not duplicate:
+            print("Didn't convert for avoiding duplicate")
         else:
-            SAVE[convert.to](fname_new, contents)
-            print(fname_new)
+            SAVE[to](f_new, contents)
+            print(f_new)
+    print()
 
 
 if __name__ == '__main__':
