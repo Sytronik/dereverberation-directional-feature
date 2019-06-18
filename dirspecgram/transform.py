@@ -6,7 +6,7 @@ import scipy.signal as scsig
 import torch
 from numpy import ndarray
 
-import config as cfg
+from hparams import hp
 import generic as gen
 from generic import DataPerDevice, TensArr, TensArrOrSeq
 
@@ -49,8 +49,8 @@ class BPD:
     def _get_basebands_like(cls, a: TensArr) -> TensArr:
         if not cls._basebands:
             bb = np.array(range(a.shape[-3]))[:, np.newaxis, np.newaxis]
-            bb = 2. * np.pi * cfg.L_hop * bb / cfg.N_fft
-            # bb = 2. * np.pi * bb / cfg.N_fft
+            bb = 2. * np.pi * hp.l_hop * bb / hp.n_fft
+            # bb = 2. * np.pi * bb / hp.N_fft
             cls._basebands = DataPerDevice(bb)
         return cls._basebands.get_like(a)
 
@@ -135,7 +135,7 @@ class BPD:
         for t1 in range(bpd.shape[1]):
             left = cls.N_CTXT - min(cls.N_CTXT, t1)
             right = cls.N_CTXT + min(cls.N_CTXT + 1, bpd.shape[1] - t1)
-            estimates = pkg.zeros(cfg.N_freq, len(win_context)).to(bpd)
+            estimates = pkg.zeros(hp.n_freq, len(win_context)).to(bpd)
             for t2 in range(cls.N_CTXT - 1, left - 1, -1):
                 estimates[:, t2] = (estimates[:, t2 + 1]
                                     + ph_diff[:, t1 + t2 - cls.N_CTXT])
@@ -177,7 +177,7 @@ class BPD:
 
         # along frequency axis
         if cls._win_spec_fft is None:
-            cls._win_spec_fft = scsig.windows.hann(cfg.N_fft, sym=False)
+            cls._win_spec_fft = scsig.windows.hann(hp.n_fft, sym=False)
             cls._win_spec_fft = np.fft.fft(cls._win_spec_fft)
 
         mag = gen.convert(mag, astype=np.ndarray).squeeze()  # F, T
@@ -420,7 +420,7 @@ class LogMagBPDTransformer(ITransformer):
 
 
 class LogModule:
-    EPS = cfg.EPS_FOR_LOG
+    eps = hp.eps_for_log
 
     @classmethod
     def log(cls, a: TensArr, only_I=False) -> TensArr:
@@ -429,13 +429,13 @@ class LogModule:
         b = pkg.empty_like(a)
         if a.shape[-1] == 4:
             r = (a[..., :3]**2).sum(-1, **_KWARGS_SUM[pkg])**0.5
-            log_r = pkg.log10((r + cls.EPS) / cls.EPS)
-            b[..., :3] = a[..., :3] * log_r / (r + cls.EPS)
+            log_r = pkg.log10((r + cls.eps) / cls.eps)
+            b[..., :3] = a[..., :3] * log_r / (r + cls.eps)
             if not only_I:
-                b[..., 3] = pkg.log10((a[..., 3] + cls.EPS) / cls.EPS)
+                b[..., 3] = pkg.log10((a[..., 3] + cls.eps) / cls.eps)
         else:
             if not only_I:
-                b = pkg.log10((a + cls.EPS) / cls.EPS)
+                b = pkg.log10((a + cls.eps) / cls.eps)
         return b
 
     @classmethod
@@ -444,14 +444,14 @@ class LogModule:
 
         if a.shape[-1] == 4:
             r = (a[..., :3]**2).sum(-1, **_KWARGS_SUM[pkg])**0.5
-            log_r = pkg.log10((r + cls.EPS) / cls.EPS)
+            log_r = pkg.log10((r + cls.eps) / cls.eps)
             a[..., :3] *= log_r
-            a[..., :3] /= (r + cls.EPS)
+            a[..., :3] /= (r + cls.eps)
             if not only_I:
-                a[..., 3] = pkg.log10((a[..., 3] + cls.EPS) / cls.EPS)
+                a[..., 3] = pkg.log10((a[..., 3] + cls.eps) / cls.eps)
         else:
             if not only_I:
-                pkg.log10((a + cls.EPS) / cls.EPS, out=a)
+                pkg.log10((a + cls.eps) / cls.eps, out=a)
         return a
 
     @classmethod
@@ -461,13 +461,13 @@ class LogModule:
         b = pkg.empty_like(a)
         if a.shape[-1] == 4:
             r = (a[..., :3]**2).sum(-1, **_KWARGS_SUM[pkg])**0.5
-            exp_r = cls.EPS * (10.**r - 1)
-            b[..., :3] = a[..., :3] * exp_r / (r + cls.EPS)
+            exp_r = cls.eps * (10.**r - 1)
+            b[..., :3] = a[..., :3] * exp_r / (r + cls.eps)
             if not only_I:
-                b[..., 3] = cls.EPS * (10.**a[..., 3] - 1)
+                b[..., 3] = cls.eps * (10.**a[..., 3] - 1)
         else:
             if not only_I:
-                b = cls.EPS * (10.**a - 1)
+                b = cls.eps * (10.**a - 1)
         return b
 
     @classmethod
@@ -476,12 +476,12 @@ class LogModule:
 
         if a.shape[-1] == 4:
             r = (a[..., :3]**2).sum(-1, **_KWARGS_SUM[pkg])**0.5
-            exp_r = cls.EPS * (10.**r - 1)
+            exp_r = cls.eps * (10.**r - 1)
             a[..., :3] *= exp_r
-            a[..., :3] /= (r + cls.EPS)
+            a[..., :3] /= (r + cls.eps)
             if not only_I:
-                a[..., 3] = cls.EPS * (10.**a[..., 3] - 1)
+                a[..., 3] = cls.eps * (10.**a[..., 3] - 1)
         else:
             if not only_I:
-                a = cls.EPS * (10.**a - 1)
+                a = cls.eps * (10.**a - 1)
         return a

@@ -10,7 +10,7 @@ import torch
 from numpy import ndarray
 from torch import Tensor
 
-import config as cfg
+from hparams import hp
 from generic import TensArr, TensArrOrSeq
 from .normalize import INormalizer, MeanStdNormalizer, MinMaxNormalizer
 from .transform import (ITransformer,
@@ -87,15 +87,15 @@ class TranNormModule:
 
     def _load_data(self, fname: Union[str, Path], queue: Queue) -> None:
         if self._transformer.use_phase():
-            result = dd.io.load(fname, group=(cfg.SPEC_DATA_NAME['x'],
-                                              cfg.SPEC_DATA_NAME['x_phase'],
-                                              cfg.SPEC_DATA_NAME['y'],
-                                              cfg.SPEC_DATA_NAME['y_phase'],
+            result = dd.io.load(fname, group=(hp.spec_data_name['x'],
+                                              hp.spec_data_name['x_phase'],
+                                              hp.spec_data_name['y'],
+                                              hp.spec_data_name['y_phase'],
                                               ))
             queue.put(result)
         else:
-            x, y = dd.io.load(fname, group=(cfg.SPEC_DATA_NAME['x'],
-                                            cfg.SPEC_DATA_NAME['y'],
+            x, y = dd.io.load(fname, group=(hp.spec_data_name['x'],
+                                            hp.spec_data_name['y'],
                                             ))
             queue.put((x, y, None, None))
 
@@ -150,7 +150,7 @@ class TranNormModule:
         :return:
         """
 
-        shft = int(xy) if not cfg.NORM_USING_ONLY_X else 0
+        shft = int(xy)
 
         ch = slice(-a.shape[-1], None)
 

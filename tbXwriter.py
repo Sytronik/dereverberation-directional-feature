@@ -5,7 +5,7 @@ import torch
 from numpy import ndarray
 from tensorboardX import SummaryWriter
 
-import config as cfg
+from hparams import hp
 from audio_utils import (bnkr_equalize_,
                          calc_snrseg,
                          calc_using_eval_module,
@@ -21,7 +21,7 @@ class CustomWriter(SummaryWriter):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.flogtxt = Path(self.log_dir, cfg.F_LOG).open('w')
+        self.flogtxt = Path(self.logdir, hp.log_fname).open('w')
         self.one_sample = dict()
         self.recon_sample = dict()
         self.measure_x = dict()
@@ -34,7 +34,7 @@ class CustomWriter(SummaryWriter):
 
     def close(self):
         if self.scalar_dict:
-            self.export_scalars_to_json(str(Path(self.log_dir, cfg.F_SCALARS)))
+            self.export_scalars_to_json(str(Path(self.logdir, hp.scalars_fname)))
         super().close()
 
     def write_one(self, step: int, group='',
@@ -78,7 +78,7 @@ class CustomWriter(SummaryWriter):
             x = one_sample['x'][..., -1:] / 2 / np.sqrt(4 * np.pi)  # warning
             y = one_sample['y'][..., -1:]
 
-            if cfg.DO_B_EQ:
+            if hp.do_bnkr_eq:
                 x, x_phase = bnkr_equalize_(x, one_sample['x_phase'].copy())
                 y, y_phase = bnkr_equalize_(y, one_sample['y_phase'].copy())
             else:
@@ -112,7 +112,7 @@ class CustomWriter(SummaryWriter):
                                               io=self.flogtxt)
                            ),
                            step,
-                           sample_rate=cfg.Fs)
+                           sample_rate=hp.fs)
             self.add_audio(f'{group}/2. Reverberant Wave',
                            torch.from_numpy(
                                wave_scale_fix(x_wav/(np.abs(x_wav).max()/0.707),
@@ -120,7 +120,7 @@ class CustomWriter(SummaryWriter):
                                               io=self.flogtxt)
                            ),
                            step,
-                           sample_rate=cfg.Fs)
+                           sample_rate=hp.fs)
 
             if 'x_bpd' in one_sample:
                 fig_x_bpd = draw_spectrogram(
@@ -144,7 +144,7 @@ class CustomWriter(SummaryWriter):
 
         out = out[..., -1:]
         if np.iscomplexobj(out):
-            if cfg.DO_B_EQ:
+            if hp.do_bnkr_eq:
                 out = bnkr_equalize_(out)
 
             snrseg = calc_snrseg(y, np.abs(out))
@@ -154,17 +154,17 @@ class CustomWriter(SummaryWriter):
         else:
             np.maximum(out, 0, out=out)
             # np.sqrt(out, out=out)
-            if cfg.DO_B_EQ:
+            if hp.DO_B_EQ:
                 out, out_phase = bnkr_equalize_(out, out_phase)
 
             snrseg = calc_snrseg(y, out)
 
             if out_phase is None:
                 out_wav = reconstruct_wave(out, x_phase[:, :out.shape[1], :],
-                                           n_iter=cfg.N_GRIFFIN_LIM)
+                                           n_iter=hp.n_glim_iter)
             else:
-                if cfg.USE_GLIM_OUT_PHASE:
-                    out_wav = reconstruct_wave(out, out_phase, n_iter=cfg.N_GRIFFIN_LIM)
+                if hp.use_glim:
+                    out_wav = reconstruct_wave(out, out_phase, n_iter=hp.n_glim_iter)
                 else:
                     out_wav = reconstruct_wave(out, out_phase)
             out_wav_y_ph = reconstruct_wave(out, y_phase)
@@ -181,7 +181,7 @@ class CustomWriter(SummaryWriter):
             self.add_audio(f'{group}/4. Estimated Wave with Anechoic Phase',
                            out_wav_y_ph,
                            step,
-                           sample_rate=cfg.Fs)
+                           sample_rate=hp.fs)
 
         self.add_scalars(f'{group}/1. SNRseg',
                          dict(Reverberant=snrseg_x,
@@ -205,7 +205,7 @@ class CustomWriter(SummaryWriter):
         self.add_audio(f'{group}/3. Estimated Anechoic Wave',
                        out_wav,
                        step,
-                       sample_rate=cfg.Fs)
+                       sample_rate=hp.Fs)
 
         if out_bpd is not None:
             fig_out_bpd = draw_spectrogram(

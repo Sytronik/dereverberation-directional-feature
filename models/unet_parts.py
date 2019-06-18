@@ -9,7 +9,6 @@ import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
 
-import config as cfg
 from .cbam import CBAM
 
 
@@ -32,9 +31,11 @@ def force_size_same(a: Tensor, b: Tensor) -> Tuple[Tensor, Tensor]:
 
 class ConvBNAct(nn.Module):
     def __init__(self, in_ch, out_ch, act_fn, *,
-                 kernel_size=cfg.hp.dflt_kernel_size, padding=cfg.hp.dflt_pad,
+                 kernel_size=(3, 3), padding=None,
                  groups=1, stride=(1, 1)):
         super().__init__()
+        if not padding:
+            padding = (kernel_size[0] // 2, kernel_size[1] // 2)
         self.cba = nn.Sequential(
             nn.Conv2d(in_ch, out_ch, kernel_size,
                       padding=padding, groups=groups, stride=stride),
@@ -79,12 +80,17 @@ class ResNeXtBlock(nn.Module):
 # Residual block
 class ResidualBlock(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, act_fn: nn.Module,
-                 last_act_fn=True, use_cbam=cfg.hp.use_cbam):
+                 kernel_size=(3, 3), padding=None,
+                 last_act_fn=True, use_cbam=False):
         super().__init__()
-        self.skipcba = ConvBNAct(in_ch, out_ch, None, kernel_size=(1, 1), padding=(0, 0))
+        self.skipcba = ConvBNAct(in_ch, out_ch, None, kernel_size=(1, 1))
 
-        self.cba1 = ConvBNAct(in_ch, out_ch, act_fn)
-        self.cba2 = ConvBNAct(out_ch, out_ch, None)
+        self.cba1 = ConvBNAct(in_ch, out_ch, act_fn,
+                              kernel_size=kernel_size, padding=padding,
+                              )
+        self.cba2 = ConvBNAct(out_ch, out_ch, None,
+                              kernel_size=kernel_size, padding=padding,
+                              )
 
         self.act_fn = act_fn if last_act_fn else None
         self.cbam = CBAM(out_ch) if use_cbam else None
@@ -104,11 +110,20 @@ class ResidualBlock(nn.Module):
 
 
 class FusionNetBlock(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, act_fn: nn.Module):
+    def __init__(self, in_ch: int, out_ch: int, act_fn: nn.Module,
+                 kernel_size=(3, 3), padding=None, use_cbam=False,
+                 ):
         super().__init__()
-        self.cba1 = ConvBNAct(in_ch, out_ch, act_fn)
-        self.resblock = ResidualBlock(out_ch, out_ch, act_fn, last_act_fn=False)
-        self.cba2 = ConvBNAct(out_ch, out_ch, act_fn)
+        self.cba1 = ConvBNAct(in_ch, out_ch, act_fn,
+                              kernel_size=kernel_size, padding=padding,
+                              )
+        self.resblock = ResidualBlock(out_ch, out_ch, act_fn, last_act_fn=False,
+                                      kernel_size=kernel_size, padding=padding,
+                                      use_cbam=use_cbam,
+                                      )
+        self.cba2 = ConvBNAct(out_ch, out_ch, act_fn,
+                              kernel_size=kernel_size, padding=padding,
+                              )
 
     def forward(self, x):
         x = self.cba1(x)
@@ -118,9 +133,14 @@ class FusionNetBlock(nn.Module):
 
 
 class InConv(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int):
+    def __init__(self, in_ch: int, out_ch: int,
+                 kernel_size=(3, 3), padding=None, use_cbam=False,
+                 ):
         super().__init__()
-        self.block = FusionNetBlock(in_ch, out_ch, nn.ReLU(inplace=True))
+        self.block = FusionNetBlock(in_ch, out_ch, nn.ReLU(inplace=True),
+                                    kernel_size=kernel_size, padding=padding,
+                                    use_cbam=use_cbam,
+                                    )
         # self.conv = ResidualBlock(in_ch, out_ch)
 
     def forward(self, x):
@@ -129,18 +149,16 @@ class InConv(nn.Module):
 
 
 class DownAndConv(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, hidden_ch=0, groups=0):
+    def __init__(self, in_ch: int, out_ch: int,
+                 kernel_size=(3, 3), padding=None, use_cbam=False,
+                 ):
         super().__init__()
         self.pool = nn.MaxPool2d((2, 2))
 
-        self.block = FusionNetBlock(in_ch, out_ch, nn.ReLU(inplace=True))
-
-        # if not hidden_ch:
-        #     hidden_ch = min(in_ch, out_ch) // 2
-        # if not groups:
-        #     groups = min(in_ch, out_ch) // 8
-        # self.block = ResNeXtBlock(in_ch, out_ch, nn.ReLU(inplace=True), hidden_ch,
-        #                           groups=groups)
+        self.block = FusionNetBlock(in_ch, out_ch, nn.ReLU(inplace=True),
+                                    kernel_size=kernel_size, padding=padding,
+                                    use_cbam=use_cbam,
+                                    )
 
     def forward(self, x):
         x = self.pool(x)
@@ -149,22 +167,17 @@ class DownAndConv(nn.Module):
 
 
 class UpAndConv(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, hidden_ch=0, groups=0, bilinear=False):
+    def __init__(self, in_ch: int, out_ch: int,
+                 kernel_size=(3, 3), padding=None, use_cbam=False,
+                 ):
         super().__init__()
 
-        if bilinear:
-            self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        else:
-            self.up = nn.ConvTranspose2d(in_ch, out_ch, (2, 2), stride=(2, 2))
+        self.up = nn.ConvTranspose2d(in_ch, out_ch, (2, 2), stride=(2, 2))
 
-        self.block = FusionNetBlock(out_ch, out_ch, nn.ReLU(inplace=True))
-
-        # if not hidden_ch:
-        #     hidden_ch = min(in_ch, out_ch) // 2
-        # if not groups:
-        #     groups = min(in_ch, out_ch) // 8
-        # self.block = ResNeXtBlock(in_ch, out_ch, nn.ReLU(inplace=True), hidden_ch,
-        #                           groups=groups)
+        self.block = FusionNetBlock(out_ch, out_ch, nn.ReLU(inplace=True),
+                                    kernel_size=kernel_size, padding=padding,
+                                    use_cbam=use_cbam,
+                                    )
 
     def forward(self, x, x_skip):
         x = self.up(x)
@@ -176,49 +189,13 @@ class UpAndConv(nn.Module):
         return out
 
 
-# class outconv(nn.Module):
-#     def __init__(self, in_ch, out_ch):
-#         super(outconv, self).__init__()
-#         self.conv1 = nn.Conv2d(in_ch, 11, 1)
-#         self.relu1 = nn.ReLU(inplace=True)
-#         self.conv2 = nn.Conv2d(out_ch + 11, 11, 1)
-#
-#         self.act_transform = nn.Softsign()
-#         # self.act_transform = nn.Tanh()
-#
-#         # self.act_mask = nn.ReLU()
-#         # self.act_mask = nn.PReLU(num_parameters=1, init=0.25)
-#         # self.act_mask = nn.Softplus(beta=1, threshold=20)
-#         self.act_mask = nn.Sigmoid()
-#
-#     def forward(self, x_decode, x_skip):
-#         x_decode = self.conv1(x_decode)
-#         x_decode = self.relu1(x_decode)
-#         x = torch.cat([x_skip, x_decode], dim=1)
-#         out = self.conv2(x)
-#         einexp = 'bcft,bcft->bft' if x_skip.dim() == 4 else 'cft,cft->ft'
-#
-#         transform = self.act_transform(out[..., :9, :, :])
-#         mask = self.act_mask(out[..., 9:, :, :])
-#         y = torch.empty_like(x_skip)
-#         for idx in range(3):
-#             y[..., idx, :, :] = torch.einsum(
-#                 einexp,
-#                 [transform[..., 3*idx:3*idx + 3, :, :], x_skip[..., :3, :, :]]
-#             )
-#         y[..., :3, :, :] *= mask[..., :1, :, :]  # Broadcast
-#         y[..., 3, :, :] = mask[..., 1, :, :] * x_skip[..., 3, :, :]
-#         return y
-
-
-class OutConvMap(nn.Module):
+class OutConv(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_ch, out_ch, cfg.hp.dflt_kernel_size,
-                               padding=cfg.hp.dflt_pad)
+        self.conv1 = nn.Conv2d(in_ch, out_ch, (3, 3), padding=(1, 1))
         self.act_fn = nn.Tanh()
 
     def forward(self, x):
         x = self.conv1(x)
-        x = 2*self.act_fn(x)
+        x = 2 * self.act_fn(x)
         return x

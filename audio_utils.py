@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 from numpy import ndarray
 from scipy.linalg import toeplitz
 
-import config as cfg
+from hparams import hp
 import generic as gen
 from dirspecgram import LogModule, principle_
 from matlab_lib import Evaluation as EvalModule
@@ -94,12 +94,12 @@ from matlab_lib import Evaluation as EvalModule
 # def calc_stoi(y_clean: ndarray, y_est: ndarray):
 #     sum_result = 0.
 #     for item_clean, item_est in zip(y_clean, y_est):
-#         sum_result += stoi(item_clean, item_est, cfg.Fs)
+#         sum_result += stoi(item_clean, item_est, hp.Fs)
 #     return sum_result
 
 
-def calc_snrseg(y_clean: ndarray, y_est: ndarray,
-                T_ys: Sequence[int] = (0,)) -> ndarray:
+def calc_snrseg(y_clean: ndarray, y_est: ndarray, T_ys: Sequence[int] = (0,)) \
+        -> float:
     """ calculate snrseg. y can be a batch.
 
     :param y_clean:
@@ -156,7 +156,7 @@ def calc_using_eval_module(y_clean: ndarray, y_est: ndarray,
     sum_result = None
     for T, item_clean, item_est in zip(T_ys, y_clean, y_est):
         # noinspection PyArgumentList
-        temp: ODict = EvalModule(item_clean[:T], item_est[:T], cfg.Fs)
+        temp: ODict = EvalModule(item_clean[:T], item_est[:T], hp.fs)
         result = np.array(list(temp.values()))
         if not keys:
             keys = temp.keys()
@@ -217,14 +217,14 @@ def reconstruct_wave(*args: ndarray, n_iter=0, n_sample=-1) -> ndarray:
             mag = np.abs(spec)
             phase = np.angle(spec)
             spec = None
-        wave = librosa.core.istft(mag * np.exp(1j * phase), **cfg.KWARGS_ISTFT)
+        wave = librosa.core.istft(mag * np.exp(1j * phase), **hp.kwargs_istft)
 
-        phase = np.angle(librosa.core.stft(wave, **cfg.KWARGS_STFT))
+        phase = np.angle(librosa.core.stft(wave, **hp.kwargs_stft))
 
     kwarg_len = dict(length=n_sample) if n_sample != -1 else dict()
     if spec is None:
         spec = mag * np.exp(1j * phase)
-    wave = librosa.core.istft(spec, **cfg.KWARGS_ISTFT, **kwarg_len)
+    wave = librosa.core.istft(spec, **hp.kwargs_istft, **kwarg_len)
 
     return wave
 
@@ -291,7 +291,7 @@ def draw_spectrogram(data: gen.TensArr, to_db=True, show=False, **kwargs):
     fig = plt.figure()
     plt.imshow(data,
                cmap=plt.get_cmap('CMRmap'),
-               extent=(0, data.shape[1], 0, cfg.Fs // 2),
+               extent=(0, data.shape[1], 0, hp.Fs // 2),
                origin='lower', aspect='auto', **kwargs)
     plt.xlabel('Frame Index')
     plt.ylabel('Frequency (Hz)')
@@ -326,29 +326,29 @@ def bnkr_equalize_(*args: ndarray)\
         raise ValueError
 
     if mag is None:
-        assert spec.shape[0] == cfg.bEQf0.shape[0]
-        bEQf0 = cfg.bEQf0
-        while spec.ndim < bEQf0.ndim:
-            bEQf0 = bEQf0[..., 0]
+        assert spec.shape[0] == hp.bnkr_inv0.shape[0]
+        bnkr_inv0 = hp.bnkr_inv0.copy()
+        while spec.ndim < bnkr_inv0.ndim:
+            bnkr_inv0 = bnkr_inv0[..., 0]
 
-        spec *= bEQf0
+        spec *= bnkr_inv0
 
         return spec
     else:
-        assert mag.shape[0] == cfg.bEQf0_mag.shape[0]
-        bEQf0_mag = cfg.bEQf0_mag
-        while mag.ndim < bEQf0_mag.ndim:
-            bEQf0_mag = bEQf0_mag[..., 0]
+        assert mag.shape[0] == hp.bnkr_inv0_mag.shape[0]
+        bnkr_inv0_mag = hp.bnkr_inv0_mag.copy()
+        while mag.ndim < bnkr_inv0_mag.ndim:
+            bnkr_inv0_mag = bnkr_inv0_mag[..., 0]
 
-        mag *= bEQf0_mag
+        mag *= bnkr_inv0_mag
 
         if phase is not None:
             assert phase.shape[0] == mag.shape[0]
-            bEQf0_angle = cfg.bEQf0_angle
-            while phase.ndim < bEQf0_mag.ndim:
-                bEQf0_angle = bEQf0_angle[..., 0]
+            bnkr_inv0_angle = hp.bnkr_inv0_angle.copy()
+            while phase.ndim < bnkr_inv0_mag.ndim:
+                bnkr_inv0_angle = bnkr_inv0_angle[..., 0]
 
-            phase += bEQf0_angle
+            phase += bnkr_inv0_angle
             phase = principle_(phase)
 
             return mag, phase
@@ -360,5 +360,5 @@ def bnkr_equalize_(*args: ndarray)\
 
 
 def bnkr_equalize(*args: ndarray) -> Union[ndarray, Tuple[ndarray, ndarray]]:
-    args = args[:]
+    args = [item.copy() for item in args]
     return bnkr_equalize_(*args)

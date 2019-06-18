@@ -2,37 +2,40 @@
 
 import torch
 from torch import nn, Tensor
-from .unet_parts import InConv, DownAndConv, UpAndConv, OutConvMap
+from .unet_parts import InConv, DownAndConv, UpAndConv, OutConv
 from .convnalu import ConvNACCell, ConvNALUCell
 
 
 class UNet(nn.Module):
-    def __init__(self, ch_in, ch_out, ch_base=32):
+    def __init__(self, ch_in, ch_out, ch_base=32, depth=4,
+                 kernel_size=(3, 3), use_cbam=False,
+                 ):
         super().__init__()
-        self.inc = InConv(ch_in, ch_base)
+        self.inc = InConv(ch_in, ch_base,
+                          kernel_size=kernel_size, use_cbam=use_cbam)
 
         self.downs = nn.ModuleList(
-            [DownAndConv(ch_base * (2**ii), ch_base * (2**(ii + 1)))
-             for ii in range(0, 4)]
+            [DownAndConv(ch_base * (2**ii), ch_base * (2**(ii + 1)),
+                         kernel_size=kernel_size, use_cbam=use_cbam)
+             for ii in range(0, depth)]
         )
         self.ups = nn.ModuleList(
-            [UpAndConv(ch_base * (2**(ii + 1)), ch_base * (2**ii))
-             for ii in reversed(range(0, 4))]
+            [UpAndConv(ch_base * (2**(ii + 1)), ch_base * (2**ii),
+                       kernel_size=kernel_size, use_cbam=use_cbam)
+             for ii in reversed(range(0, depth))]
         )
 
-        # self.outc = OutConv(ch_base, ch_out)
-        self.outc = OutConvMap(ch_base, ch_out)
+        self.outc = OutConv(ch_base, ch_out)
 
     def forward(self, xin):
-        x_skip = [Tensor] * 4
-        x_skip[0] = self.inc(xin)
+        xs_skip = [self.inc(xin)]
 
-        for idx, down in enumerate(self.downs[:-1]):
-            x_skip[idx + 1] = down(x_skip[idx])
+        for down in self.downs[:-1]:
+            xs_skip.append(down(xs_skip[-1]))
 
-        x = self.downs[-1](x_skip[-1])
+        x = self.downs[-1](xs_skip[-1])
 
-        for item_skip, up in zip(reversed(x_skip), self.ups):
+        for item_skip, up in zip(reversed(xs_skip), self.ups):
             x = up(x, item_skip)
 
         x = self.outc(x)
@@ -40,29 +43,29 @@ class UNet(nn.Module):
 
 
 class UNetNALU(nn.Module):
-    def __init__(self, ch_in, ch_out, ch_base=32):
+    def __init__(self, ch_in, ch_out, ch_base=32, depth=4,
+                 kernel_size=(3, 3), use_cbam=False,
+                 ):
         super().__init__()
         self.inc = InConv(ch_in, ch_base)
 
         self.downs = nn.ModuleList(
             [DownAndConv(ch_base * (2**ii), ch_base * (2**(ii + 1)))
-             for ii in range(0, 4)]
+             for ii in range(0, depth)]
         )
-        self.nalu = ConvNACCell(ch_base * (2**4), ch_base * (2**4), (3, 3))
+        self.nalu = ConvNACCell(ch_base * (2**depth), ch_base * (2**depth), (3, 3))
         self.ups = nn.ModuleList(
             [UpAndConv(ch_base * (2**(ii + 1)), ch_base * (2**ii))
-             for ii in reversed(range(0, 4))]
+             for ii in reversed(range(0, depth))]
         )
 
-        # self.outc = OutConv(ch_base, ch_out)
-        self.outc = OutConvMap(ch_base, ch_out)
+        self.outc = OutConv(ch_base, ch_out)
 
     def forward(self, xin):
-        x_skip = [Tensor] * 4
-        x_skip[0] = self.inc(xin)
+        x_skip = [self.inc(xin)]
 
-        for idx, down in enumerate(self.downs[:-1]):
-            x_skip[idx + 1] = down(x_skip[idx])
+        for down in self.downs[:-1]:
+            x_skip.append(down(x_skip[-1]))
 
         x = self.downs[-1](x_skip[-1])
         x = self.nalu(x)
