@@ -65,6 +65,7 @@ class _HyperParameters:
     # reconstruction
     use_glim: bool = True
     n_glim_iter: int = 20
+    do_bnkr_eq: bool = False
 
     # paths
     logdir: Path = Path(f'./result/test')
@@ -79,25 +80,23 @@ class _HyperParameters:
     scalars_fname: str = 'scalars.json'
     hparams_fname: str = 'hparams.txt'
 
-
     channels: Dict[str, Channel] = field(init=False)
     UNet: Dict[str, Any] = field(init=False)
     scheduler: Dict[str, Any] = field(init=False)
     spec_data_names: Dict[str, str] = field(init=False)
 
-    dummy_input_size: Tuple = field(init=False)
-    dict_path: Dict[str, Path] = field(init=False)
-    kwargs_stft: Dict[str, Any] = field(init=False)
-    kwargs_istft: Dict[str, Any] = field(init=False)
-    n_loc: Dict[str, int] = field(init=False)
-    n_loss_term: int = field(init=False)
-    keys_trannorm: Sequence[Tuple] = field(init=False)
-    period_save_state: int = field(init=False)
-    channels_w_ph: Dict[str, Channel] = field(init=False)
-    do_bnkr_eq: bool = field(init=False)
-    bnkr_inv0: ndarray = field(init=False)
-    bnkr_inv0_mag: ndarray = field(init=False)
-    bnkr_inv0_ph: ndarray = field(init=False)
+    dummy_input_size: Tuple = None
+    dict_path: Dict[str, Path] = None
+    kwargs_stft: Dict[str, Any] = None
+    kwargs_istft: Dict[str, Any] = None
+    n_loc: Dict[str, int] = None
+    n_loss_term: int = None
+    keys_trannorm: Sequence[Tuple] = None
+    period_save_state: int = None
+    channels_w_ph: Dict[str, Channel] = None
+    bnkr_inv0: ndarray = None
+    bnkr_inv0_mag: ndarray = None
+    bnkr_inv0_ph: ndarray = None
 
     def __post_init__(self):
         self.channels = dict(fname_wav=Channel.NONE,
@@ -147,7 +146,7 @@ class _HyperParameters:
         path_dirspec_test = self.path_feature / f'{self.DF}_{self.room_test}/TEST'
         self.dict_path = dict(
             sft_data=self.path_feature / 'sft_data_32ms.mat',
-            RIR_Ys= self.path_feature / f'RIR_Ys_TRAIN20_TEST20_{self.room_create}.mat',
+            RIR_Ys=self.path_feature / f'RIR_Ys_TRAIN20_TEST20_{self.room_create}.mat',
 
             wav_train=self.path_speech / 'TRAIN',
             wav_test=self.path_speech / 'TEST',
@@ -173,7 +172,7 @@ class _HyperParameters:
         for kind in ('train', 'seen', 'unseen'):
             path_metadata = self.dict_path[f'dirspec_{kind}'] / 'metadata.h5'
             if path_metadata.exists():
-                self.n_loc[kind] = dd.io.load(path_metadata, group='/N_LOC')
+                self.n_loc[kind] = dd.io.load(path_metadata, group='/n_loc')
             else:
                 print(f'n_loc of "{kind}" not loaded.')
 
@@ -190,7 +189,8 @@ class _HyperParameters:
             self.keys_trannorm = (('mag', 'meanstd', True), ('complex', 'meanstd', False))
 
         # training
-        self.period_save_state = self.scheduler['restart_period'] // 2
+        if not self.period_save_state:
+            self.period_save_state = self.scheduler['restart_period'] // 2
 
         # reconstruction
         self.channels_w_ph = dict(**self.channels)
@@ -200,17 +200,17 @@ class _HyperParameters:
         if 'y_phase' not in self.channels:
             self.channels_w_ph['y_phase'] = Channel.ALL
 
-        sft_dict = scio.loadmat(str(self.dict_path['sft_data']),
-                                variable_names=('bEQf',),
-                                squeeze_me=True)
-        self.bnkr_inv0 = sft_dict['bEQf'][:, 0]
-        self.bnkr_inv0 = self.bnkr_inv0[:, np.newaxis, np.newaxis]  # F, T(1), C(1)
-        self.bnkr_inv0_mag = np.abs(self.bnkr_inv0)
-        self.bnkr_inv0_ph = np.angle(self.bnkr_inv0)
-        if self.DF == 'DirAC':
-            self.do_bnkr_eq = False
-        else:
-            self.do_bnkr_eq = True
+        # sft_dict = scio.loadmat(str(self.dict_path['sft_data']),
+        #                         variable_names=('bEQf',),
+        #                         squeeze_me=True)
+        # self.bnkr_inv0 = sft_dict['bEQf'][:, 0]
+        # self.bnkr_inv0 = self.bnkr_inv0[:, np.newaxis, np.newaxis]  # F, T(1), C(1)
+        # self.bnkr_inv0_mag = np.abs(self.bnkr_inv0)
+        # self.bnkr_inv0_ph = np.angle(self.bnkr_inv0)
+        # if self.DF == 'DirAC':
+        #     self.do_bnkr_eq = False
+        # else:
+        #     self.do_bnkr_eq = True
 
     @staticmethod
     def is_ivfile(f: os.DirEntry) -> bool:
@@ -222,7 +222,7 @@ class _HyperParameters:
     def parse_argument(self, parser=None, print_argument=True) -> Namespace:
         if not parser:
             parser = ArgumentParser()
-        args_already_added = parser.parse_args(('',))
+        args_already_added = [a.dest for a in parser._actions]
         dict_self = asdict(self)
         for k in dict_self:
             if hasattr(args_already_added, k):
@@ -255,7 +255,8 @@ class _HyperParameters:
                   'Hyper Parameter Settings\n'
                   '-------------------------\n')
 
-        result += '\n'.join([f'{k}: {v}' for k, v in asdict(self).items()])
+        result += '\n'.join(
+            [f'{k}: {v}' for k, v in asdict(self).items() if not isinstance(v, ndarray)])
         result += '\n-------------------------'
         return result
 

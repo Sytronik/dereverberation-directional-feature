@@ -30,6 +30,7 @@ import soundfile as sf
 from tqdm import tqdm
 
 from hparams import hp
+
 NDArray = TypeVar('NDArray', np.ndarray, cp.ndarray)
 
 
@@ -240,35 +241,29 @@ def process(idx_start: int):
 def propagate(i_wav: int, f_wav: Path,
               data: np.ndarray, i_loc: int, RIR: np.ndarray,
               queue: mp.Queue):
-    # if (DIR_DIRSPEC / FORM % (i_wav, i_loc)).exists():
-    #     return
-    N_frame_room = int(np.ceil((data.shape[0] + len_RIR - 1) / hp.l_hop) - 1)
-
     # RIR Filtering
     data_room = scsig.fftconvolve(data[np.newaxis, :], RIR)
-    if data_room.shape[1] % hp.l_hop:
-        data_room = np.append(
-            data_room,
-            np.zeros((data_room.shape[0], hp.l_hop - data_room.shape[1] % hp.l_hop)),
-            axis=1
-        )
+    data_room = np.pad(data_room,
+                       ((0, 0), (hp.l_frame // 2, hp.l_frame // 2)),
+                       mode='reflect')
+
+    n_frame_room = (data_room.shape[1] - hp.l_frame) // hp.l_hop + 1
 
     # Propagation
     data = np.append(np.zeros(t_peak[i_loc]), data * amp_peak[i_loc])
-    if data.shape[0] % hp.l_hop:
-        data = np.append(data, np.zeros(hp.l_hop - data.shape[0] % hp.l_hop))
+    data = np.pad(data, hp.l_frame // 2, mode='reflect')
 
-    N_frame_free = data.shape[0] // hp.l_hop - 1
+    n_frame_free = (data.shape[0] - hp.l_frame) // hp.l_hop + 1
 
-    queue.put((i_wav, f_wav, i_loc, data, data_room, N_frame_free, N_frame_room))
+    queue.put((i_wav, f_wav, i_loc, data, data_room, n_frame_free, n_frame_room))
 
 
-def create_dirspecs(i_dev: int, q_data: mp.Queue, N_data: int, q_dirspec: mp.Queue):
+def create_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_dirspec: mp.Queue):
     """ create directional spectrogram.
 
     :param i_dev: GPU Device No.
     :param q_data:
-    :param N_data:
+    :param n_data:
     :param q_dirspec:
 
     :return: None
@@ -282,90 +277,86 @@ def create_dirspecs(i_dev: int, q_data: mp.Queue, N_data: int, q_dirspec: mp.Que
         **{k: cp.array(v) for k, v in asdict(sftdata).items() if v is not None}
     )
 
-    for _ in range(N_data):
-        i_wav, f_wav, i_loc, data, data_room, N_frame_free, N_frame_room = q_data.get()
+    for _ in range(n_data):
+        i_wav, f_wav, i_loc, data, data_room, n_frame_free, n_frame_room = q_data.get()
         data_cp = cp.array(data)
         data_room_cp = cp.array(data_room)
 
-        # Free-field Intensity Vector Image
-        anm_time = cp.outer(Ys_cp[i_loc].conj(), data_cp) * np.sqrt(4 * np.pi)
+        # Free-field
+        anm_time_cp = cp.outer(Ys_cp[i_loc].conj(), data_cp) * np.sqrt(4 * np.pi)
         if use_dirac:  # real coefficients
-            anm_time = cp.einsum('ij,jt->it', sftdata_cp.T_real, anm_time).real
+            anm_time_cp = cp.einsum('ij,jt->it', sftdata_cp.T_real, anm_time_cp).real
 
-        anm_spec = stft(anm_time, N_frame_free, win_cp)
+        anm_spec_cp = stft(anm_time_cp, n_frame_free, win_cp)
 
-        dirspec_free = cp.empty((hp.n_freq, N_frame_free, 4))
+        dirspec_free = np.empty((hp.n_freq, n_frame_free, 4))
         if use_dirac:
             # DirAC and a00
-            dirspec_free[:, :, :3] = calc_direction_vec(anm_spec)
-            dirspec_free[:, :, 3] = cp.abs(anm_spec[0])
-            phase_free = cp.angle(anm_spec[0])
+            dirspec_free[:, :, :3] = cp.asnumpy(calc_direction_vec(anm_spec_cp))
         else:
             # IV and p00
-            pnm_spec = anm_spec * sftdata_cp.bnkr
-
-            dirspec_free[:, :, :3] = calc_intensity(
-                pnm_spec, *sftdata_cp.get_for_intensity()
+            dirspec_free[:, :, :3] = cp.asnumpy(
+                calc_intensity(anm_spec_cp, *sftdata_cp.get_for_intensity())
             )
-            dirspec_free[:, :, 3] = cp.abs(pnm_spec[0])
-            phase_free = cp.angle(pnm_spec[0])
+        dirspec_free[:, :, 3] = cp.asnumpy(cp.abs(anm_spec_cp[0]))
+        phase_free = cp.asnumpy(cp.angle(anm_spec_cp[0]))
 
         # Room Intensity Vector Image
-        pnm_time = sftdata_cp.Yenc @ data_room_cp
-        dirspec_room = cp.empty((hp.n_freq, N_frame_room, 4))
+        pnm_time_cp = sftdata_cp.Yenc @ data_room_cp
+        dirspec_room = np.empty((hp.n_freq, n_frame_room, 4))
         if use_dirac:
             # DirAC and a00
             # bnkr equalization in frequency domain
-            length = pnm_time.shape[1]
-            pnm_time = cp.pad(pnm_time,
-                              ((0, 0), (int(hp.n_fft // 2), int(hp.n_fft // 2))),
-                              mode='reflect')
-            N_frame = int(np.ceil(length / hp.l_hop))
-            anm_time = cp.zeros((pnm_time.shape[0], (N_frame + 1) * hp.l_hop),
-                                dtype=cp.complex128)
-            interval = cp.arange(hp.l_frame)
-            for i_frame in range(N_frame):
-                pnm_spec = cp.fft.fft(pnm_time[:, interval] * win_cp, n=hp.n_fft)
-                anm_time[:, interval] \
-                    += cp.fft.ifft(pnm_spec * sftdata_cp.bnkr_inv, n=hp.n_fft) * win_cp
+            length = pnm_time_cp.shape[1]
+            # pnm_time = cp.pad(pnm_time,
+            #                   ((0, 0), (int(hp.n_fft // 2), int(hp.n_fft // 2))),
+            #                   mode='reflect')
+            # N_frame = int(np.ceil(length / hp.l_hop))
+            anm_time_cp = cp.zeros((pnm_time_cp.shape[0], length),
+                                   dtype=cp.complex128)
+            interval = np.arange(hp.l_frame)
+            for i_frame in range(n_frame_room):
+                pnm_spec_cp = cp.fft.fft(pnm_time_cp[:, interval] * win_cp, n=hp.n_fft)
+                anm_time_cp[:, interval] \
+                    += cp.fft.ifft(pnm_spec_cp * sftdata_cp.bnkr_inv, n=hp.n_fft) * win_cp
                 interval += hp.l_hop
 
             # compensate artifact of stft/istft
             # noinspection PyTypeChecker
             artifact = librosa.filters.window_sumsquare(
                 'hann',
-                N_frame, win_length=hp.l_frame, n_fft=hp.n_fft, hop_length=hp.l_hop,
+                n_frame_room, win_length=hp.l_frame, n_fft=hp.n_fft, hop_length=hp.l_hop,
                 dtype=np.float64
             )
             idxs_artifact = artifact > librosa.util.tiny(artifact)
-            artifact = cp.array(artifact[idxs_artifact])
+            artifact_cp = cp.array(artifact[idxs_artifact])
 
-            anm_time[:, idxs_artifact] /= artifact
-            anm_time = anm_time[:, int(hp.n_fft // 2):int(hp.n_fft // 2) + length]
+            anm_time_cp[:, idxs_artifact] /= artifact_cp
+            anm_time_cp = anm_time_cp[:, int(hp.n_fft // 2):int(hp.n_fft // 2) + length]
 
             # real coefficients
-            anm_t_real = cp.einsum('ij,jt->it', sftdata_cp.T_real, anm_time).real
-            anm_spec_real = stft(anm_t_real, N_frame_room, win_cp)
+            anm_t_real_cp = cp.einsum('ij,jt->it', sftdata_cp.T_real, anm_time_cp).real
+            anm_spec_real_cp = stft(anm_t_real_cp, n_frame_room, win_cp)
 
-            dirspec_room[:, :, :3] = calc_direction_vec(anm_spec_real)
-            dirspec_room[:, :, 3] = cp.abs(anm_spec_real[0])
-            phase_room = cp.angle(anm_spec_real[0])
+            dirspec_room[:, :, :3] = cp.asnumpy(calc_direction_vec(anm_spec_real_cp))
+            dirspec_room[:, :, 3] = cp.asnumpy(cp.abs(anm_spec_real_cp[0]))
+            phase_room = cp.angle(anm_spec_real_cp[0])
         else:
             # IV and p00
-            pnm_spec = stft(pnm_time, N_frame_room, win_cp)
-
-            dirspec_room[:, :, :3] = calc_intensity(
-                pnm_spec, *sftdata_cp.get_for_intensity()
+            pnm_spec_cp = stft(pnm_time_cp, n_frame_room, win_cp)
+            anm_spec_cp = pnm_spec_cp * sftdata_cp.bnkr
+            dirspec_room[:, :, :3] = cp.asnumpy(
+                calc_intensity(anm_spec_cp, *sftdata_cp.get_for_intensity())
             )
-            dirspec_room[:, :, 3] = cp.abs(pnm_spec[0])
-            phase_room = cp.angle(pnm_spec[0])
+            dirspec_room[:, :, 3] = cp.asnumpy(cp.abs(anm_spec_cp[0]))
+            phase_room = cp.asnumpy(cp.angle(anm_spec_cp[0]))
 
         # Save
         dict_dirspec = dict(fname_wav=f_wav,
-                            dirspec_free=cp.asnumpy(dirspec_free),
-                            dirspec_room=cp.asnumpy(dirspec_room),
-                            phase_free=cp.asnumpy(phase_free)[..., np.newaxis],
-                            phase_room=cp.asnumpy(phase_room)[..., np.newaxis],
+                            dirspec_free=dirspec_free,
+                            dirspec_room=dirspec_room,
+                            phase_free=phase_free[..., np.newaxis],
+                            phase_room=phase_room[..., np.newaxis],
                             )
         q_dirspec.put((i_wav, i_loc, dict_dirspec))
 
@@ -392,16 +383,16 @@ def print_save_info(i_wav):
     print(f'Wave Files Processed/Total: {i_wav}/{len(all_files)}\n'
           f'Number of source location: {n_loc}\n')
 
-    metadata = dict(Fs=hp.fs,
-                    N_fft=hp.n_fft,
-                    N_freq=hp.n_freq,
-                    L_frame=hp.l_frame,
-                    L_hop=hp.l_hop,
-                    N_LOC=n_loc,
+    metadata = dict(fs=hp.fs,
+                    n_fft=hp.n_fft,
+                    n_freq=hp.n_freq,
+                    l_frame=hp.l_frame,
+                    l_hop=hp.l_hop,
+                    n_loc=n_loc,
                     path_wavfiles=all_files,
                     )
 
-    scio.savemat(f_metadata, metadata)
+    dd.io.save(f_metadata, metadata)
 
 
 if __name__ == '__main__':
@@ -415,7 +406,6 @@ if __name__ == '__main__':
                                  ),
                         )
     parser.add_argument('-t', dest='dirspec_folder', default='')
-    parser.add_argument('--dirac', action='store_true')
     parser.add_argument('--from', type=int, default=-1,
                         dest='from_idx')
     args = hp.parse_argument(parser)
@@ -424,7 +414,7 @@ if __name__ == '__main__':
 
     # Paths
     if args.dirspec_folder:
-        path_dirspec = hp.dict_path['path_feature'] / args.dirspec_folder
+        path_dirspec = hp.path_feature / args.dirspec_folder
     else:
         path_dirspec = hp.dict_path[f'dirspec_{args.kind_data.lower()}']
 
@@ -503,9 +493,9 @@ if __name__ == '__main__':
     # The index of the first wave file that have to be processed
     idx_exist = -2
     should_ask_cont = False
-    for i_wav in range(num_wavs):
-        if len(list(path_dirspec.glob(f'{i_wav:04d}_*.h5'))) < n_loc:
-            idx_exist = i_wav - 1
+    for i_wav_ in range(num_wavs):
+        if len(list(path_dirspec.glob(f'{i_wav_:04d}_*.h5'))) < n_loc:
+            idx_exist = i_wav_ - 1
             break
     if args.from_idx == -1:
         if idx_exist == -2:
