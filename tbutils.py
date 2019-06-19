@@ -4,15 +4,16 @@ import os
 from argparse import ArgumentParser
 from itertools import product as iterprod
 from pathlib import Path
-from typing import List, NamedTuple, Sequence, Union
+from typing import Any, List, NamedTuple, Sequence, Union
 
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FormatStrFormatter
 import numpy as np
 from numpy import ndarray
 from tensorboard.backend.event_processing.event_multiplexer import EventMultiplexer
 from tqdm import tqdm
 
-from mypath import DICT_PATH, PATH_RESULT
+from hparams import hp
 
 PathLike = Union[str, Path]
 StrOrSeq = Union[str, Sequence[str]]
@@ -25,10 +26,11 @@ parser.add_argument('--merge-scalars', '-m', action='store_true')
 parser.add_argument('--tbcommand', '-t', action='store_true')
 ARGS = parser.parse_args()
 
+PATH_ROOT = Path('./result')
 ROOM = 'room1'
 TITLE_BASELINE: str = 'No-DF'
 BASELINE: str = f'UNet (p00 {ROOM})'
-TITLE_PRIMARY: StrOrSeq = ['DV', 'IV']
+TITLE_PRIMARY: StrOrSeq = ['DV', 'SIV']
 PRIMARY: PathOrSeq = [f'UNet (DirAC+p00 {ROOM})', f'UNet (IV+p00 {ROOM})']
 
 # TITLE_BASELINE: str = 'baseline'
@@ -44,17 +46,17 @@ COND_PRIMARY = lambda p: True
 # SUFFIX = 'unseen'
 # SUFFIX = 'unseen_room1'
 # SUFFIX = 'unseen_room2'
-# SUFFIX = ['seen', 'unseen', 'unseen_room1', 'unseen_room2']
-SUFFIX = ['seen', 'unseen', 'unseen_room2']
+SUFFIX = ['seen', 'unseen', 'unseen_room1', 'unseen_room2']
+# SUFFIX = ['seen', 'unseen', 'unseen_room2']
 # SUFFIX = ['seen', 'unseen', 'unseen_room1']
+
+# NEED_REVERB = 'delta'
+NEED_REVERB = 'sep'
+# NEED_REVERB = False
 
 if '_' in ROOM:
     ROOM = 'mixed'
 names_RIR = dict(seen=f'{ROOM}\n(seen)', unseen=f'{ROOM}\n(unseen)')
-
-NEED_REVERB = 'delta'
-# NEED_REVERB = 'sep'
-# NEED_REVERB = False
 
 need_all_scalars = False if SUFFIX == 'train' else True
 
@@ -80,7 +82,7 @@ class IdxSuffixCol(NamedTuple):
 
 
 def make_command():
-    global paths
+    global paths, SUFFIX
     if type(SUFFIX) != str:
         SUFFIX = ''
     paths = [Path(p.name) / SUFFIX for p in paths]
@@ -139,17 +141,13 @@ def save_scalars(path: PathLike, suffix: str):
         json.dump(dict(step=step_longest, **scalars), f)
 
 
-# noinspection PyUnusedLocal
-def draw_bar_graph(_titles: Union[str, Sequence[str]],
-                   means: ndarray, stds: ndarray = None,
-                   xticklabels: Sequence = None,
-                   ylabel: str = ''):
-    plt.rc('font', family='Times New Roman', size=18)
-    # constants
-    bar_width = 0.5 / len(_titles)
-    ndigits = 3 if means.max() - means.min() < 0.1 else 2
+def _graph_initialize(_titles: Union[str, Sequence[str]],
+                      means: ndarray, stds: ndarray,
+                      xticklabels: Sequence,
+                      ylabel: str):
+    plt.rc('font', family='Arial', size=18)
 
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(5.3, 4))
 
     # args
     if means.ndim == 1:
@@ -174,7 +172,7 @@ def draw_bar_graph(_titles: Union[str, Sequence[str]],
                 xticklabels[ii] = label.split('_')[1]
             else:
                 raise NotImplementedError
-        ax.set_xticklabels(xticklabels)
+
     if len(_titles) == 1:
         if _titles[0] == '.' and common and len(common) == 1:
             _titles = tuple(common)
@@ -184,11 +182,108 @@ def draw_bar_graph(_titles: Union[str, Sequence[str]],
     else:
         draw_legend = True
 
+    if 'PESQ' not in ylabel:
+        draw_legend = False
+
     # colors
     cmap = plt.get_cmap('tab20c')
     colors = [cmap.colors[(1 + 4 * i // 16) % 4 + (4 * i) % 16] for i in range(len(_titles))]
     if NEED_REVERB == 'sep':
         colors[-1] = cmap.colors[17]
+
+    # ylim
+    # ylim = list(ax.get_ylim())
+    # max_ = (means + stds).max()
+    # min_ = (means - stds).min()
+    # if NEED_REVERB == 'delta' and min_ >= 0:
+    #     ylim[0] = 0
+    # else:
+    #     ylim[0] = min_ - (max_ - min_) * 0.2
+    #
+    # ylim[1] = ylim[1] + (max_ - ylim[0]) * 0.25
+    # if ylabel in Y_MAX:
+    #     ylim[1] = min(Y_MAX[ylabel], ylim[1])
+
+    if ylabel == 'SegSNR [dB]':
+        ylim = (-2.5, 12.5)
+        ax.set_yticks(np.linspace(*ylim, num=7))
+    elif ylabel == 'fwSegSNR [dB]':
+        ylim = (6, 16)
+        ax.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+    elif ylabel == 'PESQ':
+        ylim = (2, 4.5)
+        # ax.set_yticks(np.linspace(*ylim, num=7))
+    elif ylabel == 'STOI':
+        ylim = (0.7, 1)
+        ax.set_yticks(np.linspace(*ylim, num=7))
+    elif ylabel == 'ΔSegSNR [dB]':
+        ylim = (0, 15)
+        ax.set_yticks(np.linspace(*ylim, num=9))
+    elif ylabel == 'ΔfwSegSNR [dB]':
+        ylim = (-1, 8)
+    elif ylabel == 'ΔPESQ':
+        ylim = (0, 1.5)
+    elif ylabel == 'ΔSTOI':
+        ylim = (0, 0.3)
+    else:
+        raise NotImplementedError
+
+    return fig, ax, means, stds, xticklabels, draw_legend, cmap, colors, ylim
+
+
+def draw_lineplot(_titles: Union[str, Sequence[str]],
+                  means: ndarray, stds: ndarray = None,
+                  xticklabels: Sequence = None,
+                  ylabel: str = ''):
+    ax: plt.Axes = None
+    fig, ax, means, stds, xticklabels, draw_legend, cmap, colors, ylim \
+        = _graph_initialize(_titles, means, stds, xticklabels, ylabel)
+
+    # draw
+    range_ = np.arange(means.shape[1])
+    for ii, (title, mean, std) in enumerate(zip(_titles, means, stds)):
+        ax.plot(range_, mean,
+                label=title,
+                color=colors[ii],
+                marker='o')
+
+    ax.set_xticks(range_)
+    ax.set_xticklabels(xticklabels)
+    ax.set_xlim(range_[0] - 0.5, range_[-1] + 0.5)
+
+    ax.grid(True, axis='y')
+    ax.set_ylim(*ylim)
+
+    # axis label
+    # ax.set_xlabel('RIR')
+    ax.set_ylabel(ylabel)
+
+    # ticks
+    ax.tick_params('x', direction='in')
+    ax.tick_params('y', direction='in')
+
+    # legend
+    if draw_legend:
+        # ax.legend(loc='lower right', bbox_to_anchor=(1, 1),
+        #           ncol=4, fontsize='small', columnspacing=1)
+        ax.legend(loc='upper center',
+                  ncol=2, fontsize='small', columnspacing=1)
+
+    fig.tight_layout()
+    return fig
+
+
+# noinspection PyUnusedLocal
+def draw_bar_graph(_titles: Union[str, Sequence[str]],
+                   means: ndarray, stds: ndarray = None,
+                   xticklabels: Sequence = None,
+                   ylabel: str = ''):
+    # constants
+    bar_width = 0.5 / len(_titles)
+    ndigits = 3 if means.max() - means.min() < 0.1 else 2
+
+    fig, ax, means, stds, xticklabels, draw_legend, cmap, colors, ylim \
+        = _graph_initialize(_titles, means, stds, xticklabels, ylabel)
 
     # draw bar & text
     range_ = np.arange(means.shape[1])
@@ -209,6 +304,8 @@ def draw_bar_graph(_titles: Union[str, Sequence[str]],
         #             rotation_mode='anchor',
         #             verticalalignment='center')
 
+    ax.set_xticklabels(xticklabels)
+
     ax.grid(True, axis='y')
     ax.set_axisbelow(True)
 
@@ -217,35 +314,6 @@ def draw_bar_graph(_titles: Union[str, Sequence[str]],
     xlim[0] -= bar_width
     xlim[1] += bar_width
     ax.set_xlim(*xlim)
-
-    # ylim
-    # ylim = list(ax.get_ylim())
-    # max_ = (means + stds).max()
-    # min_ = (means - stds).min()
-    # if NEED_REVERB == 'delta' and min_ >= 0:
-    #     ylim[0] = 0
-    # else:
-    #     ylim[0] = min_ - (max_ - min_) * 0.2
-    #
-    # ylim[1] = ylim[1] + (max_ - ylim[0]) * 0.25
-    # if ylabel in Y_MAX:
-    #     ylim[1] = min(Y_MAX[ylabel], ylim[1])
-    if ylabel == 'SegSNR [dB]':
-        ylim = (-5, 15)
-    elif ylabel == 'fwSegSNR [dB]':
-        ylim = (5, 20)
-    elif ylabel == 'PESQ':
-        ylim = (1.5, 4, 5)
-    elif ylabel == 'STOI':
-        ylim = (0.65, 1)
-    elif ylabel == 'ΔSegSNR [dB]':
-        ylim = (-3, 15)
-    elif ylabel == 'ΔfwSegSNR [dB]':
-        ylim = (-3, 8)
-    elif ylabel == 'ΔPESQ':
-        ylim = (-0.5, 1.5)
-    elif ylabel == 'ΔSTOI':
-        ylim = (-0.1, 0.25)
 
     ax.set_ylim(*ylim)
 
@@ -261,13 +329,15 @@ def draw_bar_graph(_titles: Union[str, Sequence[str]],
 
     # legend
     if draw_legend:
-        ax.legend(loc=1)
+        ax.legend(loc='lower right', bbox_to_anchor=(1, 1),
+                  ncol=4, fontsize='small', columnspacing=1)
 
     fig.tight_layout()
     return fig
 
 
 def merge_scalars():
+    global titles
     # gather data
     data = {}
     sfxs: list = None
@@ -300,7 +370,7 @@ def merge_scalars():
 
     # arrange data
     data_arranged = {}
-    cols = set()
+    cols_set = set()
     step_longest = None
     for key, value in data.items():
         if key.col == 'step':
@@ -308,7 +378,7 @@ def merge_scalars():
                 step_longest = value
         else:
             col_new = key.col.split('/')[0].split('. ')[-1]
-            cols.add(col_new)
+            cols_set.add(col_new)
             if 'Reverberant' in key:
                 if NEED_REVERB:
                     # key_rev = IdxSuffixCol(-1, key.suffix.split('_')[0], col_new)
@@ -318,7 +388,7 @@ def merge_scalars():
             else:
                 data_arranged[key.to(col=col_new)] = value
 
-    cols: list = sorted(cols)
+    cols: list = sorted(cols_set)
     if NEED_REVERB == 'delta':
         for key, value in data_arranged.items():
             if key.col != 'step' and key.idx > -1:
@@ -366,7 +436,7 @@ def merge_scalars():
         fresult = f'{paths[0].name} ' \
                   + ', '.join(['_'.join(s.split('_')[1:]) for s in sfxs])
     fresult += f' rev={NEED_REVERB}'
-    fmerged = (PATH_RESULT / fresult).with_suffix('.csv')
+    fmerged = (PATH_ROOT / fresult).with_suffix('.csv')
     with fmerged.open('w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         rows = []
@@ -384,7 +454,7 @@ def merge_scalars():
             writer.writerow(r)
 
     # draw bar graph
-    ffig = str(Path(DICT_PATH['figures'], fresult)) + ' ({}).png'
+    ffig = str(Path(hp.dict_path['figures'], fresult)) + ' ({}).png'
     for col in cols:
         mean = np.empty((length, len(sfxs)))
         std = np.empty((length, len(sfxs)))
@@ -396,7 +466,10 @@ def merge_scalars():
             col = col.replace('SNRseg', 'SegSNR')
         if 'SNR' in col:
             col += ' [dB]'
-        figbar = draw_bar_graph(titles, mean, std, sfxs, col)
+        # figbar = draw_bar_graph(titles, mean, std, sfxs, col)
+        if 'ROOM' in globals():
+            titles = [f'R{ROOM[1:]}-{t}' if t != 'Unproc.' else t for t in titles]
+        figbar = draw_lineplot(titles, mean, std, sfxs, col)
         figbar.savefig(ffig.format(col.replace('Δ', '')), dpi=300)
 
 
@@ -404,14 +477,14 @@ if __name__ == '__main__':
     if TITLE_PRIMARY:
         if type(PRIMARY) == str:
             paths = [p
-                     for p in PATH_RESULT.glob(PRIMARY)
+                     for p in PATH_ROOT.glob(PRIMARY)
                      if p.is_dir() and COND_PRIMARY(p)
                      ]
             paths = sorted(paths)
         else:
-            paths = [PATH_RESULT / p
+            paths = [PATH_ROOT / p
                      for p in PRIMARY
-                     if Path(PATH_RESULT / p).is_dir() and COND_PRIMARY(p)
+                     if Path(PATH_ROOT / p).is_dir() and COND_PRIMARY(p)
                      ]
             if len(PRIMARY) == 1:
                 if type(TITLE_PRIMARY) != str:
@@ -429,13 +502,13 @@ if __name__ == '__main__':
         titles = [t for t in titles if t]
 
     if TITLE_BASELINE:
-        paths.insert(0, PATH_RESULT / BASELINE)
+        paths.insert(0, PATH_ROOT / BASELINE)
 
     if ARGS.tbcommand:
         make_command()
     else:
         if NEED_REVERB == 'sep':
-            titles += ['Unprocessed']
+            titles += ['Unproc.']
 
         length = len(titles)
 
