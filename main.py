@@ -14,6 +14,9 @@ from hparams import hp
 from dirspecgram import DirSpecDataset
 from train import Trainer
 
+tfevents_fname = 'events.out.tfevents.*'
+form_overwrite_msg = 'The folder "{}" already has tfevent files. Continue? [y/n]\n'
+
 parser = ArgumentParser()
 
 parser.add_argument('--train', action='store_true', )
@@ -28,10 +31,12 @@ if not (args.train ^ args.test is not None) or args.epoch < -1:
 # directory
 logdir_train = hp.logdir / 'train'
 if (args.train and args.epoch == -1 and
-        logdir_train.exists() and list(logdir_train.glob('events.out.tfevents.*'))):
-    ans = input(f'The folder "{logdir_train}" already has tfevent files. Continue? [y/n]')
+        logdir_train.exists() and list(logdir_train.glob(tfevents_fname))):
+    ans = input(form_overwrite_msg.format(logdir_train))
     if ans.lower() == 'y':
         shutil.rmtree(logdir_train)
+        os.remove(hp.logdir / 'summary.txt')
+        os.remove(hp.logdir / 'hparams.txt')
     else:
         exit()
 os.makedirs(logdir_train, exist_ok=True)
@@ -42,8 +47,8 @@ if args.test:
         logdir_test /= args.test
     else:
         logdir_test /= f'{args.test}_{hp.room_test}'
-    if logdir_test.exists() and list(logdir_test.glob('events.out.tfevents.*')):
-        print(f'The folder "{logdir_test}" already has tfevent files. Continue? [y/n]')
+    if logdir_test.exists() and list(logdir_test.glob(tfevents_fname)):
+        print(form_overwrite_msg.format(logdir_test))
         ans = input()
         if ans.lower().startswith('y'):
             shutil.rmtree(logdir_test)
@@ -87,8 +92,6 @@ if args.train:
                               pin_memory=True,
                               shuffle=False,
                               )
-
-
 
     trainer.train(loader_train, loader_valid, logdir_train, first_epoch)
 else:  # args.test

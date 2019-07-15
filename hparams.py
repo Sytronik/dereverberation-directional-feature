@@ -29,10 +29,9 @@ class _HyperParameters:
     # select dataset
     DF: str = 'IV'
     # DF: str = 'DirAC
-    # room_create: str = 'room1'
     room_train: str = 'room1'
     room_test: str = 'room1'
-    room_create: str = 'room1'
+    room_create: str = ''
 
     method: str = 'mag'
     # method: str = 'complex'
@@ -68,14 +67,14 @@ class _HyperParameters:
     do_bnkr_eq: bool = False
 
     # paths
-    logdir: Path = Path(f'./result/test')
+    logdir: str = f'./result/test'
     path_speech: Path = Path('./data/TIMIT')
     path_feature: Path = Path('./backup')
     form_path_normconst: str = 'normconst_{}_{}.h5'
 
     # file names
-    form_dirspec: str = '{:04d}_{:02d}.h5'
-    form_result_dirspec: str = 'dirspec_{}'
+    form_feature: str = '{:04d}_{:02d}.h5'
+    form_result: str = 'dirspec_{}'
     log_fname: str = 'log.txt'
     scalars_fname: str = 'scalars.json'
     hparams_fname: str = 'hparams.txt'
@@ -99,7 +98,7 @@ class _HyperParameters:
     bnkr_inv0_ph: ndarray = None
 
     def __post_init__(self):
-        self.channels = dict(fname_wav=Channel.NONE,
+        self.channels = dict(speech_fname=Channel.NONE,
                              x=Channel.ALL,
                              # x=Channel.MAG,
                              y=Channel.MAG,
@@ -119,13 +118,14 @@ class _HyperParameters:
         self.spec_data_names = dict(x='/dirspec_room', y='/dirspec_free',
                                     x_phase='/phase_room', y_phase='/phase_free',
                                     x_bpd='/bpd_room', y_bpd='/bpd_free',
-                                    fname_wav='/fname_wav',
+                                    speech_fname='/speech_fname',
                                     out='/dirspec_estimated',
                                     out_phase='/phase_estimated',
                                     out_bpd='/bpd_estimated',
                                     )
 
     def init_dependent_vars(self):
+        self.logdir = Path(self.logdir)
         # nn
         ch_in = 4 if self.channels['x'] == Channel.ALL else 1
         ch_out = 4 if self.channels['y'] == Channel.ALL else 1
@@ -142,23 +142,25 @@ class _HyperParameters:
                                  int(2**np.floor(np.log2(4 / 3 * self.n_freq))))
 
         # path
-        path_dirspec_train = self.path_feature / f'{self.DF}_{self.room_train}/TRAIN'
-        path_dirspec_test = self.path_feature / f'{self.DF}_{self.room_test}/TEST'
+        if self.room_create:
+            self.room_train = self.room_create
+            self.room_test = self.room_create
+        path_feature_train = self.path_feature / f'{self.DF}_{self.room_train}/TRAIN'
+        path_feature_test = self.path_feature / f'{self.DF}_{self.room_test}/TEST'
         self.dict_path = dict(
             sft_data=self.path_feature / 'sft_data_32ms.mat',
             RIR_Ys=self.path_feature / f'RIR_Ys_TRAIN20_TEST20_{self.room_create}.mat',
 
-            wav_train=self.path_speech / 'TRAIN',
-            wav_test=self.path_speech / 'TEST',
+            speech_train=self.path_speech / 'TRAIN',
+            speech_test=self.path_speech / 'TEST',
 
-            # dirspec_train=_PATH_DIRSPEC / 'TRAIN',
-            dirspec_train=path_dirspec_train,
-            dirspec_seen=path_dirspec_test / 'SEEN',
-            dirspec_unseen=path_dirspec_test / 'UNSEEN',
+            feature_train=path_feature_train,
+            feature_seen=path_feature_test / 'SEEN',
+            feature_unseen=path_feature_test / 'UNSEEN',
 
-            format_normconst_train=str(path_dirspec_train / self.form_path_normconst),
-            format_normconst_seen=str(path_dirspec_test / self.form_path_normconst),
-            format_normconst_unseen=str(path_dirspec_test / self.form_path_normconst),
+            form_normconst_train=str(path_feature_train / self.form_path_normconst),
+            form_normconst_seen=str(path_feature_test / self.form_path_normconst),
+            form_normconst_unseen=str(path_feature_test / self.form_path_normconst),
 
             figures=Path('./figures'),
         )
@@ -170,7 +172,7 @@ class _HyperParameters:
                                  dtype=np.float32)
         self.n_loc = dict()
         for kind in ('train', 'seen', 'unseen'):
-            path_metadata = self.dict_path[f'dirspec_{kind}'] / 'metadata.h5'
+            path_metadata = self.dict_path[f'feature_{kind}'] / 'metadata.h5'
             if path_metadata.exists():
                 self.n_loc[kind] = dd.io.load(path_metadata, group='/n_loc')
             else:
@@ -213,7 +215,7 @@ class _HyperParameters:
         #     self.do_bnkr_eq = True
 
     @staticmethod
-    def is_ivfile(f: os.DirEntry) -> bool:
+    def is_featurefile(f: os.DirEntry) -> bool:
         return (f.name.endswith('.h5')
                 and not f.name.startswith('metadata')
                 and not f.name.startswith('normconst_'))

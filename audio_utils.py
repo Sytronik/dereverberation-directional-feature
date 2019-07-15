@@ -97,6 +97,7 @@ from matlab_lib import Evaluation as EvalModule
 #         sum_result += stoi(item_clean, item_est, hp.Fs)
 #     return sum_result
 
+EVAL_METRICS = EvalModule.metrics
 
 def calc_snrseg(y_clean: ndarray, y_est: ndarray, T_ys: Sequence[int] = (0,)) \
         -> float:

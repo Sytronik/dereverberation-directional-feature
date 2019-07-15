@@ -4,10 +4,10 @@
 --dirac option is for using dirac instead of spatially average intensity.
 
 Ex)
-python create_dirspec.py TRAIN
-python create_dirspec.py UNSEEN --init
-python create_dirspec.py SEEN --dirac
-python create_dirspec.py TRAIN --dirac --init
+python create.py TRAIN
+python create.py UNSEEN --init
+python create.py SEEN --dirac
+python create.py TRAIN --dirac --init
 """
 
 # noinspection PyUnresolvedReferences
@@ -41,35 +41,69 @@ class SFTData:
     """
     Yenc: NDArray = None
     bnkr_inv: NDArray = None
-    bnkr: Optional[NDArray] = None
     Wnv: Optional[NDArray] = None
     Wpv: Optional[NDArray] = None
     Vv: Optional[NDArray] = None
     T_real: Optional[NDArray] = None
-    bn_sel2_0: Optional[NDArray] = None
-    bn_sel2_1: Optional[NDArray] = None
-    bn_sel3_0: Optional[NDArray] = None
-    bn_sel3_1: Optional[NDArray] = None
-    bn_sel_4_0: Optional[NDArray] = None
-    bn_sel_4_1: Optional[NDArray] = None
 
     def get_for_intensity(self) -> Tuple:
-        return (self.Wnv, self.Wpv, self.Vv,
-                self.bn_sel2_0, self.bn_sel2_1,
-                self.bn_sel3_0, self.bn_sel3_1,
-                self.bn_sel_4_0, self.bn_sel_4_1)
+        return self.Wnv, self.Wpv, self.Vv
 
 
-def stft(data: NDArray, N_frame: int, _win: NDArray):
+def stft(data: NDArray, _win: NDArray):
     xp = cp.get_array_module(data)
-    spec = xp.empty((data.shape[0], hp.n_freq, N_frame), dtype=xp.complex128)
+    data = xp.pad(data,
+                  ((0, 0), (hp.n_fft // 2, hp.n_fft // 2)),
+                  mode='reflect')
+
+    n_frame = (data.shape[1] - hp.l_frame) // hp.l_hop + 1
+
+    spec = xp.empty((data.shape[0], hp.n_freq, n_frame), dtype=xp.complex128)
     interval = np.arange(hp.l_frame)
-    for i_frame in range(N_frame):
+    for i_frame in range(n_frame):
         spec[:, :, i_frame] \
             = xp.fft.fft(data[:, interval] * _win, n=hp.n_fft)[:, :hp.n_freq]
         interval += hp.l_hop
 
     return spec
+
+
+def apply_iir_filter(wave, filter_fft, _win):
+    # bnkr equalization in frequency domain
+    xp = cp.get_array_module(wave)
+
+    len_original = wave.shape[1]
+    wave = xp.pad(wave,
+                  ((0, 0), (hp.n_fft // 2, hp.n_fft // 2)),
+                  mode='reflect')
+
+    n_frame = len_original // hp.l_hop
+    len_istft = hp.n_fft + hp.l_hop * (n_frame - 1)
+
+    filtered = xp.zeros((wave.shape[0], len_istft), dtype=xp.complex128)
+    interval = np.arange(hp.l_frame)
+    for i_frame in range(n_frame):
+        spectrum = xp.fft.fft(wave[:, interval] * _win, n=hp.n_fft)
+        filtered[:, interval] += xp.fft.ifft(
+            spectrum * filter_fft, n=hp.n_fft
+        ) * _win
+        interval += hp.l_hop
+
+    # compensate artifact of stft/istft
+    # noinspection PyTypeChecker
+    artifact = librosa.filters.window_sumsquare(
+        'hann',
+        n_frame, win_length=hp.l_frame, n_fft=hp.n_fft, hop_length=hp.l_hop,
+        dtype=np.float64
+    )
+    idxs_artifact = artifact > librosa.util.tiny(artifact)
+    artifact = xp.array(artifact[idxs_artifact])
+
+    filtered[:, idxs_artifact] /= artifact
+    filtered = filtered[:, hp.n_fft // 2:]
+    filtered = filtered[:, :len_original]
+
+    return filtered.astype(wave.dtype)
 
 
 # noinspection PyShadowingNames
@@ -100,11 +134,8 @@ def seltriag(Ain: NDArray, nrord: int, shft: Tuple[int, int]) -> NDArray:
 
 
 # noinspection PyShadowingNames
-def calc_intensity(Asv: NDArray,
-                   Wnv: NDArray, Wpv: NDArray, Vv: NDArray,
-                   bn_sel2_0: NDArray, bn_sel2_1: NDArray,
-                   bn_sel3_0: NDArray, bn_sel3_1: NDArray,
-                   bn_sel_4_0: NDArray, bn_sel_4_1: NDArray) -> NDArray:
+def calc_intensity(Asv: NDArray, Wnv: NDArray, Wpv: NDArray, Vv: NDArray) \
+        -> NDArray:
     """ Asv(anm) (Order x ...) -> Intensity (... x 3)
 
     :param Asv:
@@ -124,12 +155,12 @@ def calc_intensity(Asv: NDArray,
     other_shape = Asv.shape[1:] if Asv.ndim > 1 else tuple()
 
     aug1 = seltriag(Asv, 1, (0, 0))
-    aug2 = (bn_sel2_0 * seltriag(Wpv, 1, (1, -1)) * seltriag(Asv, 1, (1, -1))
-            - bn_sel2_1 * seltriag(Wnv, 1, (0, 0)) * seltriag(Asv, 1, (-1, -1)))
-    aug3 = (bn_sel3_0 * seltriag(Wpv, 1, (0, 0)) * seltriag(Asv, 1, (-1, 1))
-            - bn_sel3_1 * seltriag(Wnv, 1, (1, 1)) * seltriag(Asv, 1, (1, 1)))
-    aug4 = (bn_sel_4_0 * seltriag(Vv, 1, (0, 0)) * seltriag(Asv, 1, (-1, 0))
-            + bn_sel_4_1 * seltriag(Vv, 1, (1, 0)) * seltriag(Asv, 1, (1, 0)))
+    aug2 = (seltriag(Wpv, 1, (1, -1)) * seltriag(Asv, 1, (1, -1))
+            - seltriag(Wnv, 1, (0, 0)) * seltriag(Asv, 1, (-1, -1)))
+    aug3 = (seltriag(Wpv, 1, (0, 0)) * seltriag(Asv, 1, (-1, 1))
+            - seltriag(Wnv, 1, (1, 1)) * seltriag(Asv, 1, (1, 1)))
+    aug4 = (seltriag(Vv, 1, (0, 0)) * seltriag(Asv, 1, (-1, 0))
+            + seltriag(Vv, 1, (1, 0)) * seltriag(Asv, 1, (1, 0)))
 
     aug1 = aug1.conj()
     intensity = xp.empty((*other_shape, 3))
@@ -178,7 +209,7 @@ def calc_direction_vec(anm: NDArray) -> NDArray:
     return direction.transpose([*range(1, anm.ndim), 0])
 
 
-def process(idx_start: int):
+def process():
     global pbar
 
     print_save_info(idx_start)
@@ -186,48 +217,48 @@ def process(idx_start: int):
     pool_creator = mp.Pool(n_cuda_dev)
     pool_saver = mp.Pool(hp.num_disk_workers)
     with mp.Manager() as manager:
-        q_data = [manager.Queue(int(40 / 0.02135 / n_cuda_dev)) for _ in hp.device]
-        q_dirspec = manager.Queue()
+        q_data = [manager.Queue(hp.num_disk_workers * 3) for _ in hp.device]
+        q_result = manager.Queue()
 
         # apply creater first
-        # creater gets data from q_data, and sends dirspec to q_dirspec
+        # creater gets data from q_data, and sends the result to q_result
         pool_creator.starmap_async(
             create_dirspecs,
             [(dev,
               q_data[idx],
               len(all_files[idx_start + idx::n_cuda_dev]) * n_loc,
-              q_dirspec)
+              q_result)
              for idx, dev in enumerate(hp.device)]
         )
         pool_creator.close()
 
         # apply propagater
         # propagater sends data to q_data
-        pbar = tqdm(range(num_wavs),
+        pbar = tqdm(range(num_speech),
                     desc='apply', dynamic_ncols=True, initial=idx_start)
-        range_file = range(idx_start, num_wavs)
-        for i_wav, f_wav in zip(range_file, all_files[idx_start:]):
-            data, _ = sf.read(str(f_wav))
+        range_file = range(idx_start, num_speech)
+        for i_speech, f_speech in zip(range_file, all_files[idx_start:]):
+            data, _ = sf.read(str(f_speech))
 
             for i_loc, RIR in enumerate(RIRs):
                 pool_propagater.apply_async(
                     propagate,
-                    (i_wav, f_wav,
+                    (i_speech, f_speech,
                      data, i_loc, RIR,
-                     q_data[(i_wav - idx_start) % n_cuda_dev])
+                     q_data[(i_speech - idx_start) % n_cuda_dev])
                 )
             pbar.update()
         pool_propagater.close()
 
         # apply saver
-        # saver gets dirspec from q_dirspec
-        pbar = tqdm(range(num_wavs),
+        # saver gets results from q_result
+        pbar = tqdm(range(num_speech),
                     desc='create', dynamic_ncols=True, initial=idx_start)
         for idx in range(len(range_file) * n_loc):
-            pool_saver.apply_async(save_dirspec, q_dirspec.get(),
+            pool_saver.apply_async(save_result, q_result.get(),
                                    callback=update_pbar)
             str_qsizes = ' '.join([f'{q.qsize()}' for q in q_data])
-            pbar.set_postfix_str(f'[{str_qsizes}], {q_dirspec.qsize()}')
+            pbar.set_postfix_str(f'[{str_qsizes}], {q_result.qsize()}')
         pool_saver.close()
 
         pool_propagater.join()
@@ -238,33 +269,25 @@ def process(idx_start: int):
                     + sum([1 for v in dict_count.values() if v >= n_loc]))
 
 
-def propagate(i_wav: int, f_wav: Path,
+def propagate(i_speech: int, f_speech: Path,
               data: np.ndarray, i_loc: int, RIR: np.ndarray,
               queue: mp.Queue):
     # RIR Filtering
     data_room = scsig.fftconvolve(data[np.newaxis, :], RIR)
-    data_room = np.pad(data_room,
-                       ((0, 0), (hp.l_frame // 2, hp.l_frame // 2)),
-                       mode='reflect')
-
-    n_frame_room = (data_room.shape[1] - hp.l_frame) // hp.l_hop + 1
 
     # Propagation
     data = np.append(np.zeros(t_peak[i_loc]), data * amp_peak[i_loc])
-    data = np.pad(data, hp.l_frame // 2, mode='reflect')
 
-    n_frame_free = (data.shape[0] - hp.l_frame) // hp.l_hop + 1
-
-    queue.put((i_wav, f_wav, i_loc, data, data_room, n_frame_free, n_frame_room))
+    queue.put((i_speech, f_speech, i_loc, data, data_room))
 
 
-def create_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_dirspec: mp.Queue):
+def create_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_result: mp.Queue):
     """ create directional spectrogram.
 
     :param i_dev: GPU Device No.
     :param q_data:
     :param n_data:
-    :param q_dirspec:
+    :param q_result:
 
     :return: None
     """
@@ -278,109 +301,86 @@ def create_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_dirspec: mp.Que
     )
 
     for _ in range(n_data):
-        i_wav, f_wav, i_loc, data, data_room, n_frame_free, n_frame_room = q_data.get()
+        i_speech, f_speech, i_loc, data, data_room = q_data.get()
         data_cp = cp.array(data)
         data_room_cp = cp.array(data_room)
 
         # Free-field
-        anm_time_cp = cp.outer(Ys_cp[i_loc].conj(), data_cp) * np.sqrt(4 * np.pi)
+        anm_time_cp = cp.outer(Ys_cp[i_loc].conj(), data_cp)
         if use_dirac:  # real coefficients
-            anm_time_cp = cp.einsum('ij,jt->it', sftdata_cp.T_real, anm_time_cp).real
+            anm_time_cp = (sftdata_cp.T_real @ anm_time_cp).real
 
-        anm_spec_cp = stft(anm_time_cp, n_frame_free, win_cp)
+        anm_spec_cp = stft(anm_time_cp, win_cp)
 
-        dirspec_free = np.empty((hp.n_freq, n_frame_free, 4))
+        # dirspec_free = np.empty((hp.n_freq, n_frame_free, 4))
         if use_dirac:
             # DirAC and a00
-            dirspec_free[:, :, :3] = cp.asnumpy(calc_direction_vec(anm_spec_cp))
+            df_free = cp.asnumpy(calc_direction_vec(anm_spec_cp))
         else:
             # IV and p00
-            dirspec_free[:, :, :3] = cp.asnumpy(
+            df_free = cp.asnumpy(
                 calc_intensity(anm_spec_cp, *sftdata_cp.get_for_intensity())
             )
-        dirspec_free[:, :, 3] = cp.asnumpy(cp.abs(anm_spec_cp[0]))
+        mag_free = cp.asnumpy(cp.abs(anm_spec_cp[0]))
         phase_free = cp.asnumpy(cp.angle(anm_spec_cp[0]))
+        dirspec_free = np.concatenate((df_free, mag_free[..., np.newaxis]), axis=2)
 
         # Room Intensity Vector Image
         pnm_time_cp = sftdata_cp.Yenc @ data_room_cp
-        dirspec_room = np.empty((hp.n_freq, n_frame_room, 4))
+        # dirspec_room = np.empty((hp.n_freq, n_frame_room, 4))
         if use_dirac:
             # DirAC and a00
             # bnkr equalization in frequency domain
-            length = pnm_time_cp.shape[1]
-            # pnm_time = cp.pad(pnm_time,
-            #                   ((0, 0), (int(hp.n_fft // 2), int(hp.n_fft // 2))),
-            #                   mode='reflect')
-            # N_frame = int(np.ceil(length / hp.l_hop))
-            anm_time_cp = cp.zeros((pnm_time_cp.shape[0], length),
-                                   dtype=cp.complex128)
-            interval = np.arange(hp.l_frame)
-            for i_frame in range(n_frame_room):
-                pnm_spec_cp = cp.fft.fft(pnm_time_cp[:, interval] * win_cp, n=hp.n_fft)
-                anm_time_cp[:, interval] \
-                    += cp.fft.ifft(pnm_spec_cp * sftdata_cp.bnkr_inv, n=hp.n_fft) * win_cp
-                interval += hp.l_hop
-
-            # compensate artifact of stft/istft
-            # noinspection PyTypeChecker
-            artifact = librosa.filters.window_sumsquare(
-                'hann',
-                n_frame_room, win_length=hp.l_frame, n_fft=hp.n_fft, hop_length=hp.l_hop,
-                dtype=np.float64
-            )
-            idxs_artifact = artifact > librosa.util.tiny(artifact)
-            artifact_cp = cp.array(artifact[idxs_artifact])
-
-            anm_time_cp[:, idxs_artifact] /= artifact_cp
-            anm_time_cp = anm_time_cp[:, int(hp.n_fft // 2):int(hp.n_fft // 2) + length]
+            anm_time_cp = apply_iir_filter(pnm_time_cp, sftdata_cp.bnkr_inv[..., 0], win_cp)
 
             # real coefficients
-            anm_t_real_cp = cp.einsum('ij,jt->it', sftdata_cp.T_real, anm_time_cp).real
-            anm_spec_real_cp = stft(anm_t_real_cp, n_frame_room, win_cp)
+            anm_t_real_cp = (sftdata_cp.T_real @ anm_time_cp).real
+            anm_spec_real_cp = stft(anm_t_real_cp, win_cp)
 
-            dirspec_room[:, :, :3] = cp.asnumpy(calc_direction_vec(anm_spec_real_cp))
-            dirspec_room[:, :, 3] = cp.asnumpy(cp.abs(anm_spec_real_cp[0]))
+            df_room = cp.asnumpy(calc_direction_vec(anm_spec_real_cp))
+            mag_room = cp.asnumpy(cp.abs(anm_spec_real_cp[0]))
             phase_room = cp.angle(anm_spec_real_cp[0])
         else:
             # IV and p00
-            pnm_spec_cp = stft(pnm_time_cp, n_frame_room, win_cp)
-            anm_spec_cp = pnm_spec_cp * sftdata_cp.bnkr
-            dirspec_room[:, :, :3] = cp.asnumpy(
+            pnm_spec_cp = stft(pnm_time_cp, win_cp)
+            anm_spec_cp = pnm_spec_cp * sftdata_cp.bnkr_inv[:, :hp.n_freq]
+            df_room = cp.asnumpy(
                 calc_intensity(anm_spec_cp, *sftdata_cp.get_for_intensity())
             )
-            dirspec_room[:, :, 3] = cp.asnumpy(cp.abs(anm_spec_cp[0]))
+            mag_room = cp.asnumpy(cp.abs(anm_spec_cp[0]))
             phase_room = cp.asnumpy(cp.angle(anm_spec_cp[0]))
+        dirspec_room = np.concatenate((df_room, mag_room[..., np.newaxis]), axis=2)
 
         # Save
-        dict_dirspec = dict(fname_wav=f_wav,
-                            dirspec_free=dirspec_free,
-                            dirspec_room=dirspec_room,
-                            phase_free=phase_free[..., np.newaxis],
-                            phase_room=phase_room[..., np.newaxis],
-                            )
-        q_dirspec.put((i_wav, i_loc, dict_dirspec))
+        dict_result = dict(speech_fname=str(f_speech),
+                           dirspec_free=dirspec_free,
+                           dirspec_room=dirspec_room,
+                           phase_free=phase_free[..., np.newaxis],
+                           phase_room=phase_room[..., np.newaxis],
+                           )
+        q_result.put((i_speech, i_loc, dict_result))
 
 
-def save_dirspec(i_wav: int, i_loc: int, dict_dirspec: dict) -> Tuple[int, int]:
-    dd.io.save(path_dirspec / (hp.form_dirspec.format(i_wav, i_loc)), dict_dirspec,
+def save_result(i_speech: int, i_loc: int, dict_result: dict) -> Tuple[int, int]:
+    dd.io.save(path_result / (hp.form_feature.format(i_speech, i_loc)), dict_result,
                compression=None)
-    return i_wav, i_loc
+    return i_speech, i_loc
 
 
 def update_pbar(tup):
     global dict_count
-    i_wav, i_loc = tup
-    # pbar.display(FORM % (i_wav, i_loc))
-    dict_count[i_wav] += 1
-    if dict_count[i_wav] >= n_loc:
+    i_speech, i_loc = tup
+    # pbar.display(FORM % (i_speech, i_loc))
+    dict_count[i_speech] += 1
+    if dict_count[i_speech] >= n_loc:
         pbar.update()
 
 
-def print_save_info(i_wav):
+def print_save_info(i_speech: int):
     """ Print and save metadata.
 
     """
-    print(f'Wave Files Processed/Total: {i_wav}/{len(all_files)}\n'
+    print(f'Wave Files Processed/Total: {i_speech}/{len(all_files)}\n'
           f'Number of source location: {n_loc}\n')
 
     metadata = dict(fs=hp.fs,
@@ -389,7 +389,7 @@ def print_save_info(i_wav):
                     l_frame=hp.l_frame,
                     l_hop=hp.l_hop,
                     n_loc=n_loc,
-                    path_wavfiles=all_files,
+                    path_all_speech=[str(p) for p in all_files],
                     )
 
     dd.io.save(f_metadata, metadata)
@@ -405,110 +405,96 @@ if __name__ == '__main__':
                                  'UNSEEN', 'unseen',
                                  ),
                         )
-    parser.add_argument('-t', dest='dirspec_folder', default='')
+    parser.add_argument('-t', dest='target_folder', default='')
     parser.add_argument('--from', type=int, default=-1,
                         dest='from_idx')
     args = hp.parse_argument(parser)
     use_dirac = hp.DF == 'DirAC'
     n_cuda_dev = len(hp.device)
+    is_train = args.kind_data.lower() == 'train'
 
     # Paths
-    if args.dirspec_folder:
-        path_dirspec = hp.path_feature / args.dirspec_folder
-    else:
-        path_dirspec = hp.dict_path[f'dirspec_{args.kind_data.lower()}']
+    path_speech = hp.dict_path['speech_train' if is_train else 'speech_test']
 
-    if args.kind_data.lower() == 'train':
-        path_wavs = hp.dict_path['wav_train']
+    if args.target_folder:
+        path_result = hp.path_feature / args.target_folder
+        if not is_train:
+            path_result = path_result / 'TEST'
+        path_result = path_result / args.kind_data.upper()
     else:
-        path_dirspec = path_dirspec / 'TEST'
-        path_wavs = hp.dict_path['wav_test']
-
-    path_dirspec = path_dirspec / args.kind_data.upper()
-    os.makedirs(path_dirspec, exist_ok=True)
+        path_result = hp.dict_path[f'feature_{args.kind_data.lower()}']
+    os.makedirs(path_result, exist_ok=True)
 
     # RIR Data
     transfer_dict = scio.loadmat(str(hp.dict_path['RIR_Ys']), squeeze_me=True)
     kind_RIR = 'TEST' if args.kind_data.lower() == 'unseen' else 'TRAIN'
     RIRs = transfer_dict[f'RIR_{kind_RIR}'].transpose((2, 0, 1))
     n_loc, n_mic, len_RIR = RIRs.shape
-    Ys = transfer_dict[f'Ys_{kind_RIR}'].T  # N_LOC x Order
-
-    t_peak = np.round(RIRs.argmax(axis=2).mean(axis=1)).astype(int)
-    amp_peak = RIRs.max(axis=2).mean(axis=1)
+    Ys = transfer_dict[f'Ys_{kind_RIR}'].T * np.sqrt(4 * np.pi)  # N_LOC x Order
 
     # SFT Data
     sftdata = SFTData()
     sft_dict = scio.loadmat(
         str(hp.dict_path['sft_data']),
-        variable_names=('bmn_ka', 'bEQf', 'Yenc', 'Wnv', 'Wpv', 'Vv'),
+        variable_names=('bEQf', 'Yenc', 'Wnv', 'Wpv', 'Vv'),
         squeeze_me=True
     )
-    sftdata.bnkr_inv = sft_dict['bEQf'].T[:, :, np.newaxis]  # Order x N_freq x 1
-    sftdata.Yenc = sft_dict['Yenc'].T  # Order x N_MIC
+    sftdata.Yenc = sft_dict['Yenc'].T / np.sqrt(4 * np.pi) / n_mic  # Order x N_MIC
+    sftdata.bnkr_inv = sft_dict['bEQf'].T[..., np.newaxis]  # Order x N_freq x 1
+    sftdata.bnkr_inv = np.concatenate(
+        (sftdata.bnkr_inv, sftdata.bnkr_inv[:, -2:0:-1].conj()), axis=1
+    )  # Order x N_fft x 1
 
     if use_dirac:
         Ys = Ys[:, :4]
         sftdata.Yenc = sftdata.Yenc[:4]
-        bnkr_inv = sftdata.bnkr_inv[:4]
-        sftdata.bnkr_inv = np.concatenate(
-            (sftdata.bnkr_inv, sftdata.bnkr_inv[:, -2:0:-1].conj()), axis=1
-        ).squeeze()  # Order x N_fft
+        sftdata.bnkr_inv = sftdata.bnkr_inv[:4]
         sftdata.T_real = calc_mat_for_real_coeffs(1)
     else:
-        sftdata.bnkr = sft_dict['bmn_ka'].T[:, :, np.newaxis] / (4 * np.pi)  # Order x N_freq
         sftdata.Wnv = sft_dict['Wnv'].astype(complex)[:, np.newaxis, np.newaxis]
         sftdata.Wpv = sft_dict['Wpv'].astype(complex)[:, np.newaxis, np.newaxis]
         sftdata.Vv = sft_dict['Vv'].astype(complex)[:, np.newaxis, np.newaxis]
 
-        sftdata.bn_sel2_0 = (seltriag(1. / sftdata.bnkr, 1, (1, -1))
-                             * seltriag(sftdata.bnkr, 1, (0, 0)))
-        sftdata.bn_sel2_1 = (seltriag(1. / sftdata.bnkr, 1, (-1, -1))
-                             * seltriag(sftdata.bnkr, 1, (0, 0)))
-
-        sftdata.bn_sel3_0 = (seltriag(1. / sftdata.bnkr, 1, (-1, 1))
-                             * seltriag(sftdata.bnkr, 1, (0, 0)))
-        sftdata.bn_sel3_1 = (seltriag(1. / sftdata.bnkr, 1, (1, 1))
-                             * seltriag(sftdata.bnkr, 1, (0, 0)))
-
-        sftdata.bn_sel_4_0 = (seltriag(1. / sftdata.bnkr, 1, (-1, 0))
-                              * seltriag(sftdata.bnkr, 1, (0, 0)))
-        sftdata.bn_sel_4_1 = (seltriag(1. / sftdata.bnkr, 1, (1, 0))
-                              * seltriag(sftdata.bnkr, 1, (0, 0)))
-
     del sft_dict
 
+    # propagation
     win = scsig.windows.hann(hp.l_frame, sym=False)
+    p00_RIRs = np.einsum('ijk,j->ik', RIRs, sftdata.Yenc[0])  # n_loc x time
+    a00_RIRs = apply_iir_filter(p00_RIRs, sftdata.bnkr_inv[0, :, 0], win)
 
-    f_metadata = path_dirspec / 'metadata.h5'
+    t_peak = a00_RIRs.argmax(axis=1)
+    amp_peak = a00_RIRs.max(axis=1)
+
+    f_metadata = path_result / 'metadata.h5'
     if f_metadata.exists():
-        all_files = dd.io.load(f_metadata)['path_wavfiles']
+        all_files = dd.io.load(f_metadata)['path_all_speech']
+        all_files = [Path(p) for p in all_files]
     else:
-        all_files = list(path_wavs.glob('**/*.WAV')) + list(path_wavs.glob('**/*.wav'))
+        all_files = list(path_speech.glob('**/*.WAV')) + list(path_speech.glob('**/*.wav'))
 
-    num_wavs = len(all_files)
-    if num_wavs < args.from_idx:
+    num_speech = len(all_files)
+    if num_speech < args.from_idx:
         raise ArgumentError
 
-    # The index of the first wave file that have to be processed
+    # The index of the first speech file that have to be processed
     idx_exist = -2
     should_ask_cont = False
-    for i_wav_ in range(num_wavs):
-        if len(list(path_dirspec.glob(f'{i_wav_:04d}_*.h5'))) < n_loc:
-            idx_exist = i_wav_ - 1
+    for i_speech_ in range(num_speech):
+        if len(list(path_result.glob(f'{i_speech_:04d}_*.h5'))) < n_loc:
+            idx_exist = i_speech_ - 1
             break
     if args.from_idx == -1:
         if idx_exist == -2:
-            print_save_info(num_wavs)
+            print_save_info(num_speech)
             exit(0)
         idx_start = idx_exist + 1
     else:
         idx_start = args.from_idx
         should_ask_cont = True
 
-    print(f'Start processing from the {idx_start}-th wave file.')
+    print(f'Start processing from the {idx_start}-th speech file.')
     if should_ask_cont:
-        ans = input(f'{idx_exist} wave files were already processed. continue? (y/n)')
+        ans = input(f'{idx_exist} speech files were already processed. continue? (y/n)')
         if not ans.startswith('y'):
             exit(0)
 
@@ -516,4 +502,4 @@ if __name__ == '__main__':
     pbar = None
     dict_count = defaultdict(lambda: 0)
 
-    process(idx_start)
+    process()

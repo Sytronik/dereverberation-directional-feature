@@ -34,6 +34,7 @@ class Evaluation(metaclass=CallableSingletonMeta):
     __slots__ = ('eng', 'strio')
 
     instance = None
+    metrics = ('fwSegSNR', 'PESQ', 'STOI')
 
     def __init__(self):
         self.eng = matlab.engine.start_matlab('-nojvm')
@@ -45,10 +46,9 @@ class Evaluation(metaclass=CallableSingletonMeta):
         clean = matlab.double(clean.tolist())
         noisy = matlab.double(noisy.tolist())
         fs = matlab.double([fs])
-        fwsegsnr, pesq, stoi = self.eng.se_eval(clean, noisy, fs,
-                                                nargout=3, stdout=self.strio)
+        results = self.eng.se_eval(clean, noisy, fs, nargout=3, stdout=self.strio)
 
-        return ODict([('fwSegSNR', fwsegsnr), ('PESQ', pesq), ('STOI', stoi)])
+        return ODict([(m, r) for m, r in zip(Evaluation.metrics, results)])
 
     def _exit(self):
         self.eng.quit()

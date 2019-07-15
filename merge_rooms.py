@@ -7,8 +7,7 @@ import numpy as np
 import deepdish as dd
 from tqdm import tqdm
 
-from mypath import PATH_DATAROOT
-from config import is_ivfile
+from hparams import hp
 
 
 def symlink(_src_path, src_fnames, _dst_path, _n_loc_shift, q, idx):
@@ -45,8 +44,8 @@ if __name__ == '__main__':
     parser.add_argument('ROOMS', type=str, nargs='+')
     ARGS = parser.parse_args()
 
-    PATHS_ROOMS = [PATH_DATAROOT / f'{ARGS.DF}_{ROOM}' for ROOM in ARGS.ROOMS]
-    PATH_MERGED = PATH_DATAROOT / (f'{ARGS.DF}_' + '_'.join(ARGS.ROOMS))
+    PATHS_ROOMS = [hp.path_feature / f'{ARGS.DF}_{ROOM}' for ROOM in ARGS.ROOMS]
+    PATH_MERGED = hp.path_feature / (f'{ARGS.DF}_' + '_'.join(ARGS.ROOMS))
     if not PATH_MERGED.is_dir():
         os.makedirs(PATH_MERGED)
 
@@ -60,7 +59,7 @@ if __name__ == '__main__':
             if not dst_path.is_dir():
                 os.makedirs(dst_path)
             fnames_rooms = [
-                [f.name for f in os.scandir(p / kind) if is_ivfile(f)]
+                [f.name for f in os.scandir(p / kind) if hp.is_featurefile(f)]
                 for p in PATHS_ROOMS
             ]
             metadata = dict()
@@ -68,8 +67,8 @@ if __name__ == '__main__':
             for path, fnames in zip(PATHS_ROOMS, fnames_rooms):
                 src_path = path / kind
                 src_path = Path(
-                    '../' * (list(dst_path.parents).index(PATH_DATAROOT) + 1),
-                    src_path.relative_to(PATH_DATAROOT)
+                    '../' * (list(dst_path.parents).index(hp.path_feature) + 1),
+                    src_path.relative_to(hp.path_feature)
                 )
 
                 pbar = tqdm(total=len(fnames),

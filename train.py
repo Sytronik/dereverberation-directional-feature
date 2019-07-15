@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Dict, Sequence, Tuple
+from dataclasses import asdict
 
 import numpy as np
 import torch
@@ -49,10 +50,11 @@ class Trainer(metaclass=TrainerMeta):
         elif hp.method == 'magbpd':
             return MagBPDTrainer(*args, **kwargs)
 
-    def __init__(self, path_state_dict: str):
+    def __init__(self, path_state_dict=''):
+        self.model_name = hp.model_name
         module = eval(hp.model_name)
 
-        self.model = module(**getattr(hp, model_name))
+        self.model = module(**getattr(hp, hp.model_name))
         self.criterion = nn.MSELoss(reduction='sum')
 
         self.__init_device(hp.device, hp.out_device)
@@ -67,26 +69,28 @@ class Trainer(metaclass=TrainerMeta):
                                )
 
         # Load State Dict
-        if f_state_dict:
-            tup = torch.load(f_state_dict)
+        if path_state_dict:
+            st_model, st_optim = torch.load(path_state_dict)
             try:
                 if isinstance(self.model, nn.DataParallel):
-                    self.model.module.load_state_dict(state_dict)
+                    self.model.module.load_state_dict(st_model)
                 else:
-                    self.model.load_state_dict(state_dict)
-                self.optimizer.load_state_dict(tup[1])
+                    self.model.load_state_dict(st_model)
+                self.optimizer.load_state_dict(st_optim)
             except:
                 raise Exception('The model is different from the state dict.')
 
-        print_to_file(
-            dir_result / 'summary',
-            summary,
-            (self.model, hp.dummy_input_size),
-            dict(device=self.str_device[:4])
-        )
-        dd.io.save((logdir_train / hp.hparams_fname).with_suffix('.h5'), asdict(hp))
-        with (logdir_train / hp.hparams_fname).open('w') as f:
-            f.write(repr(asdict(hp)))
+        path_summary = hp.logdir / 'summary.txt'
+        if not path_summary.exists():
+            print_to_file(
+                path_summary,
+                summary,
+                (self.model, hp.dummy_input_size),
+                dict(device=self.str_device[:4])
+            )
+            # dd.io.save((hp.logdir / hp.hparams_fname).with_suffix('.h5'), asdict(hp))
+            with (hp.logdir / 'hparams.txt').open('w') as f:
+                f.write(repr(hp))
 
     def __init_device(self, device, out_device):
         if device == 'cpu':
@@ -95,38 +99,34 @@ class Trainer(metaclass=TrainerMeta):
             self.str_device = 'cpu'
             return
 
-        # device type
+        # device type: List[int]
         if type(device) == int:
             device = [device]
         elif type(device) == str:
-            device = [int(device[-1])]
+            device = [int(device[5:])]
         else:  # sequence of devices
-            if type(device[0]) == int:
-                device = device
-            else:
-                device = [int(d[-1]) for d in device]
-
-        # out_device type
-        if type(out_device) == int:
-            out_device = torch.device(f'cuda:{out_device}')
-        else:
-            out_device = torch.device(out_device)
+            if type(device[0]) != int:
+                device = [int(d[5:]) for d in device]
 
         self.in_device = torch.device(f'cuda:{device[0]}')
-        self.out_device = out_device
 
         if len(device) > 1:
+            if type(out_device) == int:
+                self.out_device = torch.device(f'cuda:{out_device}')
+            else:
+                self.out_device = torch.device(out_device)
+            self.str_device = ', '.join([f'cuda:{d}' for d in device])
+
             self.model = nn.DataParallel(self.model,
                                          device_ids=device,
-                                         output_device=out_device)
-            self.str_device = ', '.join([f'cuda:{d}' for d in device])
+                                         output_device=self.out_device)
         else:
+            self.out_device = self.in_device
             self.str_device = str(self.in_device)
 
         self.model.cuda(self.in_device)
         self.criterion.cuda(self.out_device)
-        if self.sigmoid:
-            self.sigmoid.cuda(self.in_device)
+
         torch.cuda.set_device(self.in_device)
 
     def _pre(self, data: Dict[str, ndarray], dataset: DirSpecDataset, for_summary=False) \
@@ -142,7 +142,7 @@ class Trainer(metaclass=TrainerMeta):
         pass
 
     def train(self, loader_train: DataLoader, loader_valid: DataLoader, logdir: Path,
-              first_epoch=0, f_state_dict: Path = None):
+              first_epoch=0):
         # Learning Rates Scheduler
         scheduler = CosineLRWithRestarts(self.optimizer,
                                          batch_size=hp.batch_size,
@@ -214,7 +214,7 @@ class Trainer(metaclass=TrainerMeta):
                 )
 
     @torch.no_grad()
-    def validate(self, loader: DataLoader, logdir: str, epoch: int):
+    def validate(self, loader: DataLoader, logdir: Path, epoch: int):
         """ Evaluate the performance of the model.
 
         :param loader: DataLoader to use.
@@ -284,11 +284,7 @@ class Trainer(metaclass=TrainerMeta):
         return avg_loss
 
     @torch.no_grad()
-    def test(self, loader: DataLoader, logdir: Path, f_state_dict: Path):
-        if self.use_cuda:
-            self.model.module.load_state_dict(torch.load(f_state_dict)[0])
-        else:
-            self.model.load_state_dict(torch.load(f_state_dict)[0])
+    def test(self, loader: DataLoader, logdir: Path):
         self.writer = CustomWriter(str(logdir))
 
         group = logdir.name.split('_')[0]
@@ -413,8 +409,8 @@ class ComplexTrainer(Trainer):
     __slots__ = ('stft_module',
                  )
 
-    def __init__(self, model_name: str, use_cuda=True):
-        super().__init__(model_name, use_cuda)
+    def __init__(self, path_state_dict=''):
+        super().__init__(path_state_dict)
         self.stft_module = stft.get_STFT_module(self.out_device, hp.n_fft, hp.l_hop)
 
     def _pre(self, data: Dict[str, ndarray], dataset: DirSpecDataset, for_summary=False) \
@@ -550,13 +546,14 @@ class MagPhaseTrainer(Trainer):
         loss = torch.zeros(len(self.name_loss_terms), device=self.out_device)
         for T, item_y, item_out in zip(T_ys, y, output):
             phase_out = None
+            phase_y = None
             if hp.weight_loss[0] > 0:
                 # F, T, C
                 mag_out = dataset.postprocess(
-                    'y', item_out[-2:-1, :, :T].permute(1, 2, 0)
+                    XY.y, item_out[-2:-1, :, :T].permute(1, 2, 0)
                 )
                 mag_y = dataset.postprocess(
-                    'y', item_y[-2:-1, :, :T].permute(1, 2, 0)
+                    XY.y, item_y[-2:-1, :, :T].permute(1, 2, 0)
                 )
                 phase_out = item_out[-1:, :, :T].permute(1, 2, 0) * np.pi
                 phase_y = item_y[-1:, :, :T].permute(1, 2, 0) * np.pi
@@ -603,8 +600,8 @@ class MagBPDTrainer(Trainer):
     __slots__ = ('stft_module',
                  )
 
-    def __init__(self, model_name: str, use_cuda=True):
-        super().__init__(model_name, use_cuda)
+    def __init__(self, path_state_dict=''):
+        super().__init__(path_state_dict)
         self.stft_module = stft.get_STFT_module(self.out_device, hp.n_fft, hp.l_hop)
 
     def _pre(self, data: Dict[str, ndarray], dataset: DirSpecDataset, for_summary=False) \

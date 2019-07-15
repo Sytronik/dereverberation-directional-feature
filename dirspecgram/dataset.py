@@ -43,7 +43,7 @@ class DirSpecDataset(Dataset):
         # default needs
         self._needs = dict(x=Channel.ALL, y=Channel.MAG,
                            x_phase=Channel.NONE, y_phase=Channel.NONE,
-                           fname_wav=Channel.ALL)
+                           speech_fname=Channel.ALL)
         self.set_needs(**kwargs)
 
         # _all_files (local var): basename of file paths
@@ -54,10 +54,10 @@ class DirSpecDataset(Dataset):
         # f_normconst: The name of the file
         # that has information about data file list, mean, std, ...
         list_f_norm \
-            = glob(hp.dict_path[f's_normconst_{kind_data}'].format(n_file, '*'))
+            = glob(hp.dict_path[f'form_normconst_{kind_data}'].format(n_file, '*'))
         for key_tn in keys_trannorm:
             s_f_normconst \
-                = hp.dict_path[f's_normconst_{kind_data}'].format(n_file, key_tn)
+                = hp.dict_path[f'form_normconst_{kind_data}'].format(n_file, key_tn)
 
             should_calc_save = False
             if s_f_normconst in list_f_norm:
@@ -70,7 +70,7 @@ class DirSpecDataset(Dataset):
                 else:
                     # search all data files
                     s_all_files = [
-                        f.name for f in os.scandir(self._PATH) if hp.is_ivfile(f)
+                        f.name for f in os.scandir(self._PATH) if hp.is_featurefile(f)
                     ]
                     s_all_files = sorted(s_all_files)
                     if n_file != -1:
@@ -238,7 +238,7 @@ class DirSpecDataset(Dataset):
     def set_needs(self, **kwargs: Channel):
         """ set which data are needed.
 
-        :param kwargs: available keywords are [x, y, x_phase, y_phase, fname_wav]
+        :param kwargs: available keywords are [x, y, x_phase, y_phase, speech_fname]
         """
         for k in self._needs:
             if k in kwargs:
