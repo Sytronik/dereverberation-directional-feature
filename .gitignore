@@ -18,5 +18,6 @@ _[^_]*.py
 .flake8
 
 .idea/
+.vscode/
 
 **/_*
