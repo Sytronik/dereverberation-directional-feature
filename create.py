@@ -15,12 +15,11 @@ import logging
 import multiprocessing as mp
 import os
 from argparse import ArgumentParser, ArgumentError
-from collections import defaultdict
 from pathlib import Path
-from typing import Tuple, TypeVar, Optional
+from typing import Tuple, TypeVar, Optional, List
 from dataclasses import dataclass, asdict
+from itertools import product
 import cupy as cp
-import deepdish as dd
 
 import librosa
 import numpy as np
@@ -213,12 +212,18 @@ def process():
     global pbar
 
     print_save_info(idx_start)
-    pool_propagater = mp.Pool(mp.cpu_count() - n_cuda_dev - hp.num_disk_workers - 1)
+    os.cpu_count()
+    pool_propagater = mp.Pool(mp.cpu_count()//2 - n_cuda_dev - hp.num_disk_workers - 1)
     pool_creator = mp.Pool(n_cuda_dev)
     pool_saver = mp.Pool(hp.num_disk_workers)
     with mp.Manager() as manager:
         q_data = [manager.Queue(hp.num_disk_workers * 3) for _ in hp.device]
         q_result = manager.Queue()
+
+        # open speech files
+        speech = []
+        for f_speech in flist_speech:
+            speech.append(sf.read(str(f_speech))[0])
 
         # apply creater first
         # creater gets data from q_data, and sends the result to q_result
@@ -226,7 +231,7 @@ def process():
             create_dirspecs,
             [(dev,
               q_data[idx],
-              len(all_files[idx_start + idx::n_cuda_dev]) * n_loc,
+              len(list_feature[idx_start + idx::n_cuda_dev]),
               q_result)
              for idx, dev in enumerate(hp.device)]
         )
@@ -234,51 +239,50 @@ def process():
 
         # apply propagater
         # propagater sends data to q_data
-        pbar = tqdm(range(num_speech),
+        pbar = tqdm(range(n_feature),
                     desc='apply', dynamic_ncols=True, initial=idx_start)
-        range_file = range(idx_start, num_speech)
-        for i_speech, f_speech in zip(range_file, all_files[idx_start:]):
-            data, _ = sf.read(str(f_speech))
-
-            for i_loc, RIR in enumerate(RIRs):
-                pool_propagater.apply_async(
-                    propagate,
-                    (i_speech, f_speech,
-                     data, i_loc, RIR,
-                     q_data[(i_speech - idx_start) % n_cuda_dev])
-                )
+        range_feature = range(idx_start, n_feature)
+        for idx, (i_speech, _, i_loc) in zip(range_feature, list_feature[idx_start:]):
+            pool_propagater.apply_async(
+                propagate,
+                (idx, i_speech, flist_speech[i_speech],
+                 speech[i_speech], i_loc,
+                 q_data[(idx - idx_start) % n_cuda_dev])
+            )
+            # propagate(idx, i_speech, flist_speech[i_speech],
+            #           speech[i_speech], i_loc,
+            #           q_data[(idx - idx_start) % n_cuda_dev])
             pbar.update()
         pool_propagater.close()
 
         # apply saver
         # saver gets results from q_result
-        pbar = tqdm(range(num_speech),
+        pbar = tqdm(range(n_feature),
                     desc='create', dynamic_ncols=True, initial=idx_start)
-        for idx in range(len(range_file) * n_loc):
-            pool_saver.apply_async(save_result, q_result.get(),
-                                   callback=update_pbar)
+        for _ in range_feature:
+            pool_saver.apply_async(save_result, q_result.get())
             str_qsizes = ' '.join([f'{q.qsize()}' for q in q_data])
             pbar.set_postfix_str(f'[{str_qsizes}], {q_result.qsize()}')
+            pbar.update()
         pool_saver.close()
 
         pool_propagater.join()
         pool_creator.join()
         pool_saver.join()
 
-    print_save_info(idx_start
-                    + sum([1 for v in dict_count.values() if v >= n_loc]))
+    print_save_info(n_feature)
 
 
-def propagate(i_speech: int, f_speech: Path,
-              data: np.ndarray, i_loc: int, RIR: np.ndarray,
+def propagate(idx: int, i_speech: int, f_speech: Path,
+              data: np.ndarray, i_loc: int,
               queue: mp.Queue):
     # RIR Filtering
-    data_room = scsig.fftconvolve(data[np.newaxis, :], RIR)
+    data_room = scsig.fftconvolve(data[np.newaxis, :], RIRs[i_loc])
 
     # Propagation
     data = np.append(np.zeros(t_peak[i_loc]), data * amp_peak[i_loc])
 
-    queue.put((i_speech, f_speech, i_loc, data, data_room))
+    queue.put((idx, i_speech, f_speech, i_loc, data, data_room))
 
 
 def create_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_result: mp.Queue):
@@ -301,7 +305,7 @@ def create_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_result: mp.Queu
     )
 
     for _ in range(n_data):
-        i_speech, f_speech, i_loc, data, data_room = q_data.get()
+        idx, i_speech, f_speech, i_loc, data, data_room = q_data.get()
         data_cp = cp.array(data)
         data_room_cp = cp.array(data_room)
 
@@ -358,29 +362,20 @@ def create_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_result: mp.Queu
                            phase_free=phase_free[..., np.newaxis],
                            phase_room=phase_room[..., np.newaxis],
                            )
-        q_result.put((i_speech, i_loc, dict_result))
+        q_result.put((idx, i_speech, i_loc, dict_result))
 
 
-def save_result(i_speech: int, i_loc: int, dict_result: dict) -> Tuple[int, int]:
-    dd.io.save(path_result / (hp.form_feature.format(i_speech, i_loc)), dict_result,
-               compression=None)
+def save_result(idx: int, i_speech: int, i_loc: int, dict_result: dict) -> Tuple[int, int]:
+    np.savez(path_result / hp.form_feature.format(idx, i_speech, hp.room_create, i_loc),
+             **dict_result)
     return i_speech, i_loc
 
 
-def update_pbar(tup):
-    global dict_count
-    i_speech, i_loc = tup
-    # pbar.display(FORM % (i_speech, i_loc))
-    dict_count[i_speech] += 1
-    if dict_count[i_speech] >= n_loc:
-        pbar.update()
-
-
-def print_save_info(i_speech: int):
+def print_save_info(i_feature: int):
     """ Print and save metadata.
 
     """
-    print(f'Wave Files Processed/Total: {i_speech}/{len(all_files)}\n'
+    print(f'Feature files processed/total: {i_feature}/{len(list_feature)}\n'
           f'Number of source location: {n_loc}\n')
 
     metadata = dict(fs=hp.fs,
@@ -389,10 +384,26 @@ def print_save_info(i_speech: int):
                     l_frame=hp.l_frame,
                     l_hop=hp.l_hop,
                     n_loc=n_loc,
-                    path_all_speech=[str(p) for p in all_files],
+                    path_all_speech=[str(p) for p in flist_speech],
+                    list_fname=list_feature_to_fname(list_feature),
                     )
 
-    dd.io.save(f_metadata, metadata)
+    scio.savemat(f_metadata, metadata)
+
+
+def list_feature_to_fname(list_feature: List[Tuple]) -> List[str]:
+    return [
+        hp.form_feature.format(i, *tup) for i, tup in enumerate(list_feature)
+    ]
+
+
+def list_fname_to_feature(list_fname: List[str]) -> List[Tuple]:
+    list_feature = []
+    for f in list_fname:
+        f = f.rstrip().rstrip('.npz')
+        _, i_speech, _, i_loc = f.split('_')
+        list_feature.append((int(i_speech), hp.room_create, int(i_loc)))
+    return list_feature
 
 
 if __name__ == '__main__':
@@ -465,41 +476,69 @@ if __name__ == '__main__':
     t_peak = a00_RIRs.argmax(axis=1)
     amp_peak = a00_RIRs.max(axis=1)
 
-    f_metadata = path_result / 'metadata.h5'
-    if f_metadata.exists():
-        all_files = dd.io.load(f_metadata)['path_all_speech']
-        all_files = [Path(p) for p in all_files]
+    f_metadata = path_result / 'metadata.mat'
+    if hp.s_path_metadata:
+        f_reference_meta = Path(hp.s_path_metadata)
+        if not f_reference_meta.exists():
+            raise ArgumentError
+    elif f_metadata.exists():
+        f_reference_meta = f_metadata
     else:
-        all_files = list(path_speech.glob('**/*.WAV')) + list(path_speech.glob('**/*.wav'))
+        f_reference_meta = None
 
-    num_speech = len(all_files)
-    if num_speech < args.from_idx:
+    if f_reference_meta:
+        metadata = scio.loadmat(str(f_reference_meta),
+                                variable_names=('path_all_speech', 'list_fname'),
+                                chars_as_strings=True,
+                                squeeze_me=True)
+        flist_speech = metadata['path_all_speech']
+        flist_speech = [Path(p.rstrip()) for p in flist_speech]
+        n_speech = len(flist_speech)
+        list_fname = metadata['list_fname']
+        list_feature: List[Tuple] = list_fname_to_feature(list_fname)
+        n_feature = len(list_feature)
+    else:
+        flist_speech = list(path_speech.glob('**/*.WAV')) + list(path_speech.glob('**/*.wav'))
+        n_speech = len(flist_speech)
+        list_feature = [(i_speech, hp.room_create, i_loc)
+                        for i_speech, i_loc in product(range(n_speech), range(n_loc))]
+
+        if args.kind_data.lower() == 'train':
+            n_feature = hp.n_data_per_room
+        else:
+            n_feature = hp.n_test_per_room
+        idx_choice = np.random.choice(len(list_feature), n_feature, replace=False)
+        idx_choice.sort()
+        list_feature: List[Tuple] = [list_feature[i] for i in idx_choice]
+
+    if n_feature < args.from_idx:
         raise ArgumentError
 
     # The index of the first speech file that have to be processed
-    idx_exist = -2
-    should_ask_cont = False
-    for i_speech_ in range(num_speech):
-        if len(list(path_result.glob(f'{i_speech_:04d}_*.h5'))) < n_loc:
-            idx_exist = i_speech_ - 1
+    idx_exist = -2  # -2 means all files already exist
+    for idx, tup in enumerate(list_feature):
+        fname = hp.form_feature.format(idx, *tup)
+        if not (path_result / fname).exists():
+            idx_exist = idx - 1
             break
+
     if args.from_idx == -1:
         if idx_exist == -2:
-            print_save_info(num_speech)
+            print_save_info(n_speech)
             exit(0)
         idx_start = idx_exist + 1
+        should_ask_cont = False
     else:
         idx_start = args.from_idx
         should_ask_cont = True
 
     print(f'Start processing from the {idx_start}-th speech file.')
     if should_ask_cont:
-        ans = input(f'{idx_exist} speech files were already processed. continue? (y/n)')
-        if not ans.startswith('y'):
-            exit(0)
-
-    # objects
-    pbar = None
-    dict_count = defaultdict(lambda: 0)
+        while True:
+            ans = input(f'{idx_exist} speech files were already processed. continue? (y/n)')
+            if ans.lower() == 'y':
+                break
+            elif ans.lower() == 'n':
+                exit(0)
 
     process()

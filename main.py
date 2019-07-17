@@ -5,7 +5,6 @@ import os
 import shutil
 from argparse import ArgumentError, ArgumentParser
 
-import deepdish as dd
 # noinspection PyCompatibility
 from dataclasses import asdict
 from torch.utils.data import DataLoader
@@ -25,7 +24,7 @@ parser.add_argument('--from', type=int, default=-1, dest='epoch', metavar='EPOCH
 
 args = hp.parse_argument(parser)
 del parser
-if not (args.train ^ args.test is not None) or args.epoch < -1:
+if not (args.train ^ (args.test is not None)) or args.epoch < -1:
     raise ArgumentError
 
 # directory
@@ -67,10 +66,7 @@ else:
     path_state_dict = None
 
 # Training + Validation Set
-dataset_temp = DirSpecDataset('train',
-                              n_file=hp.n_file,
-                              keys_trannorm=hp.keys_trannorm,
-                              )
+dataset_temp = DirSpecDataset('train', keys_trannorm=hp.keys_trannorm)
 dataset_train, dataset_valid = DirSpecDataset.split(dataset_temp, (hp.train_ratio, -1))
 dataset_train.set_needs(**hp.channels)
 dataset_valid.set_needs(**hp.channels_w_ph)
@@ -96,16 +92,13 @@ if args.train:
     trainer.train(loader_train, loader_valid, logdir_train, first_epoch)
 else:  # args.test
     # Test Set
-    dataset_test = DirSpecDataset(args.test,
-                                  n_file=hp.n_file // 4,
-                                  random_by_utterance=False,
-                                  **hp.channels_w_ph,
-                                  )
+    dataset_test = DirSpecDataset(args.test, **hp.channels_w_ph)
     dataset_test.normalize_on_like(dataset_temp)
     loader = DataLoader(dataset_test,
                         batch_size=1,
                         num_workers=hp.num_disk_workers,
                         collate_fn=dataset_test.pad_collate,
+                        pin_memory=True,
                         shuffle=False,
                         )
 

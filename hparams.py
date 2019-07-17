@@ -4,7 +4,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, Sequence, Tuple, Union
 
-import deepdish as dd
 import numpy as np
 import scipy.io as scio
 # noinspection PyCompatibility
@@ -14,8 +13,8 @@ from numpy import ndarray
 
 # noinspection PyArgumentList
 class Channel(Enum):
-    ALL = dict(sel=None)
-    MAG = dict(sel=dd.aslice[:, :, -1:])
+    ALL = slice(None)
+    MAG = slice(-1, None)
     NONE = None
 
 
@@ -52,8 +51,9 @@ class _HyperParameters:
     refresh_const: bool = False
 
     # training
-    n_file: int = 20 * 500
-    train_ratio: float = 0.7
+    n_data_per_room: int = 13 * 300
+    n_test_per_room: int = 10 * 100
+    train_ratio: float = 0.77
     n_epochs: int = 210
     batch_size: int = 32
     learning_rate: float = 5e-4
@@ -70,11 +70,12 @@ class _HyperParameters:
     logdir: str = f'./result/test'
     path_speech: Path = Path('./data/TIMIT')
     path_feature: Path = Path('./backup')
-    form_path_normconst: str = 'normconst_{}_{}.h5'
+    form_path_normconst: str = 'normconst_{}.npz'
+    s_path_metadata: str = ''
 
     # file names
-    form_feature: str = '{:04d}_{:02d}.h5'
-    form_result: str = 'dirspec_{}'
+    form_feature: str = '{:05d}_{:04d}_{}_{:02d}.npz'
+    form_result: str = 'dirspec_{}.mat'
     log_fname: str = 'log.txt'
     scalars_fname: str = 'scalars.json'
     hparams_fname: str = 'hparams.txt'
@@ -115,13 +116,13 @@ class _HyperParameters:
                               eta_threshold=1.5,
                               )
 
-        self.spec_data_names = dict(x='/dirspec_room', y='/dirspec_free',
-                                    x_phase='/phase_room', y_phase='/phase_free',
-                                    x_bpd='/bpd_room', y_bpd='/bpd_free',
-                                    speech_fname='/speech_fname',
-                                    out='/dirspec_estimated',
-                                    out_phase='/phase_estimated',
-                                    out_bpd='/bpd_estimated',
+        self.spec_data_names = dict(x='dirspec_room', y='dirspec_free',
+                                    x_phase='phase_room', y_phase='phase_free',
+                                    x_bpd='bpd_room', y_bpd='bpd_free',
+                                    speech_fname='speech_fname',
+                                    out='dirspec_estimated',
+                                    out_phase='phase_estimated',
+                                    out_bpd='bpd_estimated',
                                     )
 
     def init_dependent_vars(self):
@@ -149,7 +150,7 @@ class _HyperParameters:
         path_feature_test = self.path_feature / f'{self.DF}_{self.room_test}/TEST'
         self.dict_path = dict(
             sft_data=self.path_feature / 'sft_data_32ms.mat',
-            RIR_Ys=self.path_feature / f'RIR_Ys_TRAIN20_TEST20_{self.room_create}.mat',
+            RIR_Ys=self.path_feature / f'RIR_Ys_TRAIN13_TEST10_{self.room_create}.mat',
 
             speech_train=self.path_speech / 'TRAIN',
             speech_test=self.path_speech / 'TEST',
@@ -172,9 +173,11 @@ class _HyperParameters:
                                  dtype=np.float32)
         self.n_loc = dict()
         for kind in ('train', 'seen', 'unseen'):
-            path_metadata = self.dict_path[f'feature_{kind}'] / 'metadata.h5'
+            path_metadata = self.dict_path[f'feature_{kind}'] / 'metadata.mat'
             if path_metadata.exists():
-                self.n_loc[kind] = dd.io.load(path_metadata, group='/n_loc')
+                self.n_loc[kind] = scio.loadmat(
+                    str(path_metadata), variable_names=('n_loc',)
+                )['n_loc'].item()
             else:
                 print(f'n_loc of "{kind}" not loaded.')
 
@@ -216,7 +219,7 @@ class _HyperParameters:
 
     @staticmethod
     def is_featurefile(f: os.DirEntry) -> bool:
-        return (f.name.endswith('.h5')
+        return (f.name.endswith('.npz')
                 and not f.name.startswith('metadata')
                 and not f.name.startswith('normconst_'))
 

@@ -70,7 +70,7 @@ class Trainer(metaclass=TrainerMeta):
 
         # Load State Dict
         if path_state_dict:
-            st_model, st_optim = torch.load(path_state_dict)
+            st_model, st_optim = torch.load(path_state_dict, map_location=self.in_device)
             try:
                 if isinstance(self.model, nn.DataParallel):
                     self.model.module.load_state_dict(st_model)
@@ -148,10 +148,10 @@ class Trainer(metaclass=TrainerMeta):
                                          batch_size=hp.batch_size,
                                          epoch_size=len(loader_train.dataset),
                                          last_epoch=first_epoch - 1,
-                                         **hp.CosineLRWithRestarts)
-        avg_loss = torch.zeros(hp.N_LOSS_TERM, device=self.out_device)
+                                         **hp.scheduler)
+        avg_loss = torch.zeros(hp.n_loss_term, device=self.out_device)
 
-        self.writer = CustomWriter(str(logdir), purge_step=first_epoch)
+        self.writer = CustomWriter(str(logdir), group='train', purge_step=first_epoch)
 
         # self.writer.add_graph(self.model.module.cpu(),
         #                       torch.zeros(1, hp.get_for_UNet()[0], 256, 256),
@@ -262,7 +262,7 @@ class Trainer(metaclass=TrainerMeta):
                 out_one = self._post_one(output, T_ys, 0, loader.dataset)
 
                 DirSpecDataset.save_dirspec(
-                    logdir / hp.form_result_dirspec.format(epoch),
+                    logdir / hp.form_result.format(epoch),
                     **self.writer.one_sample, **out_one
                 )
 
@@ -270,7 +270,7 @@ class Trainer(metaclass=TrainerMeta):
                 #     target=write_one,
                 #     args=(x_one, y_one, x_ph_one, y_ph_one, out_one, epoch)
                 # ).start()
-                self.writer.write_one(epoch, **out_one, group='train')
+                self.writer.write_one(epoch, **out_one)
 
         avg_loss /= len(loader.dataset)
         tag = 'loss/valid'
@@ -285,9 +285,9 @@ class Trainer(metaclass=TrainerMeta):
 
     @torch.no_grad()
     def test(self, loader: DataLoader, logdir: Path):
-        self.writer = CustomWriter(str(logdir))
-
         group = logdir.name.split('_')[0]
+
+        self.writer = CustomWriter(str(logdir), group=group)
 
         avg_measure = None
         self.model.eval()
@@ -319,7 +319,7 @@ class Trainer(metaclass=TrainerMeta):
                 **one_sample, **out_one
             )
 
-            measure = self.writer.write_one(i_iter, **out_one, group=group, **one_sample)
+            measure = self.writer.write_one(i_iter, **out_one, **one_sample)
             if avg_measure is None:
                 avg_measure = measure
             else:
@@ -349,8 +349,8 @@ class MagTrainer(Trainer):
         x = data['x']
         y = data['y']
 
-        x = x.to(self.in_device)
-        y = y.to(self.out_device)
+        x = x.to(self.in_device, non_blocking=True)
+        y = y.to(self.out_device, non_blocking=True)
 
         x = dataset.preprocess_(XY.x, x)
         y = dataset.preprocess_(XY.y, y)
@@ -393,14 +393,14 @@ class MagTrainer(Trainer):
         # for i_dyn, (y_dyn, out_dyn) in enumerate(zip(y, output)):
         #     if hp.weight_loss[i_dyn] > 0:
         #         for T, item_y, item_out in zip(T_ys, y_dyn, out_dyn):
-        #             loss += (hp.weight_loss[i_dyn] / int(T)
+        #             loss += (hp.weight_loss[i_dyn] / T
         #                      * self.criterion(item_out[:, :, :T - 4 * i_dyn],
         #                                       item_y[:, :, :T - 4 * i_dyn]))
         # return loss
 
         loss = torch.zeros(1, device=self.out_device)
         for T, item_y, item_out in zip(T_ys, y, output):
-            loss += self.criterion(item_out[:, :, :T], item_y[:, :, :T]) / int(T)
+            loss += self.criterion(item_out[:, :, :T], item_y[:, :, :T]) / T
 
         return loss
 
@@ -459,7 +459,7 @@ class ComplexTrainer(Trainer):
         loss = torch.zeros(hp.n_loss_term, device=self.out_device)
         for T, item_y, item_out in zip(T_ys, y, output):
             if hp.weight_loss[0] > 0:
-                loss[0] += self.criterion(item_out[:, :, :T], item_y[:, :, :T]) / int(T)
+                loss[0] += self.criterion(item_out[:, :, :T], item_y[:, :, :T]) / T
 
             if not (hp.weight_loss[1] or hp.weight_loss[2]):
                 continue
@@ -474,7 +474,7 @@ class ComplexTrainer(Trainer):
                 mag_norm_out = dataset.preprocess(XY.y, mag_out, idx=1)
                 mag_norm_y = dataset.preprocess(XY.y, mag_y, idx=1)
 
-                loss[1] += self.criterion(mag_norm_out, mag_norm_y) / int(T)
+                loss[1] += self.criterion(mag_norm_out, mag_norm_y) / T
             if len(hp.weight_loss) >= 3 and hp.weight_loss[2] > 0:
                 # 1, n
                 wav_out = self.stft_module.inverse(mag_out.permute(2, 0, 1),
@@ -482,7 +482,7 @@ class ComplexTrainer(Trainer):
                 wav_y = self.stft_module.inverse(mag_y.permute(2, 0, 1),
                                                  phase_y.permute(2, 0, 1))
 
-                temp = self.criterion(wav_out, wav_y) / int(T)
+                temp = self.criterion(wav_out, wav_y) / T
                 if not torch.isnan(temp) and temp < 10**4:
                     loss[2] += temp
 
@@ -561,23 +561,23 @@ class MagPhaseTrainer(Trainer):
                 out = dataset.preprocess_(XY.y, mag_out, phase_out, idx=1)
                 y = dataset.preprocess_(XY.y, mag_y, phase_y, idx=1)
 
-                temp = self.criterion(out, y) / int(T)
+                temp = self.criterion(out, y) / T
                 if not torch.isnan(temp) and temp < 10**4:
                     loss[0] += temp
 
             if hp.weight_loss[1] > 0:
                 loss[1] += self.criterion(item_out[:-1, :, :T],
-                                          item_y[:-1, :, :T]) / int(T)
+                                          item_y[:-1, :, :T]) / T
 
             if hp.weight_loss[2] > 0:
                 if phase_out is None:
                     phase_out = item_out[-1:, :, :T].permute(1, 2, 0) * np.pi
                     phase_y = item_y[-1:, :, :T].permute(1, 2, 0) * np.pi
                 loss[2] += self.criterion(BPD.phase2bpd(phase_out),
-                                          BPD.phase2bpd(phase_y)) / int(T)
+                                          BPD.phase2bpd(phase_y)) / T
 
             # if hp.weight_loss[0] > 0:
-            #     loss[0] += self.criterion(item_out[:, :, :T], item_y[:, :, :T]) / int(T)
+            #     loss[0] += self.criterion(item_out[:, :, :T], item_y[:, :, :T]) / T
             #
             # if hp.weight_loss[1] > 0:
             #     # F, T, C
@@ -588,7 +588,7 @@ class MagPhaseTrainer(Trainer):
             #     mag_norm_out = dataset.preprocess(XY.y, mag_out, idx=0)
             #     mag_norm_y = dataset.preprocess(XY.y, mag_y, idx=0)
             #
-            #     loss[1] += self.criterion(mag_norm_out, mag_norm_y) / int(T)
+            #     loss[1] += self.criterion(mag_norm_out, mag_norm_y) / T
 
         for w, ll in zip(hp.weight_loss, loss):
             ll *= w
@@ -661,6 +661,6 @@ class MagBPDTrainer(Trainer):
         # Loss
         loss = torch.zeros(1, device=self.out_device)
         for T, item_y, item_out in zip(T_ys, y, output):
-            loss += self.criterion(item_out[:, :, :T], item_y[:, :, :T]) / int(T)
+            loss += self.criterion(item_out[:, :, :T], item_y[:, :, :T]) / T
 
         return loss

@@ -66,7 +66,7 @@ class MeanStdNormalizer(INormalizer):
         # Calculate summation & size (parallel)
         list_fn = (np.size, cls._sum) if need_mean else (np.size,)
         pool_loader = mp.Pool(2)
-        pool_calc = mp.Pool(mp.cpu_count()-4)
+        pool_calc = mp.Pool(mp.cpu_count()//2-4)
         with mp.Manager() as manager:
             queue_data = manager.Queue()
             pool_loader.starmap_async(fn_load_data,

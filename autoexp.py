@@ -3,17 +3,17 @@ import matlab.engine
 
 import atexit
 import contextlib
+import gc
 import itertools
-import os
 import sys
 from datetime import datetime
-from os.path import join as pathjoin
-import gc
+from pathlib import Path
+
+import hparams as cfg
+
 # from multiprocessing import Process
 #
 # import keyboard as kb
-
-import config as cfg
 
 experiment = {
     'cfg.HyperParameters.weight_decay': [
@@ -51,7 +51,7 @@ def run_main():
 
 
 def _exit(exp: str):
-    with open(pathjoin(cfg.DICT_PATH['UNet'], f'autoexp.txt'), 'w') as f:
+    with (cfg.DICT_PATH['UNet'] / 'autoexp.txt').open('w') as f:
         f.write(exp)
     # os.rename(cfg.DICT_PATH['UNet'], f'{cfg.DICT_PATH["UNet"]} Done')
 
@@ -60,7 +60,7 @@ if __name__ == '__main__':
     keys = list(experiment.keys())
     values = list(experiment.values())
     # cfg.DICT_PATH['UNet'] += '_auto'
-    DIR_RESULT_backup = cfg.DICT_PATH['UNet']
+    DIR_RESULT_backup = str(cfg.DICT_PATH['UNet'])
 
     # save configurations
     keys_shorten = [k.replace('cfg.', '').replace('HyperParameters', 'hp') for k in keys]
@@ -72,7 +72,7 @@ if __name__ == '__main__':
             f'{idx:2d}: ' + ', '.join([f'{k}={v}' for k, v in zip(keys_shorten, vs)])
         )
 
-    with open(pathjoin(cfg.PATH_RESULT, f'autoexp {str_now}.txt'), 'w') as f:
+    with (cfg.PATH_RESULT / f'autoexp {str_now}.txt').open('w') as f:
         f.write('\n'.join(str_exps))
 
     # iterate main
@@ -83,7 +83,7 @@ if __name__ == '__main__':
 
         # apply configurations
         # str_now = datetime.now().strftime('%y-%m-%d %Hh')
-        cfg.DICT_PATH['UNet'] = f'{DIR_RESULT_backup} {str_now} (autoexp {idx})'
+        cfg.DICT_PATH['UNet'] = Path(f'{DIR_RESULT_backup} {str_now} (autoexp {idx})')
         for k, v in zip(keys, vs):
             exec(f'{k} = "{v}"' if type(v) == str else f'{k} = {v}')
 

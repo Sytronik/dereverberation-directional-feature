@@ -4,7 +4,6 @@ from multiprocessing import Queue
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Sequence, Tuple, Type, Union, ClassVar
 
-import deepdish as dd
 import numpy as np
 import torch
 from numpy import ndarray
@@ -64,7 +63,7 @@ class TranNormModule:
         return module
 
     @classmethod
-    def load_module(cls, key: Tuple[str, str, bool], consts: Tuple[TensArr]):
+    def load_module(cls, key: Tuple[str, str, bool], consts: Tuple[ndarray]):
         """ create module with `consts` which is normalize constants.
 
         :param key:
@@ -86,17 +85,12 @@ class TranNormModule:
         self.__cuda: Dict[torch.device, Sequence[Tensor]] = dict()
 
     def _load_data(self, fname: Union[str, Path], queue: Queue) -> None:
+        npz = np.load(fname)
         if self._transformer.use_phase():
-            result = dd.io.load(fname, group=(hp.spec_data_name['x'],
-                                              hp.spec_data_name['x_phase'],
-                                              hp.spec_data_name['y'],
-                                              hp.spec_data_name['y_phase'],
-                                              ))
+            result = [npz[hp.spec_data_names[name]] for name in ('x', 'x_phase', 'y', 'y_phase')]
             queue.put(result)
         else:
-            x, y = dd.io.load(fname, group=(hp.spec_data_name['x'],
-                                            hp.spec_data_name['y'],
-                                            ))
+            x, y = [npz[hp.spec_data_names[name]] for name in ('x', 'y')]
             queue.put((x, y, None, None))
 
     def _calc_per_data(self, x, y, x_phase, y_phase,

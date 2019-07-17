@@ -13,7 +13,6 @@ import generic as gen
 from dirspecgram import LogModule, principle_
 from matlab_lib import Evaluation as EvalModule
 
-
 # class SNRseg(nn.Module):
 #     EINEXPR = 'ftc,ftc->t'
 #
@@ -94,10 +93,11 @@ from matlab_lib import Evaluation as EvalModule
 # def calc_stoi(y_clean: ndarray, y_est: ndarray):
 #     sum_result = 0.
 #     for item_clean, item_est in zip(y_clean, y_est):
-#         sum_result += stoi(item_clean, item_est, hp.Fs)
+#         sum_result += stoi(item_clean, item_est, hp.fs)
 #     return sum_result
 
 EVAL_METRICS = EvalModule.metrics
+
 
 def calc_snrseg(y_clean: ndarray, y_est: ndarray, T_ys: Sequence[int] = (0,)) \
         -> float:
@@ -273,26 +273,28 @@ def delta(*data: gen.TensArr, axis: int, L=2) -> gen.TensArrOrSeq:
     return result if len(result) > 1 else result[0]
 
 
-def draw_spectrogram(data: gen.TensArr, to_db=True, show=False, **kwargs):
+def draw_spectrogram(data: gen.TensArr, to_db=True, show=False, dpi=150, **kwargs):
     """
     
-    :param data: 
+    :param data:
     :param to_db:
-    :param show: 
+    :param show:
+    :param dpi:
     :param kwargs: vmin, vmax
     :return: 
     """
 
     if to_db:
+        data[data == 0] = data[data > 0].min()
         data = LogModule.log(data)
         data *= 20
     data = data.squeeze()
     data = gen.convert(data, astype=ndarray)
 
-    fig = plt.figure()
+    fig = plt.figure(dpi=dpi,)
     plt.imshow(data,
                cmap=plt.get_cmap('CMRmap'),
-               extent=(0, data.shape[1], 0, hp.Fs // 2),
+               extent=(0, data.shape[1], 0, hp.fs // 2),
                origin='lower', aspect='auto', **kwargs)
     plt.xlabel('Frame Index')
     plt.ylabel('Frequency (Hz)')
@@ -303,7 +305,7 @@ def draw_spectrogram(data: gen.TensArr, to_db=True, show=False, **kwargs):
     return fig
 
 
-def bnkr_equalize_(*args: ndarray)\
+def bnkr_equalize_(*args: ndarray) \
         -> Union[ndarray, Tuple[ndarray, Union[ndarray, None]]]:
     """ divide spectrogram into bnkr with regularization
 
