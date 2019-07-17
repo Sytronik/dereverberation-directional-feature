@@ -402,7 +402,8 @@ def list_fname_to_feature(list_fname: List[str]) -> List[Tuple]:
     for f in list_fname:
         f = f.rstrip().rstrip('.npz')
         _, i_speech, _, i_loc = f.split('_')
-        list_feature.append((int(i_speech), hp.room_create, int(i_loc)))
+        if int(i_loc) < n_loc:
+            list_feature.append((int(i_speech), hp.room_create, int(i_loc)))
     return list_feature
 
 
@@ -480,7 +481,7 @@ if __name__ == '__main__':
     if hp.s_path_metadata:
         f_reference_meta = Path(hp.s_path_metadata)
         if not f_reference_meta.exists():
-            raise ArgumentError
+            raise Exception(f'"{hp.s_path_metadata}" doesn\'t exist.')
     elif f_metadata.exists():
         f_reference_meta = f_metadata
     else:
@@ -494,8 +495,8 @@ if __name__ == '__main__':
         flist_speech = metadata['path_all_speech']
         flist_speech = [Path(p.rstrip()) for p in flist_speech]
         n_speech = len(flist_speech)
-        list_fname = metadata['list_fname']
-        list_feature: List[Tuple] = list_fname_to_feature(list_fname)
+        list_fname_refer = metadata['list_fname']
+        list_feature: List[Tuple] = list_fname_to_feature(list_fname_refer)
         n_feature = len(list_feature)
     else:
         flist_speech = list(path_speech.glob('**/*.WAV')) + list(path_speech.glob('**/*.wav'))
