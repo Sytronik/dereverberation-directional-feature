@@ -1,3 +1,31 @@
+""" Train or Test DNN
+
+Usage:
+```
+    python main.py {--train, --test={seen, unseen}}
+                   [--DF {IV, DirAC}]
+                   [--room_train ROOM_TRAIN]
+                   [--room_test ROOM_TEST]
+                   [--logdir LOGDIR]
+                   [--n_epochs MAX_EPOCH]
+                   [--from START_EPOCH]
+                   [--device DEVICES] [--out_device OUT_DEVICE]
+                   [--batch_size B]
+                   [--learning_rate LR]
+                   [--weight_decay WD]
+                   [--model_name MODEL]
+```
+
+More parameters are in `hparams.py`.
+- specify `--train` or `--test {seen, unseen}`.
+- DF: "IV" for using spatially-averaged intensity, "DirAC" for using direction vector.
+- ROOM_TRAIN: room used to train
+- ROOM_TEST: room used to test
+- LOGDIR: log directory
+- MAX_EPOCH: maximum epoch
+- START_EPOCH: start epoch (Default: -1)
+- DEVICES, OUT_DEVICE, B, LR, WD, MODEL: read `hparams.py`.
+"""
 # noinspection PyUnresolvedReferences
 import matlab.engine
 

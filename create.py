@@ -1,13 +1,17 @@
 """ create directional spectrogram.
 
---init option forces to start from the first data.
---dirac option is for using dirac instead of spatially average intensity.
-
-Ex)
-python create.py TRAIN
-python create.py UNSEEN --init
-python create.py SEEN --dirac
-python create.py TRAIN --dirac --init
+Usage:
+```
+    python create.py room_create
+                     {TRAIN,SEEN,UNSEEN}
+                     [--from_idx IDX] [-t TARGET] [--DF {IV, DirAC}] [--num_disk_workers N]
+                     ...
+```
+More parameters are in `hparams.py`.
+- IDX: feature index
+- TARGET: name of the folder feature files will be saved. The folder is a child of `hp.path_feature`.
+- DF: "IV" for using spatially-averaged intensity, "DirAC" for using direction vector.
+- N: number of subprocesses to write files.
 """
 
 # noinspection PyUnresolvedReferences
@@ -420,7 +424,7 @@ if __name__ == '__main__':
     parser.add_argument('-t', dest='target_folder', default='')
     parser.add_argument('--from', type=int, default=-1,
                         dest='from_idx')
-    args = hp.parse_argument(parser)
+    args = hp.parse_argument(parser, print_argument=False)
     use_dirac = hp.DF == 'DirAC'
     n_cuda_dev = len(hp.device)
     is_train = args.kind_data.lower() == 'train'

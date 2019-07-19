@@ -76,9 +76,6 @@ class _HyperParameters:
     # file names
     form_feature: str = '{:05d}_{:04d}_{}_{:02d}.npz'  # idx, i_speech, room, i_loc
     form_result: str = 'dirspec_{}.mat'
-    log_fname: str = 'log.txt'
-    scalars_fname: str = 'scalars.json'
-    hparams_fname: str = 'hparams.txt'
 
     channels: Dict[str, Channel] = field(init=False)
     UNet: Dict[str, Any] = field(init=False)
