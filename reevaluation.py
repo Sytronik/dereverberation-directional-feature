@@ -2,56 +2,50 @@
 import matlab.engine
 
 import os
-import time
 from argparse import ArgumentParser
-from glob import glob
-from os.path import join as pathjoin
+from pathlib import Path
 
 import numpy as np
 import scipy.io as scio
+from numpy import ndarray
 from tqdm import tqdm
 
-import config as cfg
+from hparams import hp
 from train import CustomWriter
 from utils import arr2str
 
-# cfg.N_GRIFFIN_LIM = 10
-# TITLE = f'iter{cfg.N_GRIFFIN_LIM}'
-TITLE = 'with_anechoic_ph'
+hp.n_glim_iter = 10  # info: the objective of reevaluation
+TITLE = f'iter{hp.n_glim_iter}'
+# TITLE = 'with_anechoic_ph'
 
 parser = ArgumentParser()
-parser.add_argument(
-    'kind_data', type=str, nargs=1, choices=('valid', 'seen', 'unseen'),
-)
-ARGS = parser.parse_args()
-del parser
-group = ARGS.kind_data[0]
+parser.add_argument('kind_data', type=str, choices=('seen', 'unseen'))
+args = hp.parse_argument(parser)
+group = args.kind_data
 
-DIR_MODEL = './result/UNet 19-01-14 (amp fix)'
-DIR_ORIGINAL = pathjoin(DIR_MODEL, group)
-DIR_NEW = pathjoin(DIR_MODEL, f'{group}_{TITLE}')
-if not os.path.isdir(DIR_NEW):
-    os.makedirs(DIR_NEW)
-writer = CustomWriter(DIR_NEW)
+path_original = hp.logdir / group
+path_new = hp.logdir / f'{group}_{TITLE}'
+os.makedirs(path_new, exist_ok=True)
+writer = CustomWriter(str(path_new), group=group)
 
-iv_files = glob(pathjoin(DIR_ORIGINAL, 'IV_*.mat'))
-names = {k: v[1:] for k, v in cfg.IV_DATA_NAME.items()
-         if k != 'fname_wav' and k != 'out_phase'}
-avg_measure = None
+path_results = list(path_original.glob(hp.form_result.format('*')))
+path_results = sorted(path_results)
+names = {k: v for k, v in hp.spec_data_names.items()
+         if k != 'speech_fname' and k != 'out_phase' and not k.endswith('bpd')}
+avg_measure: ndarray = None
 
 
-pbar = tqdm(iv_files, desc=f'{group}_{TITLE}', dynamic_ncols=True)
+pbar = tqdm(path_results, desc=f'{group}_{TITLE}', dynamic_ncols=True)
 for idx, file in enumerate(pbar):
-    iv_dict = scio.loadmat(file)
-    iv_dict = {k: iv_dict[v] for k, v in names.items()}
+    data_dict = scio.loadmat(str(file))
+    data_dict = {k: data_dict[v] for k, v in names.items()}
 
-    # warning sqrt
-    iv_dict = {k: (np.sqrt(np.maximum(v, 0)) if not k.endswith('phase') else v)
-               for k, v in iv_dict.items()}
+    data_dict = {k: (np.maximum(v, 0) if not k.endswith('phase') else v)
+                 for k, v in data_dict.items()}
 
-    measure = writer.write_one(idx, group=group,
-                               eval_with_y_ph=True,  # info: the objective of reevaluation
-                               **iv_dict)
+    measure = writer.write_one(idx,
+                               # eval_with_y_ph=True,  # info: the objective of reevaluation
+                               **data_dict)
     if avg_measure is None:
         avg_measure = measure
     else:
@@ -60,7 +54,7 @@ for idx, file in enumerate(pbar):
     str_measure = arr2str(measure).replace('\n', '; ')
     pbar.write(str_measure)
 
-avg_measure /= len(iv_files)
+avg_measure /= len(path_results)
 
 writer.add_text(f'{group}/Average Measure/Proposed', str(avg_measure[0]))
 writer.add_text(f'{group}/Average Measure/Reverberant', str(avg_measure[1]))

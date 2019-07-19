@@ -54,7 +54,7 @@ class CustomWriter(SummaryWriter):
         :param out_phase:
         :param out_bpd:
         :param eval_with_y_ph: determine if `out` is evaluated with `y_phase`
-        :param kwargs: keywords can be [x, y, x_phase, y_phase]
+        :param kwargs: keywords can be [x, y, x_phase, y_phase, x_bpd, y_bpd]
 
         :return: evaluation result
         """

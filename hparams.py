@@ -67,14 +67,14 @@ class _HyperParameters:
     do_bnkr_eq: bool = False
 
     # paths
-    logdir: str = f'./result/test'
+    logdir: str = f'./result/test'  # will be converted to type Path
     path_speech: Path = Path('./data/TIMIT')
     path_feature: Path = Path('./backup')
     form_path_normconst: str = 'normconst_{}.npz'
     s_path_metadata: str = ''
 
     # file names
-    form_feature: str = '{:05d}_{:04d}_{}_{:02d}.npz'
+    form_feature: str = '{:05d}_{:04d}_{}_{:02d}.npz'  # idx, i_speech, room, i_loc
     form_result: str = 'dirspec_{}.mat'
     log_fname: str = 'log.txt'
     scalars_fname: str = 'scalars.json'
@@ -255,24 +255,25 @@ class _HyperParameters:
         result += '\n-------------------------'
         return result
 
-    # deprecated
-    # n_per_frame: int
 
-    # p = 0.5  # Dropout p
+# deprecated
+# n_per_frame: int
 
-    # lr scheduler
-    # StepLR: Dict[str, Any] = dict(step_size=5, gamma=0.8)
-    #
-    # CosineAnnealingLR: Dict[str, Any] = dict(
-    #     T_max=10,
-    #     eta_min=0,
-    # )
+# p = 0.5  # Dropout p
 
-    # def for_MLP(self) -> Tuple:
-    #     n_input = self.L_cut_x * self.n_per_frame
-    #     n_hidden = 17 * self.n_per_frame
-    #     n_output = self.n_per_frame
-    #     return (n_input, n_hidden, n_output, self.p)
+# lr scheduler
+# StepLR: Dict[str, Any] = dict(step_size=5, gamma=0.8)
+#
+# CosineAnnealingLR: Dict[str, Any] = dict(
+#     T_max=10,
+#     eta_min=0,
+# )
+
+# def for_MLP(self) -> Tuple:
+#     n_input = self.L_cut_x * self.n_per_frame
+#     n_hidden = 17 * self.n_per_frame
+#     n_output = self.n_per_frame
+#     return (n_input, n_hidden, n_output, self.p)
 
 
 hp = _HyperParameters()
