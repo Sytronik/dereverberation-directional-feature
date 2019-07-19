@@ -14,27 +14,37 @@ from tensorboard.backend.event_processing.event_accumulator import EventAccumula
 from hparams import hp
 
 
-# %%
+# %% constants
+path_root = Path('./result')
+room_trained = 'room1+2+3'
+foldername_results = {
+    'No-DF': f'No-DF ({room_trained})',
+    'DV': f'DV ({room_trained})',
+    'IV': f'IV ({room_trained})',
+}
+kind_test = [
+    'seen', 'unseen', 'unseen_room4+5',
+]
+# how to inform measurements of reverberant data
+# method_rev = 'delta'  # as a difference
+method_rev = 'sep'  # as a separated item
+# method_rev = False  # not shown
+
+metric_need_legend = 'PESQ'
+
+
+# %% Definitions
 class MethodKindMetric(NamedTuple):
     method: str
     kind: str
     metric: str
-
-    # def to(self, *,
-    #        method: Optional[str] = None,
-    #        kind: Optional[str] = None,
-    #        metric: Optional[str] = None):
-    #     method = method if method else self.method
-    #     kind = kind if kind else self.kind
-    #     metric = metric if metric else self.metric
-    #     return MethodKindMetric(method, kind, metric)
 
 
 def _graph_initialize(means: ndarray, stds: ndarray,
                       legends: Union[str, Sequence[str]],
                       xticklabels: Sequence,
                       ylabel: str):
-    global room_trained, NEED_REVERB, metric_need_legend
+    global room_trained, method_rev, metric_need_legend
     plt.rc('font', family='Arial', size=18)
 
     fig, ax = plt.subplots(figsize=(5.3, 4))
@@ -58,14 +68,14 @@ def _graph_initialize(means: ndarray, stds: ndarray,
     cmap = plt.get_cmap('tab20c')
     colors = [cmap.colors[(1 + 4 * i // 16) % 4 + (4 * i) % 16]
               for i in range(len(legends))]
-    if NEED_REVERB == 'sep':
+    if method_rev == 'sep':
         colors[-1] = cmap.colors[17]
 
     # ylim
     # ylim = list(ax.get_ylim())
     # max_ = (means + stds).max()
     # min_ = (means - stds).min()
-    # if NEED_REVERB == 'delta' and min_ >= 0:
+    # if method_rev == 'delta' and min_ >= 0:
     #     ylim[0] = 0
     # else:
     #     ylim[0] = min_ - (max_ - min_) * 0.2
@@ -151,7 +161,6 @@ def draw_lineplot(means: ndarray, stds: ndarray = None,
     return fig
 
 
-# noinspection PyUnusedLocal
 def draw_bar_graph(means: ndarray, stds: ndarray = None,
                    legends: Union[str, Sequence[str]] = None,
                    xticklabels: Sequence = None,
@@ -170,7 +179,6 @@ def draw_bar_graph(means: ndarray, stds: ndarray = None,
     # draw bar & text
     x_range = np.arange(means.shape[1])
     for ii, (title, mean, std) in enumerate(zip(legends, means, stds)):
-        plt.Axes.bar
         bar = ax.bar(x_range + bar_width * ii, mean,
                      bar_width,
                      yerr=std,
@@ -222,31 +230,6 @@ def draw_bar_graph(means: ndarray, stds: ndarray = None,
     return fig
 
 
-# %% constants
-path_root = Path('./result')
-# room_trained = 'room1+2+3'
-# foldername_results = {
-#     'No-DF': f'No-DF ({room_trained})',
-#     'DV': f'DV ({room_trained})',
-#     'IV': f'IV ({room_trained})',
-# }
-# room_trained = 'room1'
-foldername_results = {
-    'No-DF': f'debug',
-    # 'DV': f'UNet (DirAC+p00 {room_trained})',
-    # 'IV': f'UNet (IV+p00 {room_trained})',
-}
-kind_test = [
-    # 'seen', 'unseen', 'unseen_room4+5',
-    'train',
-]
-# how to inform measurements of reverberant data
-# NEED_REVERB = 'delta'  # as a difference
-NEED_REVERB = 'sep'  # as a separated item
-# NEED_REVERB = False  # not shown
-
-metric_need_legend = 'PESQ'
-
 # %% dependent constants
 
 hp.init_dependent_vars()
@@ -263,7 +246,7 @@ for method, path in path_results.items():
 fstem_analysis = fstem_analysis[:-2]
 fstem_analysis += '] '
 fstem_analysis += f'[{", ".join(kind_test)}]'
-fstem_analysis += f' [rev={NEED_REVERB}]'
+fstem_analysis += f' [rev={method_rev}]'
 
 # %% save scalars
 
@@ -312,7 +295,7 @@ if 'all_scalars' not in dir():
 # handle measurements of reverberant data
 all_arrays: Dict[MethodKindMetric, ndarray] = dict()
 all_methods: List[str] = list(all_scalars.keys())
-if NEED_REVERB == 'sep':
+if method_rev == 'sep':
     all_methods.append('Unproc.')
 all_metrics = set()
 for method, scalars in all_scalars.items():
@@ -325,16 +308,16 @@ for method, scalars in all_scalars.items():
             metric = metric.replace('SNRseg', 'SegSNR')
         if 'SNR' in metric:
             metric += ' [dB]'
-        if NEED_REVERB == 'delta':
+        if method_rev == 'delta':
             metric = 'Δ'+metric
         all_metrics.add(metric)
 
         if rev_or_prop == 'Reverberant':
-            if NEED_REVERB == 'sep':
+            if method_rev == 'sep':
                 new_key = MethodKindMetric('Unproc.', kind, metric)
                 if new_key not in all_arrays:
                     all_arrays[new_key] = np.array(v)
-            elif NEED_REVERB == 'delta':
+            elif method_rev == 'delta':
                 new_key = MethodKindMetric(method, kind, metric)
                 if new_key in all_arrays:
                     all_arrays[new_key] -= np.array(v)
@@ -360,6 +343,7 @@ for key, value in all_arrays.items():
     all_stds[key] = np.std(value, ddof=1)
 
 # %% save to csv
+
 """ csv example
 METHOD1
 KIND1   METRIC1 0       0       0       ...
