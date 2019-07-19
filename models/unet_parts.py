@@ -1,5 +1,5 @@
 """
-sub-parts of the U-Net model
+sub-parts of the FusionNet model
 """
 
 from typing import Tuple
@@ -8,8 +8,6 @@ import numpy as np
 import torch
 from torch import nn, Tensor
 import torch.nn.functional as F
-
-from .cbam import CBAM
 
 
 def force_size_same(a: Tensor, b: Tensor) -> Tuple[Tensor, Tensor]:
@@ -81,7 +79,7 @@ class ResNeXtBlock(nn.Module):
 class ResidualBlock(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, act_fn: nn.Module,
                  kernel_size=(3, 3), padding=None,
-                 last_act_fn=True, use_cbam=False):
+                 last_act_fn=True):
         super().__init__()
         self.skipcba = ConvBNAct(in_ch, out_ch, None, kernel_size=(1, 1))
 
@@ -93,15 +91,12 @@ class ResidualBlock(nn.Module):
                               )
 
         self.act_fn = act_fn if last_act_fn else None
-        self.cbam = CBAM(out_ch) if use_cbam else None
 
     def forward(self, x):
         residual = self.skipcba(x)
 
         out = self.cba1(x)
         out = self.cba2(out)
-        if self.cbam:
-            out = self.cbam(out)
         out += residual
         if self.act_fn:
             out = self.act_fn(out)
@@ -111,7 +106,7 @@ class ResidualBlock(nn.Module):
 
 class FusionNetBlock(nn.Module):
     def __init__(self, in_ch: int, out_ch: int, act_fn: nn.Module,
-                 kernel_size=(3, 3), padding=None, use_cbam=False,
+                 kernel_size=(3, 3), padding=None,
                  ):
         super().__init__()
         self.cba1 = ConvBNAct(in_ch, out_ch, act_fn,
@@ -119,7 +114,6 @@ class FusionNetBlock(nn.Module):
                               )
         self.resblock = ResidualBlock(out_ch, out_ch, act_fn, last_act_fn=False,
                                       kernel_size=kernel_size, padding=padding,
-                                      use_cbam=use_cbam,
                                       )
         self.cba2 = ConvBNAct(out_ch, out_ch, act_fn,
                               kernel_size=kernel_size, padding=padding,
@@ -139,7 +133,6 @@ class InConv(nn.Module):
         super().__init__()
         self.block = FusionNetBlock(in_ch, out_ch, nn.ReLU(inplace=True),
                                     kernel_size=kernel_size, padding=padding,
-                                    use_cbam=use_cbam,
                                     )
         # self.conv = ResidualBlock(in_ch, out_ch)
 
@@ -157,7 +150,6 @@ class DownAndConv(nn.Module):
 
         self.block = FusionNetBlock(in_ch, out_ch, nn.ReLU(inplace=True),
                                     kernel_size=kernel_size, padding=padding,
-                                    use_cbam=use_cbam,
                                     )
 
     def forward(self, x):
@@ -176,7 +168,6 @@ class UpAndConv(nn.Module):
 
         self.block = FusionNetBlock(out_ch, out_ch, nn.ReLU(inplace=True),
                                     kernel_size=kernel_size, padding=padding,
-                                    use_cbam=use_cbam,
                                     )
 
     def forward(self, x, x_skip):

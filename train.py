@@ -15,13 +15,9 @@ import stft
 from adamwr import AdamW, CosineLRWithRestarts
 from dirspecgram import DirSpecDataset, XY
 from dirspecgram.transform import BPD
-from models import UNet, UNetNALU
+from models import UNet
 from tbXwriter import CustomWriter
-from utils import (arr2str,
-                   MultipleOptimizer,
-                   MultipleScheduler,
-                   print_to_file,
-                   )
+from utils import arr2str, print_to_file
 
 
 class TrainerMeta(type):  # error if try to create a Trainer instance

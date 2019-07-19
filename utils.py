@@ -23,53 +23,6 @@ def static_vars(**kwargs):
     return decorate
 
 
-class MultipleOptimizer(object):
-    def __init__(self, *op: torch.optim.Optimizer):
-        self._optimizers = [item for item in op if item]
-
-    def zero_grad(self):
-        for op in self._optimizers:
-            op.zero_grad()
-
-    def step(self):
-        for op in self._optimizers:
-            # noinspection PyArgumentList
-            op.step()
-
-    def state_dict(self) -> List[dict]:
-        return [op.state_dict() for op in self._optimizers]
-
-    def load_state_dict(self, state_dicts: List[dict]):
-        for op, st in zip(self._optimizers, state_dicts):
-            op.load_state_dict(st)
-
-    def __len__(self):
-        return len(self._optimizers)
-
-    def __getitem__(self, idx: int) -> torch.optim.Optimizer:
-        return self._optimizers[idx]
-
-
-class MultipleScheduler(object):
-    def __init__(self, cls_scheduler: type,
-                 optimizers: MultipleOptimizer, *args, **kwargs):
-        self._schedulers = [cls_scheduler(op, *args, **kwargs) for op in optimizers]
-
-    def step(self):
-        for sch in self._schedulers:
-            sch.step()
-
-    def batch_step(self):
-        for sch in self._schedulers:
-            sch.batch_step()
-
-    def __len__(self):
-        return len(self._schedulers)
-
-    def __getitem__(self, idx: int):
-        return self._schedulers[idx]
-
-
 def arr2str(a: np.ndarray, format_='e', ndigits=2) -> str:
     """convert ndarray of floats to a string expression.
 
