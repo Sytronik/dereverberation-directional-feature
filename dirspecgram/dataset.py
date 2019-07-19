@@ -45,7 +45,6 @@ class DirSpecDataset(Dataset):
 
         self._all_files = [f for f in self._PATH.glob('*.*') if hp.is_featurefile(f)]
         self._all_files = sorted(self._all_files)
-        self.n_loc = hp.n_loc[kind_data]
 
         trannorms: List[TranNormModule] = []
 
@@ -260,23 +259,32 @@ class DirSpecDataset(Dataset):
         if mask.sum() == 1:
             ratio[mask] = 1 - ratio.sum()
 
-        i_loc_split = np.cumsum(np.insert(ratio, 0, 0) * dataset.n_loc, dtype=int)
-        i_loc_split[-1] = dataset.n_loc
-        pivot = -1
-        i_sets = [0] * dataset.n_loc
-        for i_loc in range(dataset.n_loc):
-            if i_loc_split[pivot + 1] == i_loc:
-                pivot += 1
-            i_sets[i_loc] = pivot
+        # TODO not use n_loc, use filename convention instead
+        metadata = scio.loadmat(dataset._PATH / 'metadata.mat',
+                                squeeze_me=True,
+                                chars_as_strings=True)
+        array_n_loc = metadata['n_loc']
+        rooms = [r.rstrip() for r in metadata['rooms']]
+
+        boundaries = np.cumsum(
+            np.outer(array_n_loc, np.insert(ratio, 0, 0)),
+            axis=1, dtype=np.int
+        )  # number of rooms x (number of sets + 1)
+        boundaries[:, -1] = array_n_loc
+        i_set_per_room_loc: Dict[str, ndarray] = dict()
+
+        for i_room, room in enumerate(rooms):
+            i_set = np.empty(array_n_loc[i_room])
+            for i_b in range(boundaries.shape[1] - 1):
+                i_set[np.arange(boundaries[i_b], boundaries[i_b+1])] = i_b
 
         all_files = dataset._all_files
         dataset._all_files = None
         result = [copy(dataset) for _ in range(n_split)]
+        for set_ in result:
+            set_._all_files = []
         for f in all_files:
-            i_loc = int(f.stem.split('_')[-1])
-            if result[i_sets[i_loc]]._all_files:
-                result[i_sets[i_loc]]._all_files.append(f)
-            else:
-                result[i_sets[i_loc]]._all_files = [f]
+            _, _, room, i_loc = f.stem.split('_')
+            result[i_set_per_room_loc[room][i_loc]]._all_files.append(f)
 
         return result

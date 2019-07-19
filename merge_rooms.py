@@ -66,13 +66,13 @@ if __name__ == '__main__':
             #     for p in PATHS_ROOMS
             # ]
             metadata = dict()
-            n_loc_sum = 0
+            list_n_loc = []
             merged_list_fname = []
             for path in PATHS_ROOMS:
                 metadata = scio.loadmat(path / kind / 'metadata.mat',
                                         chars_as_strings=True,
                                         squeeze_me=True)
-                n_loc_sum += metadata['n_loc']
+                list_n_loc.append(metadata['n_loc'])
                 fnames = [f.rstrip() for f in metadata['list_fname']]
                 merged_list_fname += fnames
 
@@ -93,7 +93,8 @@ if __name__ == '__main__':
                 pbars.append(pbar)
                 # symlink(src_path, fnames, dst_path, n_loc_shift, queue, len(pbars))
 
-            metadata['n_loc'] = n_loc_sum
+            metadata['n_loc'] = list_n_loc
+            metadata['rooms'] = args.ROOMS
             metadata['list_fname'] = merged_list_fname
             for k in list(metadata.keys()):
                 if k.startswith('__'):

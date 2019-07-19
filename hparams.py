@@ -89,7 +89,6 @@ class _HyperParameters:
     dict_path: Dict[str, Path] = None
     kwargs_stft: Dict[str, Any] = None
     kwargs_istft: Dict[str, Any] = None
-    n_loc: Dict[str, int] = None
     n_loss_term: int = None
     keys_trannorm: Sequence[Tuple] = None
     period_save_state: int = None
@@ -150,7 +149,7 @@ class _HyperParameters:
         path_feature_test = self.path_feature / f'{self.DF}_{self.room_test}/TEST'
         self.dict_path = dict(
             sft_data=self.path_feature / 'sft_data_32ms.mat',
-            RIR_Ys=self.path_feature / f'RIR_Ys_TRAIN13_TEST10_{self.room_create}.mat',
+            RIR_Ys=self.path_feature / f'RIR_Ys_{self.room_create}.mat',
 
             speech_train=self.path_speech / 'TRAIN',
             speech_test=self.path_speech / 'TEST',
@@ -171,15 +170,6 @@ class _HyperParameters:
                                 n_fft=self.n_fft, dtype=np.complex64)
         self.kwargs_istft = dict(hop_length=self.l_hop, window='hann', center=True,
                                  dtype=np.float32)
-        self.n_loc = dict()
-        for kind in ('train', 'seen', 'unseen'):
-            path_metadata = self.dict_path[f'feature_{kind}'] / 'metadata.mat'
-            if path_metadata.exists():
-                self.n_loc[kind] = scio.loadmat(
-                    str(path_metadata), variable_names=('n_loc',)
-                )['n_loc'].item()
-            else:
-                print(f'n_loc of "{kind}" not loaded.')
 
         # log & normalize
         key_trannorm = (self.method, 'meanstd', self.use_log)
