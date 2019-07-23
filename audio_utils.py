@@ -168,29 +168,6 @@ def calc_using_eval_module(y_clean: ndarray, y_est: ndarray,
     return ODict(zip(keys, sum_result.tolist()))
 
 
-def wave_scale_fix(wave: ndarray, amp_limit=1., message='', io: IO = None) -> ndarray:
-    """ make scale of `wave` limits to `amp_limit`.
-
-    :param wave:
-    :param amp_limit:
-    :param message:
-    :param io:
-    :return:
-    """
-
-    max_amp = np.max(np.abs(wave))
-    if max_amp > amp_limit:
-        wave /= max_amp
-        if message:
-            message = f'{message} is scaled by {max_amp / amp_limit} to prevent clipping.\n'
-            if io:
-                io.write(message)
-            else:
-                print(message, end='')
-
-    return wave
-
-
 def reconstruct_wave(*args: ndarray, n_iter=0, n_sample=-1) -> ndarray:
     """ reconstruct time-domain wave from spectrogram
 
