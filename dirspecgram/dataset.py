@@ -274,9 +274,11 @@ class DirSpecDataset(Dataset):
         i_set_per_room_loc: Dict[str, ndarray] = dict()
 
         for i_room, room in enumerate(rooms):
-            i_set = np.empty(array_n_loc[i_room])
+            i_set = np.empty(array_n_loc[i_room], dtype=np.int)
             for i_b in range(boundaries.shape[1] - 1):
-                i_set[np.arange(boundaries[i_b], boundaries[i_b+1])] = i_b
+                range_ = np.arange(boundaries[i_room, i_b], boundaries[i_room, i_b+1])
+                i_set[range_] = i_b
+            i_set_per_room_loc[room] = i_set
 
         all_files = dataset._all_files
         dataset._all_files = None
@@ -285,6 +287,7 @@ class DirSpecDataset(Dataset):
             set_._all_files = []
         for f in all_files:
             _, _, room, i_loc = f.stem.split('_')
+            i_loc = int(i_loc)
             result[i_set_per_room_loc[room][i_loc]]._all_files.append(f)
 
         return result
