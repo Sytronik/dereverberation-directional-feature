@@ -96,7 +96,7 @@ class CustomWriter(SummaryWriter):
             # T,
             x_wav = reconstruct_wave(x, x_phase)
             y_wav = reconstruct_wave(y, y_phase)
-            y_scale = np.abs(y_wav).max() / 0.707
+            y_scale = np.abs(y_wav).max() / 0.5
 
             odict_eval_x = calc_using_eval_module(y_wav, x_wav[:y_wav.shape[0]])
 
@@ -117,7 +117,7 @@ class CustomWriter(SummaryWriter):
                            step,
                            sample_rate=hp.fs)
             self.add_audio(f'{self.group}/2_Reverberant Wave',
-                           torch.from_numpy(x_wav / (np.abs(x_wav).max() / 0.707)),
+                           torch.from_numpy(x_wav / (np.abs(x_wav).max() / 0.5)),
                            step,
                            sample_rate=hp.fs)
 
