@@ -360,7 +360,7 @@ def create_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_result: mp.Queu
         dirspec_room = np.concatenate((df_room, mag_room[..., np.newaxis]), axis=2)
 
         # Save
-        dict_result = dict(speech_fname=str(f_speech),
+        dict_result = dict(path_speech=str(f_speech),
                            dirspec_free=dirspec_free,
                            dirspec_room=dirspec_room,
                            phase_free=phase_free[..., np.newaxis],

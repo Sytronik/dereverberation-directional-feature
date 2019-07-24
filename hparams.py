@@ -83,7 +83,7 @@ class _HyperParameters:
     channels_w_ph: Dict[str, Channel] = None
 
     def __post_init__(self):
-        self.channels = dict(speech_fname=Channel.NONE,
+        self.channels = dict(path_speech=Channel.NONE,
                              x=Channel.ALL,
                              # x=Channel.LAST,
                              y=Channel.LAST,
@@ -102,11 +102,8 @@ class _HyperParameters:
 
         self.spec_data_names = dict(x='dirspec_room', y='dirspec_free',
                                     x_phase='phase_room', y_phase='phase_free',
-                                    x_bpd='bpd_room', y_bpd='bpd_free',
-                                    speech_fname='speech_fname',
+                                    path_speech='path_speech',
                                     out='dirspec_estimated',
-                                    out_phase='phase_estimated',
-                                    out_bpd='bpd_estimated',
                                     )
 
     def init_dependent_vars(self):
