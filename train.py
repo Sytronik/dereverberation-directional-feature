@@ -187,8 +187,8 @@ class Trainer(metaclass=TrainerMeta):
                 # print
                 with torch.no_grad():
                     avg_loss += loss
-                    loss = loss.cpu().numpy() / len(T_ys)
-                    pbar.set_postfix_str(arr2str(loss, ndigits=1))
+                    loss_np = loss.cpu().numpy() / len(T_ys)
+                    pbar.set_postfix_str(arr2str(loss_np, ndigits=1))
 
             avg_loss /= len(loader_train.dataset)
             tag = 'loss/train'
@@ -236,8 +236,8 @@ class Trainer(metaclass=TrainerMeta):
             avg_loss += loss
 
             # print
-            loss = loss.cpu().numpy() / len(T_ys)
-            pbar.set_postfix_str(arr2str(loss, ndigits=1))
+            loss_np = loss.cpu().numpy() / len(T_ys)
+            pbar.set_postfix_str(arr2str(loss_np, ndigits=1))
 
             # write summary
             if i_iter == 0:
