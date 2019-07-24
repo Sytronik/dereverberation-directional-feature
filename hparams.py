@@ -28,8 +28,8 @@ class _HyperParameters:
     # select dataset
     DF: str = 'IV'
     # DF: str = 'DirAC
-    room_train: str = 'room1'
-    room_test: str = 'room1'
+    room_train: str = 'room1+2+3'
+    room_test: str = 'room1+2+3'
     room_create: str = ''
 
     method: str = 'mag'
@@ -54,7 +54,7 @@ class _HyperParameters:
     n_data_per_room: int = 13 * 300
     n_test_per_room: int = 10 * 100
     train_ratio: float = 0.77
-    n_epochs: int = 210
+    n_epochs: int = 150
     batch_size: int = 32
     learning_rate: float = 5e-4
     weight_decay: float = 1e-5  # Adam weight_decay
@@ -212,6 +212,27 @@ class _HyperParameters:
 
     # Function for parsing argument and set hyper parameters
     def parse_argument(self, parser=None, print_argument=True) -> Namespace:
+        def set_attr_to_parsed(obj: Any, attr_name: str, attr_type: type, parsed: str):
+            if parsed == '':
+                return
+            try:
+                v = eval(parsed)
+            except:
+                v = None
+            if attr_type == str or v is None or type(v) != attr_type:
+                if (parsed.startswith("'") and parsed.endswith("'")
+                        or parsed.startswith('"') and parsed.endswith('"')):
+                    parsed = parsed[1:-1]
+                if isinstance(obj, dict):
+                    obj[attr_name] = parsed
+                else:
+                    setattr(obj, attr_name, parsed)
+            else:
+                if isinstance(obj, dict):
+                    obj[attr_name] = v
+                else:
+                    setattr(obj, attr_name, v)
+
         if not parser:
             parser = ArgumentParser()
         args_already_added = [a.dest for a in parser._actions]
@@ -219,22 +240,21 @@ class _HyperParameters:
         for k in dict_self:
             if hasattr(args_already_added, k):
                 continue
-            parser.add_argument(f'--{k}', default='')
+            if isinstance(dict_self[k], dict):
+                for sub_k in dict_self[k]:
+                    parser.add_argument(f'--{k}--{sub_k}', default='')
+            else:
+                parser.add_argument(f'--{k}', default='')
 
         args = parser.parse_args()
         for k in dict_self:
-            parsed = getattr(args, k)
-            if parsed == '':
-                continue
-            if isinstance(dict_self[k], str):
-                if (parsed.startswith("'") and parsed.endwith("'")
-                        or parsed.startswith('"') and parsed.endwith('"')):
-                    parsed = parsed[1:-1]
-                setattr(self, k, parsed)
+            if isinstance(dict_self[k], dict):
+                for sub_k, sub_v in dict_self[k].items():
+                    parsed = getattr(args, f'{k}__{sub_k}')
+                    set_attr_to_parsed(getattr(self, k), sub_k, type(sub_v), parsed)
             else:
-                v = eval(parsed)
-                if isinstance(v, type(dict_self[k])):
-                    setattr(self, k, eval(parsed))
+                parsed = getattr(args, k)
+                set_attr_to_parsed(self, k, type(dict_self[k]), parsed)
 
         self.init_dependent_vars()
         if print_argument:
