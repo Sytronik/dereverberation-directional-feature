@@ -1,102 +1,96 @@
 from collections import OrderedDict as ODict
-from typing import IO, Sequence, Tuple, Union
+from typing import Sequence
 
 import librosa
 import numpy as np
 import torch
 from matplotlib import pyplot as plt
 from numpy import ndarray
-from scipy.linalg import toeplitz
 
 from hparams import hp
 import generic as gen
-from dirspecgram import LogModule, principle_
+from generic import TensArr
 from matlab_lib import Evaluation as EvalModule
 
-# class SNRseg(nn.Module):
-#     EINEXPR = 'ftc,ftc->t'
-#
-#     def __init__(self):
-#         super().__init__()
-#
-#     def forward(self, y_clean: torch.Tensor, y_est: torch.Tensor,
-#                 T_ys: ndarray) -> torch.Tensor:
-#         if not T_ys:
-#             T_ys = (y_est.shape[-2],) * y_est.shape[0]
-#         sum_result = torch.zeros(1, device=y_est.device)
-#         for i_b, (T, item_clean, item_est) in enumerate(zip(T_ys, y_clean, y_est)):
-#             # T
-#             norm_y = torch.einsum(SNRseg.einexpr,
-#                                   [item_clean[:, :T, :]] * 2)
-#             norm_err = torch.einsum(SNRseg.einexpr,
-#                                     [item_est[:, :T, :] - item_clean[:, :T, :]]*2)
-#
-#             sum_result += torch.log10(norm_y / norm_err).mean(dim=1)
-#         sum_result *= 10
-#         return sum_result
-
-# class Measurement:
-#     __slots__ = ('__len',
-#                  '__METRICS',
-#                  '__sum_values',
-#                  )
-#
-#     DICT_CALC = dict(SNRseg='Measurement.calc_snrseg',
-#                      # STOI=Measurement.calc_stoi,
-#                      PESQ_STOI='Measurement.calc_pesq_stoi',
-#                      )
-#
-#     def __init__(self, *metrics):
-#         self.__len = 0
-#         self.__METRICS = metrics
-#         # self.__seq_values = {metric: torch.empty(max_size) for metric in self.__METRICS}
-#         self.__sum_values: ODict = None
-#
-#     def __len__(self):
-#         return self.__len
-#
-#     def __str__(self):
-#         return self._str_measure(self.average())
-#
-#     # def __getitem__(self, idx):
-#     #     return [self.__seq_values[metric][idx] for metric in self.__METRICS]
-#
-#     def average(self):
-#         """
-#
-#         :rtype: OrderedDict[str, torch.Tensor]
-#         """
-#         return ODict([(metric, sum_ / self.__len)
-#                       for metric, sum_ in self.__sum_values.items()])
-#
-#     def append(self, y: ndarray, out: ndarray,
-#                T_ys: Union[int, Sequence[int]]) -> str:
-#         values = ODict([(metric, eval(self.DICT_CALC[metric])(y, out, T_ys))
-#                         for metric in self.__METRICS])
-#         if self.__len:
-#             for metric, v in values.items():
-#                 # self.__seq_values[metric][self.__len] = self.DICT_CALC[metric](y, out, T_ys)
-#                 self.__sum_values[metric] += v
-#         else:
-#             self.__sum_values = values
-#
-#         self.__len += len(T_ys) if hasattr(T_ys, '__len__') else 1
-#         return self._str_measure(values)
-#
-#     @staticmethod
-#     def _str_measure(values: ODict) -> str:
-#         return '\t'.join(
-#             [f"{metric}={arr2str(v, 'f')} " for metric, v in values.items()]
-#         )
-#
-#
-# def calc_stoi(y_clean: ndarray, y_est: ndarray):
-#     sum_result = 0.
-#     for item_clean, item_est in zip(y_clean, y_est):
-#         sum_result += stoi(item_clean, item_est, hp.fs)
-#     return sum_result
 
 EVAL_METRICS = EvalModule.metrics
+
+
+class LogModule:
+    _KWARGS_SUM = {np: dict(keepdims=True), torch: dict(keepdim=True)}
+    eps = hp.eps_for_log
+
+    @classmethod
+    def log(cls, a: TensArr) -> TensArr:
+        """
+
+        :param a: * x C, C can be 1, 3, 4
+        :param only_I:
+        :return:
+        """
+        pkg = gen.dict_package[type(a)]
+
+        if a.shape[-1] == 4:  # directional feature + spectrogram
+            b = pkg.empty_like(a)
+            r = (a[..., :3]**2).sum(-1, **cls._KWARGS_SUM[pkg])**0.5
+            log_r = pkg.log10((r + cls.eps) / cls.eps)
+            b[..., :3] = a[..., :3] * log_r / (r + cls.eps)
+            b[..., 3] = pkg.log10((a[..., 3] + cls.eps) / cls.eps)
+        elif a.shape[-1] == 3:  # directional feature
+            r = (a**2).sum(-1, **cls._KWARGS_SUM[pkg])**0.5
+            log_r = pkg.log10((r + cls.eps) / cls.eps)
+            b = a * log_r / (r + cls.eps)
+        else:  # spectrogram
+            b = pkg.log10((a + cls.eps) / cls.eps)
+        return b
+
+    @classmethod
+    def log_(cls, a: TensArr) -> TensArr:
+        pkg = gen.dict_package[type(a)]
+
+        if a.shape[-1] >= 3:  # if directional feature exists
+            r = (a[..., :3]**2).sum(-1, **cls._KWARGS_SUM[pkg])**0.5
+            log_r = pkg.log10((r + cls.eps) / cls.eps)
+            a[..., :3] *= log_r
+            a[..., :3] /= (r + cls.eps)
+            if a.shape[-1] == 4:  # if spectrogram exists
+                a[..., 3] = pkg.log10((a[..., 3] + cls.eps) / cls.eps)
+        else:  # spectrogram
+            pkg.log10((a + cls.eps) / cls.eps, out=a)
+        return a
+
+    @classmethod
+    def exp(cls, a: TensArr) -> TensArr:
+        pkg = gen.dict_package[type(a)]
+
+        if a.shape[-1] == 4:  # directional feature + spectrogram
+            b = pkg.empty_like(a)
+            r = (a[..., :3]**2).sum(-1, **cls._KWARGS_SUM[pkg])**0.5
+            exp_r = cls.eps * (10.**r - 1)
+            b[..., :3] = a[..., :3] * exp_r / (r + cls.eps)
+            b[..., 3] = cls.eps * (10.**a[..., 3] - 1)
+        elif a.shape[-1] == 3:  # directional feature
+            r = (a**2).sum(-1, **cls._KWARGS_SUM[pkg])**0.5
+            exp_r = cls.eps * (10.**r - 1)
+            b = a * exp_r / (r + cls.eps)
+        else:  # spectrogram
+            b = cls.eps * (10.**a - 1)
+        return b
+
+    @classmethod
+    def exp_(cls, a: TensArr) -> TensArr:
+        pkg = gen.dict_package[type(a)]
+
+        if a.shape[-1] >= 3:  # if directional feature exists
+            r = (a[..., :3]**2).sum(-1, **cls._KWARGS_SUM[pkg])**0.5
+            exp_r = cls.eps * (10.**r - 1)
+            a[..., :3] *= exp_r
+            a[..., :3] /= (r + cls.eps)
+            if a.shape[-1] == 4:  # if spectrogram exists
+                a[..., 3] = cls.eps * (10.**a[..., 3] - 1)
+        else:  # spectrogram
+            a = cls.eps * (10.**a - 1)
+        return a
 
 
 def calc_snrseg(y_clean: ndarray, y_est: ndarray, T_ys: Sequence[int] = (0,)) \
@@ -208,50 +202,7 @@ def reconstruct_wave(*args: ndarray, n_iter=0, n_sample=-1) -> ndarray:
     return wave
 
 
-def delta(*data: gen.TensArr, axis: int, L=2) -> gen.TensArrOrSeq:
-    dim = gen.ndim(data[0])
-    dtype = gen.convert_dtype(data[0].dtype, np)
-    if axis < 0:
-        axis += dim
-
-    max_len = max([item.shape[axis] for item in data])
-
-    # Einsum expression
-    # ex) if the member of a has the dim (b,c,f,t), (thus, axis=3)
-    # einxp: ij,abcd -> abci
-    str_axes = ''.join([chr(ord('a') + i) for i in range(dim)])
-    str_new_axes = ''.join([chr(ord('a') + i) if i != axis else 'i'
-                            for i in range(dim)])
-    ein_expr = f'ij,{str_axes}->{str_new_axes}'
-
-    # Create Toeplitz Matrix (T-2L, T)
-    col = np.zeros(max_len - 2 * L, dtype=dtype)
-    col[0] = -L
-
-    row = np.zeros(max_len, dtype=dtype)
-    row[:2 * L + 1] = range(-L, L + 1)
-
-    denominator = np.sum([ll**2 for ll in range(1, L + 1)])
-    tplz_mat = toeplitz(col, row) / (2 * denominator)
-
-    # Convert to Tensor
-    if type(data[0]) == torch.Tensor:
-        if data[0].device == torch.device('cpu'):
-            tplz_mat = torch.from_numpy(tplz_mat)
-        else:
-            tplz_mat = torch.tensor(tplz_mat, device=data[0].device)
-
-    # Calculate
-    result = [type(data[0])] * len(data)
-    for idx, item in enumerate(data):
-        length = item.shape[axis]
-        result[idx] = gen.einsum(ein_expr,
-                                 (tplz_mat[:length - 2 * L, :length], item))
-
-    return result if len(result) > 1 else result[0]
-
-
-def draw_spectrogram(data: gen.TensArr, to_db=True, show=False, dpi=150, **kwargs):
+def draw_spectrogram(data: TensArr, to_db=True, show=False, dpi=150, **kwargs):
     """
     
     :param data:
@@ -281,65 +232,3 @@ def draw_spectrogram(data: gen.TensArr, to_db=True, show=False, dpi=150, **kwarg
         plt.show()
 
     return fig
-
-
-def bnkr_equalize_(*args: ndarray) \
-        -> Union[ndarray, Tuple[ndarray, Union[ndarray, None]]]:
-    """ divide spectrogram into bnkr with regularization
-
-    :param args: (complex_spectrogram,), (magnitude_spectrogram,),
-        or (magnitude_spectrogram, phase_spectrogram)
-    :return: same as args
-    """
-    if len(args) == 1:
-        if np.iscomplexobj(args[0]):
-            spec = args[0]
-            mag = None
-            phase = None
-        else:
-            spec = None
-            mag = args[0]
-            phase = None
-    elif len(args) == 2:
-        spec = None
-        mag, phase = args
-    else:
-        raise ValueError
-
-    if mag is None:
-        assert spec.shape[0] == hp.bnkr_inv0.shape[0]
-        bnkr_inv0 = hp.bnkr_inv0.copy()
-        while spec.ndim < bnkr_inv0.ndim:
-            bnkr_inv0 = bnkr_inv0[..., 0]
-
-        spec *= bnkr_inv0
-
-        return spec
-    else:
-        assert mag.shape[0] == hp.bnkr_inv0_mag.shape[0]
-        bnkr_inv0_mag = hp.bnkr_inv0_mag.copy()
-        while mag.ndim < bnkr_inv0_mag.ndim:
-            bnkr_inv0_mag = bnkr_inv0_mag[..., 0]
-
-        mag *= bnkr_inv0_mag
-
-        if phase is not None:
-            assert phase.shape[0] == mag.shape[0]
-            bnkr_inv0_angle = hp.bnkr_inv0_angle.copy()
-            while phase.ndim < bnkr_inv0_mag.ndim:
-                bnkr_inv0_angle = bnkr_inv0_angle[..., 0]
-
-            phase += bnkr_inv0_angle
-            phase = principle_(phase)
-
-            return mag, phase
-        else:
-            if len(args) == 1:
-                return mag
-            else:
-                return mag, None
-
-
-def bnkr_equalize(*args: ndarray) -> Union[ndarray, Tuple[ndarray, ndarray]]:
-    args = [item.copy() for item in args]
-    return bnkr_equalize_(*args)

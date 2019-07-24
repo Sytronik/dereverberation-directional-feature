@@ -33,12 +33,10 @@ import os
 import shutil
 from argparse import ArgumentError, ArgumentParser
 
-# noinspection PyCompatibility
-from dataclasses import asdict
 from torch.utils.data import DataLoader
 
+from dataset import DirSpecDataset
 from hparams import hp
-from dirspecgram import DirSpecDataset
 from train import Trainer
 
 tfevents_fname = 'events.out.tfevents.*'
@@ -94,13 +92,13 @@ else:
     path_state_dict = None
 
 # Training + Validation Set
-dataset_temp = DirSpecDataset('train', keys_trannorm=hp.keys_trannorm)
+dataset_temp = DirSpecDataset('train')
 dataset_train, dataset_valid = DirSpecDataset.split(dataset_temp, (hp.train_ratio, -1))
 dataset_train.set_needs(**hp.channels)
 dataset_valid.set_needs(**hp.channels_w_ph)
 
 # run
-trainer = Trainer.create(path_state_dict)
+trainer = Trainer(path_state_dict)
 if args.train:
     loader_train = DataLoader(dataset_train,
                               batch_size=hp.batch_size,
@@ -120,8 +118,9 @@ if args.train:
     trainer.train(loader_train, loader_valid, logdir_train, first_epoch)
 else:  # args.test
     # Test Set
-    dataset_test = DirSpecDataset(args.test, **hp.channels_w_ph)
-    dataset_test.normalize_on_like(dataset_temp)
+    dataset_test = DirSpecDataset(args.test,
+                                  dataset_temp.norm_x, dataset_temp.norm_y,
+                                  **hp.channels_w_ph)
     loader = DataLoader(dataset_test,
                         batch_size=1,
                         num_workers=hp.num_disk_workers,

@@ -14,7 +14,7 @@ from numpy import ndarray
 # noinspection PyArgumentList
 class Channel(Enum):
     ALL = slice(None)
-    MAG = slice(-1, None)
+    LAST = slice(-1, None)
     NONE = None
 
 
@@ -32,10 +32,6 @@ class _HyperParameters:
     room_test: str = 'room1+2+3'
     room_create: str = ''
 
-    method: str = 'mag'
-    # method: str = 'complex'
-    # method: str = 'magphase'
-    # method: str = 'magbpd'
     model_name: str = 'UNet'
 
     # dirspec parameters
@@ -58,43 +54,39 @@ class _HyperParameters:
     batch_size: int = 32
     learning_rate: float = 5e-4
     weight_decay: float = 1e-5  # Adam weight_decay
-    weight_loss: tuple = (0.1, 1)  # complex
-    # weight_loss: tuple = (0.3, 1, 0.08)  # magphase
 
     # reconstruction
-    use_glim: bool = True
-    n_glim_iter: int = 20
+    n_glim_iter: int = 20  # 0 for not using Griffin Lim
 
     # paths
     logdir: str = f'./result/test'  # will be converted to type Path
     path_speech: Path = Path('./data/TIMIT')
     path_feature: Path = Path('./backup')
-    form_path_normconst: str = 'normconst_{}.npz'
     s_path_metadata: str = ''
 
     # file names
     form_feature: str = '{:05d}_{:04d}_{}_{:02d}.npz'  # idx, i_speech, room, i_loc
     form_result: str = 'dirspec_{}.mat'
 
+    # defined in __post_init__
     channels: Dict[str, Channel] = field(init=False)
     UNet: Dict[str, Any] = field(init=False)
     scheduler: Dict[str, Any] = field(init=False)
     spec_data_names: Dict[str, str] = field(init=False)
 
+    # dependent variables
     dummy_input_size: Tuple = None
     dict_path: Dict[str, Path] = None
     kwargs_stft: Dict[str, Any] = None
     kwargs_istft: Dict[str, Any] = None
-    n_loss_term: int = None
-    keys_trannorm: Sequence[Tuple] = None
     period_save_state: int = None
     channels_w_ph: Dict[str, Channel] = None
 
     def __post_init__(self):
         self.channels = dict(speech_fname=Channel.NONE,
                              x=Channel.ALL,
-                             # x=Channel.MAG,
-                             y=Channel.MAG,
+                             # x=Channel.LAST,
+                             y=Channel.LAST,
                              # x_phase=Channel.ALL,
                              # y_phase=Channel.ALL,
                              )
@@ -151,9 +143,9 @@ class _HyperParameters:
             feature_seen=path_feature_test / 'SEEN',
             feature_unseen=path_feature_test / 'UNSEEN',
 
-            form_normconst_train=str(path_feature_train / self.form_path_normconst),
-            form_normconst_seen=str(path_feature_test / self.form_path_normconst),
-            form_normconst_unseen=str(path_feature_test / self.form_path_normconst),
+            normconst_train=path_feature_train / 'normconst.npz',
+            normconst_seen=path_feature_test / 'normconst.npz',
+            normconst_unseen=path_feature_test / 'normconst.npz',
 
             figures=Path('./figures'),
         )
@@ -163,18 +155,6 @@ class _HyperParameters:
                                 n_fft=self.n_fft, dtype=np.complex64)
         self.kwargs_istft = dict(hop_length=self.l_hop, window='hann', center=True,
                                  dtype=np.float32)
-
-        # log & normalize
-        key_trannorm = (self.method, 'meanstd', self.use_log)
-        if self.method == 'mag' or self.method == 'magbpd':
-            self.n_loss_term = 1
-            self.keys_trannorm = (key_trannorm,)
-        elif self.method == 'complex':
-            self.n_loss_term = 2
-            self.keys_trannorm = (key_trannorm, ('mag', 'meanstd', True))
-        elif self.method == 'magphase':
-            self.n_loss_term = 3
-            self.keys_trannorm = (('mag', 'meanstd', True), ('complex', 'meanstd', False))
 
         # training
         if not self.period_save_state:
