@@ -311,7 +311,7 @@ class Trainer(metaclass=TrainerMeta):
             out_one = self._post_one(output, T_ys, 0, loader.dataset)
 
             DirSpecDataset.save_dirspec(
-                logdir / hp.form_result_dirspec.format(i_iter),
+                logdir / hp.form_result.format(i_iter),
                 **one_sample, **out_one
             )
 
@@ -345,8 +345,8 @@ class MagTrainer(Trainer):
         x = data['x']
         y = data['y']
 
-        x = x.to(self.in_device, non_blocking=True)
-        y = y.to(self.out_device, non_blocking=True)
+        x = x.to(self.in_device, copy=True, non_blocking=True)
+        y = y.to(self.out_device, copy=True, non_blocking=True)
 
         x = dataset.preprocess_(XY.x, x)
         y = dataset.preprocess_(XY.y, y)
@@ -417,10 +417,10 @@ class ComplexTrainer(Trainer):
         x_phase = data['x_phase']
         y_phase = data['y_phase']
 
-        x = x.to(self.in_device)
-        y = y.to(self.out_device)
-        x_phase = x_phase.to(self.in_device)
-        y_phase = y_phase.to(self.out_device)
+        x = x.to(self.in_device, copy=True, non_blocking=True)
+        y = y.to(self.out_device, copy=True, non_blocking=True)
+        x_phase = x_phase.to(self.in_device, copy=True, non_blocking=True)
+        y_phase = y_phase.to(self.out_device, copy=True, non_blocking=True)
 
         x = dataset.preprocess_(XY.x, x, x_phase)
         y = dataset.preprocess_(XY.y, y, y_phase)
@@ -497,10 +497,10 @@ class MagPhaseTrainer(Trainer):
         x_phase = data['x_phase']
         y_phase = data['y_phase']
 
-        x = x.to(self.in_device)
-        y = y.to(self.out_device)
-        x_phase = x_phase.to(self.in_device)
-        y_phase = y_phase.to(self.out_device)
+        x = x.to(self.in_device, copy=True, non_blocking=True)
+        y = y.to(self.out_device, copy=True, non_blocking=True)
+        x_phase = x_phase.to(self.in_device, copy=True, non_blocking=True)
+        y_phase = y_phase.to(self.out_device, copy=True, non_blocking=True)
 
         x = dataset.preprocess_(XY.x, x)
         x_phase /= np.pi
@@ -608,10 +608,10 @@ class MagBPDTrainer(Trainer):
         x_phase = data['x_phase']
         y_phase = data['y_phase']
 
-        x = x.to(self.in_device)
-        y = y.to(self.out_device)
-        x_phase = x_phase.to(self.in_device)
-        y_phase = y_phase.to(self.out_device)
+        x = x.to(self.in_device, copy=True, non_blocking=True)
+        y = y.to(self.out_device, copy=True, non_blocking=True)
+        x_phase = x_phase.to(self.in_device, copy=True, non_blocking=True)
+        y_phase = y_phase.to(self.out_device, copy=True, non_blocking=True)
 
         if for_summary:
             x_trunc = x[0, :, :data['T_ys'][0], -1:].to(self.out_device, copy=True)
