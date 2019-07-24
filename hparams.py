@@ -64,7 +64,6 @@ class _HyperParameters:
     # reconstruction
     use_glim: bool = True
     n_glim_iter: int = 20
-    do_bnkr_eq: bool = False
 
     # paths
     logdir: str = f'./result/test'  # will be converted to type Path
@@ -90,9 +89,6 @@ class _HyperParameters:
     keys_trannorm: Sequence[Tuple] = None
     period_save_state: int = None
     channels_w_ph: Dict[str, Channel] = None
-    bnkr_inv0: ndarray = None
-    bnkr_inv0_mag: ndarray = None
-    bnkr_inv0_ph: ndarray = None
 
     def __post_init__(self):
         self.channels = dict(speech_fname=Channel.NONE,
@@ -191,18 +187,6 @@ class _HyperParameters:
 
         if 'y_phase' not in self.channels:
             self.channels_w_ph['y_phase'] = Channel.ALL
-
-        # sft_dict = scio.loadmat(str(self.dict_path['sft_data']),
-        #                         variable_names=('bEQf',),
-        #                         squeeze_me=True)
-        # self.bnkr_inv0 = sft_dict['bEQf'][:, 0]
-        # self.bnkr_inv0 = self.bnkr_inv0[:, np.newaxis, np.newaxis]  # F, T(1), C(1)
-        # self.bnkr_inv0_mag = np.abs(self.bnkr_inv0)
-        # self.bnkr_inv0_ph = np.angle(self.bnkr_inv0)
-        # if self.DF == 'DirAC':
-        #     self.do_bnkr_eq = False
-        # else:
-        #     self.do_bnkr_eq = True
 
     @staticmethod
     def is_featurefile(f: os.DirEntry) -> bool:

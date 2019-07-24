@@ -84,12 +84,8 @@ class CustomWriter(SummaryWriter):
             x = one_sample['x'][..., -1:]
             y = one_sample['y'][..., -1:]
 
-            if hp.do_bnkr_eq:
-                x, x_phase = bnkr_equalize_(x, one_sample['x_phase'].copy())
-                y, y_phase = bnkr_equalize_(y, one_sample['y_phase'].copy())
-            else:
-                x_phase = one_sample['x_phase'].copy()
-                y_phase = one_sample['y_phase'].copy()
+            x_phase = one_sample['x_phase'].copy()
+            y_phase = one_sample['y_phase'].copy()
 
             snrseg_x = calc_snrseg(y, x[:, :y.shape[1], :])
 
@@ -142,9 +138,6 @@ class CustomWriter(SummaryWriter):
 
         out = out[..., -1:]
         if np.iscomplexobj(out):
-            if hp.do_bnkr_eq:
-                out = bnkr_equalize_(out)
-
             snrseg = calc_snrseg(y, np.abs(out))
             out_wav = reconstruct_wave(out)
 
@@ -152,8 +145,6 @@ class CustomWriter(SummaryWriter):
         else:
             np.maximum(out, 0, out=out)
             # np.sqrt(out, out=out)
-            if hp.do_bnkr_eq:
-                out, out_phase = bnkr_equalize_(out, out_phase)
 
             snrseg = calc_snrseg(y, out)
 
