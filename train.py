@@ -99,10 +99,10 @@ class Trainer(metaclass=TrainerMeta):
         if type(device) == int:
             device = [device]
         elif type(device) == str:
-            device = [int(device[5:])]
+            device = [int(device.replace('cuda:', ''))]
         else:  # sequence of devices
             if type(device[0]) != int:
-                device = [int(d[5:]) for d in device]
+                device = [int(d.replace('cuda:', '')) for d in device]
 
         self.in_device = torch.device(f'cuda:{device[0]}')
 
@@ -206,7 +206,7 @@ class Trainer(metaclass=TrainerMeta):
                     (self.model.module.state_dict(),
                      self.optimizer.state_dict(),
                      ),
-                    logdir / f'{self.model_name}_{epoch}.pt'
+                    logdir / f'{epoch}.pt'
                 )
 
     @torch.no_grad()
