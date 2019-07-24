@@ -112,7 +112,8 @@ def calc_snrseg(y_clean: ndarray, y_est: ndarray, T_ys: Sequence[int] = (0,)) \
     _LIM_UPPER = 35. / 10.  # clip at 35 dB
     _LIM_LOWER = -10. / 10.  # clip at -10 dB
     if len(T_ys) == 1 and y_clean.shape[0] != 1:
-        T_ys = (y_clean.shape[0],)
+        if T_ys == (0,):
+            T_ys = (y_clean.shape[0],)
         y_clean = y_clean[np.newaxis, ...]
         y_est = y_est[np.newaxis, ...]
 
@@ -172,7 +173,7 @@ def reconstruct_wave(*args: ndarray, n_iter=0, n_sample=-1) -> ndarray:
     """ reconstruct time-domain wave from spectrogram
 
     :param args: can be (mag_spectrogram, phase_spectrogram) or (complex_spectrogram,)
-    :param n_iter: no. of iteration of griffin-lim
+    :param n_iter: no. of iteration of griffin-lim. 0 for not using griffin-lim.
     :param n_sample: number of samples of output wave
     :return:
     """

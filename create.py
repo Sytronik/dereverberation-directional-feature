@@ -347,7 +347,7 @@ def create_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_result: mp.Queu
 
             df_room = cp.asnumpy(calc_direction_vec(anm_spec_real_cp))
             mag_room = cp.asnumpy(cp.abs(anm_spec_real_cp[0]))
-            phase_room = cp.angle(anm_spec_real_cp[0])
+            phase_room = cp.asnumpy(cp.angle(anm_spec_real_cp[0]))
         else:
             # IV and p00
             pnm_spec_cp = stft(pnm_time_cp, win_cp)

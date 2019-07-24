@@ -85,14 +85,15 @@ class DirSpecDataset(Dataset):
             Values can be an integer, ndarray, or str.
         """
         sample = dict()
-        for k, v in self._needs.items():
-            if v.value:
-                data: ndarray = np.load(self._all_files[idx])[hp.spec_data_names[k]]
-                data = data[..., v.value]
-                if type(data) == np.str_:
-                    sample[k] = str(data)
-                else:
-                    sample[k] = torch.from_numpy(data.astype(np.float32))
+        with np.load(self._all_files[idx], mmap_mode='r') as npz_data:
+            for k, v in self._needs.items():
+                if v.value:
+                    data: ndarray = npz_data[hp.spec_data_names[k]]
+                    data = data[..., v.value]
+                    if type(data) == np.str_:
+                        sample[k] = str(data)
+                    else:
+                        sample[k] = torch.from_numpy(data.astype(np.float32))
 
         for xy in ('x', 'y'):
             sample[f'T_{xy}'] = sample[xy].shape[-2]
