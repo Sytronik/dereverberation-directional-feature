@@ -44,15 +44,15 @@ class Normalization:
 
     @staticmethod
     def _sum(a: ndarray) -> ndarray:
-        return a.sum()
+        return LogModule.log_(a).sum(axis=1, keepdims=True)
 
     @staticmethod
     def _sq_dev(a: ndarray, mean_a: ndarray) -> ndarray:
-        return ((a - mean_a)**2).sum()
+        return ((LogModule.log_(a) - mean_a)**2).sum(axis=1, keepdims=True)
 
     @staticmethod
     def _load_data(fname: Union[str, Path], key: str, queue: mp.Queue) -> None:
-        x = np.load(fname, allow_pickle=True)[key]
+        x = np.load(fname, mmap_mode='r')[key]
         queue.put(x)
 
     @staticmethod
@@ -88,8 +88,8 @@ class Normalization:
 
         # Calculate summation & size (parallel)
         list_fn = (np.size, cls._sum)
-        pool_loader = mp.Pool(2)
-        pool_calc = mp.Pool(min(mp.cpu_count() - 2, 6))
+        pool_loader = mp.Pool(hp.num_disk_workers)
+        pool_calc = mp.Pool(min(mp.cpu_count() - hp.num_disk_workers - 1, 6))
         with mp.Manager() as manager:
             queue_data = manager.Queue()
             pool_loader.starmap_async(cls._load_data,
@@ -103,13 +103,10 @@ class Normalization:
                 ))
 
         result: List[Dict] = [item.get() for item in result]
-        print()
 
         sum_size = np.sum([item[np.size] for item in result])
         sum_ = np.sum([item[cls._sum] for item in result], axis=0)
         mean = sum_ / (sum_size // sum_.size)
-
-        print('Calculated Size/Mean')
 
         # Calculate squared deviation (parallel)
         with mp.Manager() as manager:
@@ -132,7 +129,6 @@ class Normalization:
         sum_sq_dev = np.sum([item[cls._sq_dev] for item in result], axis=0)
 
         std = np.sqrt(sum_sq_dev / (sum_size // sum_sq_dev.size) + 1e-5)
-        print('Calculated Std')
 
         return cls(mean, std)
 
@@ -141,20 +137,22 @@ class Normalization:
 
     # normalize and denormalize functions can accept a ndarray or a tensor.
     def normalize(self, a: TensArr) -> TensArr:
-        return (a - self.mean.get_like(a)) / (2 * self.std.get_like(a))
+        return ((a - self.mean.get_like(a)[..., -a.shape[-1]:])
+                / (2 * self.std.get_like(a)[..., -a.shape[-1]:]))
 
     def normalize_(self, a: TensArr) -> TensArr:  # in-place version
-        a -= self.mean.get_like(a)
-        a /= 2 * self.std.get_like(a)
+        a -= self.mean.get_like(a)[..., -a.shape[-1]:]
+        a /= 2 * self.std.get_like(a)[..., -a.shape[-1]:]
 
         return a
 
     def denormalize(self, a: TensArr) -> TensArr:
-        return a * (2 * self.std.get_like(a)) + self.mean.get_like(a)
+        return (a * (2 * self.std.get_like(a)[..., -a.shape[-1]:])
+                + self.mean.get_like(a)[..., -a.shape[-1]:])
 
     def denormalize_(self, a: TensArr) -> TensArr:  # in-place version
-        a *= 2 * self.std.get_like(a)
-        a += self.mean.get_like(a)
+        a *= 2 * self.std.get_like(a)[..., -a.shape[-1]:]
+        a += self.mean.get_like(a)[..., -a.shape[-1]:]
 
         return a
 
@@ -183,29 +181,37 @@ class DirSpecDataset(Dataset):
         # default needs
         self._needs = dict(x=Channel.ALL, y=Channel.LAST,
                            x_phase=Channel.NONE, y_phase=Channel.NONE,
-                           speech_fname=Channel.ALL)
+                           path_speech=Channel.ALL)
         self.set_needs(**kwargs)
 
         self._all_files = [f for f in self._PATH.glob('*.*') if hp.is_featurefile(f)]
         self._all_files = sorted(self._all_files)
 
         # path_normconst: path of the file that has information about mean, std, ...
-        path_normconst = hp.dict_path[f'form_normconst_{kind_data}']
+        path_normconst = hp.dict_path[f'normconst_{kind_data}']
 
         if kind_data == 'train':
-            if not hp.refresh_const or path_normconst.exists():
+            if not hp.refresh_const and path_normconst.exists():
                 # when normconst file exists
-                dict_normconst = scio.loadmat(path_normconst, squeeze_me=True)
-                self.norm_x = Normalization(*dict_normconst['normconst_x'])
-                self.norm_y = Normalization(*dict_normconst['normconst_y'])
+                npz_normconst = np.load(path_normconst, allow_pickle=True)
+                self.norm_x = Normalization(*npz_normconst['normconst_x'])
+                self.norm_y = Normalization(*npz_normconst['normconst_y'])
             else:
+                print('calculate normalization consts for input')
                 self.norm_x \
                     = Normalization.calc_const(self._all_files, key=hp.spec_data_names['x'])
+                print('calculate normalization consts for output')
                 self.norm_y \
                     = Normalization.calc_const(self._all_files, key=hp.spec_data_names['y'])
+                np.savez(path_normconst,
+                         normconst_x=self.norm_x.astuple(),
+                         normconst_y=self.norm_y.astuple())
+                scio.savemat(path_normconst.with_suffix('.mat'),
+                             dict(normconst_x=self.norm_x.astuple(),
+                                  normconst_y=self.norm_y.astuple()))
 
-            print(f'Normalization for input: {self.norm_x}')
-            print(f'Normalization for output: {self.norm_y}')
+            print(f'normalization consts for input: {self.norm_x}')
+            print(f'normalization consts for output: {self.norm_y}')
         else:
             assert norm_x, norm_y
             self.norm_x = norm_x
@@ -321,7 +327,8 @@ class DirSpecDataset(Dataset):
                 self._needs[k] = kwargs[k]
 
     @xy_signature
-    def normalize(self, x: TensArr, y: TensArr) -> Union[Optional[TensArr], Tuple]:
+    def normalize(self, x: TensArr = None, y: TensArr = None) \
+            -> Union[Optional[TensArr], Tuple]:
         """
 
         :param x: input dirspec
@@ -342,7 +349,8 @@ class DirSpecDataset(Dataset):
         return x_norm, y_norm
 
     @xy_signature
-    def normalize_(self, x: TensArr, y: TensArr) -> Union[Optional[TensArr], Tuple]:
+    def normalize_(self, x: TensArr = None, y: TensArr = None) \
+            -> Union[Optional[TensArr], Tuple]:
         """
 
         :param x: input dirspec
@@ -359,7 +367,8 @@ class DirSpecDataset(Dataset):
         return x, y
 
     @xy_signature
-    def denormalize(self, x: TensArr, y: TensArr) -> Union[Optional[TensArr], Tuple]:
+    def denormalize(self, x: TensArr = None, y: TensArr = None) \
+            -> Union[Optional[TensArr], Tuple]:
         """
 
         :param x: input dirspec
@@ -380,7 +389,8 @@ class DirSpecDataset(Dataset):
         return x_denorm, y_denorm
 
     @xy_signature
-    def denormalize_(self, x: TensArr, y: TensArr) -> Union[Optional[TensArr], Tuple]:
+    def denormalize_(self, x: TensArr = None, y: TensArr = None) \
+            -> Union[Optional[TensArr], Tuple]:
         """
 
         :param x: input dirspec

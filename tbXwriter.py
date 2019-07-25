@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import numpy as np
 import torch
 from numpy import ndarray
@@ -74,11 +72,12 @@ class CustomWriter(SummaryWriter):
             ymin = y[y > 0].min()
             pad_min = np.empty(
                 (y.shape[0], x.shape[1] - y.shape[1], y.shape[2])
-            ).fill(ymin)
+            )
+            pad_min.fill(ymin)
             vmin, vmax = 20 * LogModule.log(np.array((ymin, y.max())))
 
             fig_x = draw_spectrogram(x)
-            fig_y = draw_spectrogram(np.append(y, ymin * pad_min, axis=1))
+            fig_y = draw_spectrogram(np.append(y, pad_min, axis=1))
 
             self.add_figure(f'{self.group}/1_Anechoic Spectrum', fig_y, step)
             self.add_figure(f'{self.group}/2_Reverberant Spectrum', fig_x, step)

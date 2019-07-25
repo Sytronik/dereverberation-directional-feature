@@ -25,7 +25,6 @@ class LogModule:
         """
 
         :param a: * x C, C can be 1, 3, 4
-        :param only_I:
         :return:
         """
         pkg = gen.dict_package[type(a)]
@@ -46,6 +45,11 @@ class LogModule:
 
     @classmethod
     def log_(cls, a: TensArr) -> TensArr:
+        """
+
+        :param a: * x C, C can be 1, 3, 4
+        :return:
+        """
         pkg = gen.dict_package[type(a)]
 
         if a.shape[-1] >= 3:  # if directional feature exists
@@ -61,6 +65,11 @@ class LogModule:
 
     @classmethod
     def exp(cls, a: TensArr) -> TensArr:
+        """
+
+        :param a: * x C, C can be 1, 3, 4
+        :return:
+        """
         pkg = gen.dict_package[type(a)]
 
         if a.shape[-1] == 4:  # directional feature + spectrogram
@@ -79,6 +88,11 @@ class LogModule:
 
     @classmethod
     def exp_(cls, a: TensArr) -> TensArr:
+        """
+
+        :param a: * x C, C can be 1, 3, 4
+        :return:
+        """
         pkg = gen.dict_package[type(a)]
 
         if a.shape[-1] >= 3:  # if directional feature exists

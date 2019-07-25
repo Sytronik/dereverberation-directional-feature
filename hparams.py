@@ -169,7 +169,7 @@ class _HyperParameters:
     def is_featurefile(f: os.DirEntry) -> bool:
         return (f.name.endswith('.npz')
                 and not f.name.startswith('metadata')
-                and not f.name.startswith('normconst_'))
+                and not f.name.startswith('normconst'))
 
     # Function for parsing argument and set hyper parameters
     def parse_argument(self, parser=None, print_argument=True) -> Namespace:
