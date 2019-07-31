@@ -52,6 +52,30 @@ class SFTData:
     def get_for_intensity(self) -> Tuple:
         return self.Wnv, self.Wpv, self.Vv
 
+    def as_single_prec(self):
+        """
+
+        :rtype: SFTData
+        """
+        dict_single = dict()
+        xp = cp.get_array_module(self.Yenc)
+        for k, v in asdict(self).items():
+            if v is None:
+                continue
+
+            if v.dtype == xp.float64:
+                dict_single[k] = v.astype(xp.float32)
+            elif v.dtype == xp.complex128:
+                dict_single[k] = v.astype(xp.complex64)
+            elif v.dtype == xp.float32:
+                dict_single[k] = v
+            elif v.dtype == xp.complex64:
+                dict_single[k] = v
+            else:
+                raise NotImplementedError
+
+        return SFTData(**dict_single)
+
 
 def stft(data: NDArray, _win: NDArray):
     xp = cp.get_array_module(data)
@@ -61,7 +85,7 @@ def stft(data: NDArray, _win: NDArray):
 
     n_frame = (data.shape[1] - hp.l_frame) // hp.l_hop + 1
 
-    spec = xp.empty((data.shape[0], hp.n_freq, n_frame), dtype=xp.complex128)
+    spec = xp.empty((data.shape[0], hp.n_freq, n_frame), dtype=xp.complex64)
     interval = np.arange(hp.l_frame)
     for i_frame in range(n_frame):
         spec[:, :, i_frame] \
@@ -71,7 +95,7 @@ def stft(data: NDArray, _win: NDArray):
     return spec
 
 
-def apply_iir_filter(wave, filter_fft, _win):
+def apply_freq_domain_filter(wave, filter_fft, _win):
     # bnkr equalization in frequency domain
     xp = cp.get_array_module(wave)
 
@@ -83,7 +107,7 @@ def apply_iir_filter(wave, filter_fft, _win):
     n_frame = len_original // hp.l_hop
     len_istft = hp.n_fft + hp.l_hop * (n_frame - 1)
 
-    filtered = xp.zeros((wave.shape[0], len_istft), dtype=xp.complex128)
+    filtered = xp.zeros((wave.shape[0], len_istft), dtype=xp.complex64)
     interval = np.arange(hp.l_frame)
     for i_frame in range(n_frame):
         spectrum = xp.fft.fft(wave[:, interval] * _win, n=hp.n_fft)
@@ -97,7 +121,7 @@ def apply_iir_filter(wave, filter_fft, _win):
     artifact = librosa.filters.window_sumsquare(
         'hann',
         n_frame, win_length=hp.l_frame, n_fft=hp.n_fft, hop_length=hp.l_hop,
-        dtype=np.float64
+        dtype=np.float32
     )
     idxs_artifact = artifact > librosa.util.tiny(artifact)
     artifact = xp.array(artifact[idxs_artifact])
@@ -180,17 +204,17 @@ def calc_mat_for_real_coeffs(N: int) -> np.ndarray:
     :param N: n-order
     :return: (Order x Order)
     """
-    matrix = np.zeros(((N + 1)**2, (N + 1)**2), dtype=np.complex128)
+    matrix = np.zeros(((N + 1)**2, (N + 1)**2), dtype=np.complex64)
     matrix[0, 0] = 1
     if N > 0:
         idxs = (np.arange(N + 1) + 1)**2
 
         for n in range(1, N + 1):
-            m1 = np.arange(n)
-            diag = np.concatenate((np.full(n, 1j), (0,), -(-1)**m1))
+            m1 = np.arange(n, dtype=np.float32)
+            diag = np.concatenate((np.full(n, 1j, dtype=np.complex64), (0,), -(-1)**m1))
 
             m2 = m1[::-1]
-            anti_diag = np.concatenate((1j * (-1)**m2, (0,), np.ones(n)))
+            anti_diag = np.concatenate((1j * (-1)**m2, (0,), np.ones(n, dtype=np.complex64)))
 
             block = (np.diagflat(diag) + np.diagflat(anti_diag)[:, ::-1]) / np.sqrt(2)
             block[n, n] = 1.
@@ -227,7 +251,7 @@ def process():
         # open speech files
         speech = []
         for f_speech in flist_speech:
-            speech.append(sf.read(str(f_speech))[0])
+            speech.append(sf.read(str(f_speech))[0].astype(np.float32))
 
         # apply creater first
         # creater gets data from q_data, and sends the result to q_result
@@ -284,7 +308,7 @@ def propagate(idx: int, i_speech: int, f_speech: Path,
     data_room = scsig.fftconvolve(data[np.newaxis, :], RIRs[i_loc])
 
     # Propagation
-    data = np.append(np.zeros(t_peak[i_loc]), data * amp_peak[i_loc])
+    data = np.append(np.zeros(t_peak[i_loc], dtype=np.float32), data * amp_peak[i_loc])
 
     queue.put((idx, i_speech, f_speech, i_loc, data, data_room))
 
@@ -339,7 +363,7 @@ def create_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_result: mp.Queu
         if use_dirac:
             # DirAC and a00
             # bnkr equalization in frequency domain
-            anm_time_cp = apply_iir_filter(pnm_time_cp, sftdata_cp.bnkr_inv[..., 0], win_cp)
+            anm_time_cp = apply_freq_domain_filter(pnm_time_cp, sftdata_cp.bnkr_inv[..., 0], win_cp)
 
             # real coefficients
             anm_t_real_cp = (sftdata_cp.T_real @ anm_time_cp).real
@@ -447,6 +471,8 @@ if __name__ == '__main__':
     RIRs = transfer_dict[f'RIR_{kind_RIR}'].transpose((2, 0, 1))
     n_loc, n_mic, len_RIR = RIRs.shape
     Ys = transfer_dict[f'Ys_{kind_RIR}'].T * np.sqrt(4 * np.pi)  # N_LOC x Order
+    RIRs = RIRs.astype(np.float32)
+    Ys = Ys.astype(np.complex64)
 
     # SFT Data
     sftdata = SFTData()
@@ -467,16 +493,19 @@ if __name__ == '__main__':
         sftdata.bnkr_inv = sftdata.bnkr_inv[:4]
         sftdata.T_real = calc_mat_for_real_coeffs(1)
     else:
-        sftdata.Wnv = sft_dict['Wnv'].astype(complex)[:, np.newaxis, np.newaxis]
-        sftdata.Wpv = sft_dict['Wpv'].astype(complex)[:, np.newaxis, np.newaxis]
-        sftdata.Vv = sft_dict['Vv'].astype(complex)[:, np.newaxis, np.newaxis]
+        sftdata.Wnv = sft_dict['Wnv'].astype(np.complex64)[:, np.newaxis, np.newaxis]
+        sftdata.Wpv = sft_dict['Wpv'].astype(np.complex64)[:, np.newaxis, np.newaxis]
+        sftdata.Vv = sft_dict['Vv'].astype(np.complex64)[:, np.newaxis, np.newaxis]
+
+    sftdata = sftdata.as_single_prec()
 
     del sft_dict
 
     # propagation
     win = scsig.windows.hann(hp.l_frame, sym=False)
+    win = win.astype(np.float32)
     p00_RIRs = np.einsum('ijk,j->ik', RIRs, sftdata.Yenc[0])  # n_loc x time
-    a00_RIRs = apply_iir_filter(p00_RIRs, sftdata.bnkr_inv[0, :, 0], win)
+    a00_RIRs = apply_freq_domain_filter(p00_RIRs, sftdata.bnkr_inv[0, :, 0], win)
 
     t_peak = a00_RIRs.argmax(axis=1)
     amp_peak = a00_RIRs.max(axis=1)
