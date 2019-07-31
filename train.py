@@ -229,21 +229,23 @@ class Trainer:
             # write summary
             if i_iter == 0:
                 # F, T, C
-                if not self.writer.one_sample:
-                    self.writer.one_sample = DirSpecDataset.decollate_padded(data, 0)
+                if not self.writer.reused_sample:
+                    one_sample = DirSpecDataset.decollate_padded(data, 0)
+                else:
+                    one_sample = dict()
 
                 out_one = self.postprocess(output, T_ys, 0, loader.dataset)
 
                 DirSpecDataset.save_dirspec(
                     logdir / hp.form_result.format(epoch),
-                    **self.writer.one_sample, **out_one
+                    **self.writer.reused_sample, **out_one
                 )
 
                 # Process(
                 #     target=write_one,
                 #     args=(x_one, y_one, x_ph_one, y_ph_one, out_one, epoch)
                 # ).start()
-                self.writer.write_one(epoch, **out_one)
+                self.writer.write_one(epoch, **one_sample, **out_one)
 
         avg_loss /= len(loader.dataset)
         tag = 'loss/valid'
