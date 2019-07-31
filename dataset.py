@@ -52,7 +52,7 @@ class Normalization:
 
     @staticmethod
     def _load_data(fname: Union[str, Path], key: str, queue: mp.Queue) -> None:
-        x = np.load(fname, mmap_mode='r')[key]
+        x = np.load(fname, mmap_mode='r')[key].astype(np.float32, copy=False)
         queue.put(x)
 
     @staticmethod
@@ -238,7 +238,7 @@ class DirSpecDataset(Dataset):
                     if type(data) == np.str_:
                         sample[k] = str(data)
                     else:
-                        sample[k] = torch.from_numpy(data.astype(np.float32))
+                        sample[k] = torch.from_numpy(data.astype(np.float32, copy=False))
 
         for xy in ('x', 'y'):
             sample[f'T_{xy}'] = sample[xy].shape[-2]
