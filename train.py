@@ -100,10 +100,13 @@ class Trainer:
         x = data['x']
         y = data['y']
 
-        x = x.to(self.in_device, copy=True, non_blocking=True)
-        y = y.to(self.out_device, copy=True, non_blocking=True)
+        if self.in_device == torch.device('cpu'):
+            x, y = dataset.normalize(x, y)
+        else:
+            x = x.to(self.in_device, non_blocking=True)
+            y = y.to(self.out_device, non_blocking=True)
 
-        x, y = dataset.normalize_(x, y)
+            x, y = dataset.normalize_(x, y)
 
         if self.model_name.startswith('UNet'):
             # B, C, F, T

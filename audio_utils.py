@@ -234,15 +234,15 @@ def draw_spectrogram(data: TensArr, to_db=True, show=False, dpi=150, **kwargs):
     data = data.squeeze()
     data = gen.convert(data, astype=ndarray)
 
-    fig = plt.figure(dpi=dpi,)
-    plt.imshow(data,
+    fig, ax = plt.subplots(dpi=dpi,)
+    ax.imshow(data,
                cmap=plt.get_cmap('CMRmap'),
                extent=(0, data.shape[1], 0, hp.fs // 2),
                origin='lower', aspect='auto', **kwargs)
-    plt.xlabel('Frame Index')
-    plt.ylabel('Frequency (Hz)')
-    plt.colorbar()
+    ax.set_xlabel('Frame Index')
+    ax.set_ylabel('Frequency (Hz)')
+    fig.colorbar(ax.images[0])
     if show:
-        plt.show()
+        fig.show()
 
     return fig
