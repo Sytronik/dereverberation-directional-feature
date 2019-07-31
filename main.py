@@ -108,7 +108,7 @@ if args.train:
                               shuffle=True,
                               )
     loader_valid = DataLoader(dataset_valid,
-                              batch_size=hp.batch_size,
+                              batch_size=hp.batch_size * 4,
                               num_workers=hp.num_disk_workers,
                               collate_fn=dataset_valid.pad_collate,
                               pin_memory=True,
