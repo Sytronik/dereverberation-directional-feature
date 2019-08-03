@@ -438,11 +438,16 @@ class DirSpecDataset(Dataset):
             ratio[mask] = 1 - ratio.sum()
 
         # TODO not use n_loc, use filename convention instead
+        all_files = dataset._all_files
         metadata = scio.loadmat(dataset._PATH / 'metadata.mat',
                                 squeeze_me=True,
                                 chars_as_strings=True)
         array_n_loc = metadata['n_loc']
-        rooms = [r.rstrip() for r in metadata['rooms']]
+        if 'rooms' in metadata:
+            rooms = [r.rstrip() for r in metadata['rooms']]
+        else:
+            array_n_loc = (array_n_loc,)
+            rooms = (all_files[0].stem.split('_')[2],)
 
         boundary_i_locs = np.cumsum(
             np.outer(array_n_loc, np.insert(ratio, 0, 0)),
@@ -454,15 +459,16 @@ class DirSpecDataset(Dataset):
         for i_room, room in enumerate(rooms):
             i_set = np.empty(array_n_loc[i_room], dtype=np.int)
             for i_b in range(boundary_i_locs.shape[1] - 1):
-                range_ = np.arange(boundary_i_locs[i_room, i_b], boundary_i_locs[i_room, i_b + 1])
+                range_ = np.arange(boundary_i_locs[i_room, i_b],
+                                   boundary_i_locs[i_room, i_b + 1])
                 i_set[range_] = i_b
             i_set_per_room_loc[room] = i_set
 
-        all_files = dataset._all_files
         dataset._all_files = None
         result = [copy(dataset) for _ in range(n_split)]
         for set_ in result:
             set_._all_files = []
+            set_._needs = copy(set_._needs)
         for f in all_files:
             _, _, room, i_loc = f.stem.split('_')
             i_loc = int(i_loc)
