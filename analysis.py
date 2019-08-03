@@ -3,7 +3,7 @@ import csv
 import json
 from itertools import product as iterprod
 from pathlib import Path
-from typing import List, NamedTuple, Sequence, Union, Dict, Optional
+from typing import List, NamedTuple, Sequence, Union, Dict
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FormatStrFormatter
@@ -18,9 +18,9 @@ from hparams import hp
 path_root = Path('./result')
 room_trained = 'room1+2+3'
 foldername_results = {
-    'No-DF': f'No-DF ({room_trained})',
-    'DV': f'DV ({room_trained})',
-    'IV': f'IV ({room_trained})',
+    'No-DF': f'No-DF',
+    'DV': f'DV',
+    'SIV': f'SIV',
 }
 kind_test = [
     'seen', 'unseen', 'unseen_room4+5',
@@ -40,6 +40,209 @@ class MethodKindMetric(NamedTuple):
     metric: str
 
 
+# %% dependent constants
+
+hp.init_dependent_vars()
+
+path_results = {k: path_root / v for k, v in foldername_results.items()}
+
+fstem_analysis = '['
+for method, path in path_results.items():
+    fstem_analysis += path.name
+    if method not in path.name:
+        fstem_analysis += f' ({method})'
+    fstem_analysis += ', '
+
+fstem_analysis = fstem_analysis[:-2]
+fstem_analysis += '] '
+fstem_analysis += f'[{", ".join(kind_test)}]'
+fstem_analysis += f' [rev={method_rev}]'
+
+# %% save scalars
+
+force_save = False
+
+all_scalars: Dict[str, Dict[str, List]] = dict()
+for method, path_result in path_results.items():
+    all_scalars[method] = dict()
+    exist_kinds = []
+    for kind in kind_test:
+        path_test = path_result / kind
+        if list(path_test.glob('events.out.tfevents.*')):
+            exist_kinds.append(kind)
+        else:
+            continue
+        eventacc = EventAccumulator(str(path_test),
+                                    size_guidance=dict(scalars=10000))
+        eventacc.Reload()
+        for tag in eventacc.Tags()['scalars']:
+            if 'Reverberant' in tag or 'Proposed' in tag:
+                _, _, value = zip(*eventacc.Scalars(tag))
+                tag = tag.replace(tag.split('/')[0], kind)
+                all_scalars[method][tag] = value
+
+    path_json = path_result / ('scalars_' + '_'.join(exist_kinds) + '.json')
+    if path_json.exists() and not force_save:
+        print(f'"{path_json}" already exists.')
+        continue
+
+    with path_json.open('w') as f:
+        json.dump(dict(**all_scalars[method]), f)
+
+# %% scalars to array
+
+if 'all_scalars' not in dir():
+    all_scalars: Dict[str, Dict[str, List]] = dict()
+    for method, path_result in path_results.items():
+        path_json = path_result / f'scalars_{"_".join(kind_test)}.json'
+
+        if not path_json.exists():
+            raise Exception(f'scalar file does not exist in {path_result}.')
+
+        with path_json.open('w') as f:
+            all_scalars[method] = json.loads(f.read())
+
+# Dictionary of MethodKindMetric - ndarray
+# handle measurements of reverberant data
+all_arrays: Dict[MethodKindMetric, ndarray] = dict()
+all_methods: List[str] = list(all_scalars.keys())
+if method_rev == 'sep':
+    all_methods.append('Unproc.')
+all_metrics = set()
+for method, scalars in all_scalars.items():
+    for k, v in scalars.items():
+        kind, metric, rev_or_prop = k.split('/')
+        # kind
+        if '_' in kind:  # unseen room
+            kind = kind.split('_')[1]
+        else:  # seen room
+            kind = f'{room_trained} ({kind})'
+
+        # metric
+        metric = metric.split('_')[-1]
+        if 'SNRseg' in metric:
+            metric = metric.replace('SNRseg', 'SegSNR')
+        if 'SNR' in metric:
+            metric += ' [dB]'
+        if method_rev == 'delta':
+            metric = 'Δ'+metric
+        all_metrics.add(metric)
+
+        if rev_or_prop == 'Reverberant':
+            if method_rev == 'sep':
+                new_key = MethodKindMetric('Unproc.', kind, metric)
+                if new_key not in all_arrays:
+                    all_arrays[new_key] = np.array(v)
+            elif method_rev == 'delta':
+                new_key = MethodKindMetric(method, kind, metric)
+                if new_key in all_arrays:
+                    all_arrays[new_key] -= np.array(v)
+                else:
+                    all_arrays[new_key] = -np.array(v)
+        else:
+            new_key = MethodKindMetric(method, kind, metric)
+            if new_key in all_arrays:
+                all_arrays[new_key] += np.array(v)
+            else:
+                all_arrays[new_key] = np.array(v)
+
+        scalars[k] = np.array(v)
+
+all_metrics: List[str] = list(all_metrics)
+all_kinds: List[str] = kind_test.copy()
+
+# %% split into each room
+
+if '+' in room_trained or any('+' in kind for kind in all_kinds):
+    all_arrays_backup = all_arrays
+    all_arrays = dict()
+    all_kinds = set()
+    for key, value in all_arrays_backup.items():
+        # room numbers
+        if ' (' in key.kind:  # seen room
+            kind_paren = key.kind.split(' ')[1]
+            rooms = room_trained.replace('room', '').split('+')
+        else:  # unseen room
+            kind_paren = ''
+            rooms = key.kind.split(' ')[0].replace('room', '').split('+')
+        rooms = [f'room{n_room}' for n_room in rooms]
+
+        for i, room in enumerate(rooms):
+            new_kind = f'{room} {kind_paren}'.rstrip()
+            new_key = MethodKindMetric(key.method, new_kind, key.metric)
+            all_arrays[new_key] = value[i::len(rooms)]
+            all_kinds.add(new_kind)
+
+    all_kinds: List[str] = sorted(list(all_kinds))
+
+# %% mean / std
+
+all_means: Dict[MethodKindMetric, np.float64] = dict()
+all_stds: Dict[MethodKindMetric, np.float64] = dict()
+for key, value in all_arrays.items():
+    all_means[key] = np.mean(value)
+    all_stds[key] = np.std(value, ddof=1)
+
+# %% save to csv
+
+""" csv example
+METHOD1
+KIND1   METRIC1 0       0       0       ...
+        METRIC2 0       0       0       ...
+KIND2   METRIC1 0       0       0       ...
+        METRIC2 0       0       0       ...
+METHOD2
+KIND1   METRIC1 0       0       0       ...
+        METRIC2 0       0       0       ...
+KIND2   METRIC1 0       0       0       ...
+        METRIC2 0       0       0       ...
+means
+        KIND1           KIND2
+        METHOD1 METHOD2 METHOD1 METHOD2
+METRIC1 0       0       0       0
+METRIC2 0       0       0       0
+stds
+        KIND1           KIND2
+        METHOD1 METHOD2 METHOD1 METHOD2
+METRIC1 0       0       0       0
+METRIC2 0       0       0       0
+"""
+
+
+def make_rows_for_stats(stats):
+    _rows = [None] * 2
+    _rows[0] = [''] * (1 + len(all_kinds) * len(all_methods))
+    for i_kind, kind in enumerate(all_kinds):
+        _rows[0][1 + len(all_methods) * i_kind] = kind
+    _rows[1] = [''] + all_methods * len(all_kinds)
+    for metric in all_metrics:
+        _row = [metric]
+        for kind, method in iterprod(all_kinds, all_methods):
+            _row.append(stats[MethodKindMetric(method, kind, metric)])
+        _rows.append(_row)
+    return _rows
+
+
+path_csv = (path_root / fstem_analysis).with_suffix('.csv')
+with path_csv.open('w', newline='', encoding='utf-8') as f:
+    writer = csv.writer(f)
+    rows = []
+    for method in all_methods:
+        rows.append([method])
+        for kind, (i, metric) in iterprod(all_kinds, enumerate(all_metrics)):
+            rows.append([kind if i == 0 else '',
+                         metric,
+                         *all_arrays[MethodKindMetric(method, kind, metric)],
+                         ])
+
+    rows += [['means'], *make_rows_for_stats(all_means)]
+    rows += [['stds'], *make_rows_for_stats(all_stds)]
+    for r in rows:
+        writer.writerow(r)
+
+
+# %% plotting functions
+
 def _graph_initialize(means: ndarray, stds: ndarray,
                       legends: Union[str, Sequence[str]],
                       xticklabels: Sequence,
@@ -47,17 +250,14 @@ def _graph_initialize(means: ndarray, stds: ndarray,
     global room_trained, method_rev, metric_need_legend
     plt.rc('font', family='Arial', size=18)
 
-    fig, ax = plt.subplots(figsize=(5.3, 4))
+    fig, ax = plt.subplots(
+        figsize=(len(xticklabels)*1.2 if xticklabels else 5.3, 4),
+    )
 
-    # seen -> roomX (seen)
-    # unseen_roomY -> roomY
-    if xticklabels and any('_' in label for label in xticklabels):
+    # whitespace -> line ending
+    if xticklabels and any(' (' in label for label in xticklabels):
         for ii, label in enumerate(xticklabels):
-            if '_' in label:
-
-                xticklabels[ii] = label.split('_')[1]
-            else:
-                xticklabels[ii] = f'{room_trained}\n({label})'
+            xticklabels[ii] = label.replace(' ', '\n')
 
     if metric_need_legend in ylabel or ylabel == '':
         draw_legend = True
@@ -85,24 +285,25 @@ def _graph_initialize(means: ndarray, stds: ndarray,
     #     ylim[1] = min(Y_MAX[ylabel], ylim[1])
 
     if ylabel == 'SegSNR [dB]':
-        ylim = (-2.5, 12.5)
-        ax.set_yticks(np.linspace(*ylim, num=7))
+        ylim = (-10, 15)
+        # ax.set_yticks(np.linspace(*ylim, num=6))
     elif ylabel == 'fwSegSNR [dB]':
-        ylim = (6, 16)
-        ax.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+        ylim = (5, 17)
+        ax.set_yticks(np.linspace(*ylim, num=5))
+        # ax.yaxis.set_major_formatter(FormatStrFormatter('%.1f'))
     elif ylabel == 'PESQ':
-        ylim = (2, 4.5)
-        # ax.set_yticks(np.linspace(*ylim, num=7))
-    elif ylabel == 'STOI':
-        ylim = (0.7, 1)
+        ylim = (1.5, 4.5)
         ax.set_yticks(np.linspace(*ylim, num=7))
+    elif ylabel == 'STOI':
+        ylim = (0.5, 1)
+        # ax.set_yticks(np.linspace(*ylim, num=7))
     elif ylabel == 'ΔSegSNR [dB]':
-        ylim = (0, 15)
-        ax.set_yticks(np.linspace(*ylim, num=9))
+        ylim = (9, 18)
+        # ax.set_yticks(np.linspace(*ylim, num=9))
     elif ylabel == 'ΔfwSegSNR [dB]':
-        ylim = (-1, 8)
+        ylim = (2, 7)
     elif ylabel == 'ΔPESQ':
-        ylim = (0, 1.5)
+        ylim = (0.5, 1.5)
     elif ylabel == 'ΔSTOI':
         ylim = (0, 0.3)
     else:
@@ -114,7 +315,8 @@ def _graph_initialize(means: ndarray, stds: ndarray,
 def draw_lineplot(means: ndarray, stds: ndarray = None,
                   legends: Union[str, Sequence[str]] = None,
                   xticklabels: Sequence = None,
-                  ylabel: str = ''):
+                  ylabel: str = '',
+                  mode: str = 'long'):
     if legends is None:
         legends = ('',) * means.shape[0]
     if stds is None:
@@ -128,11 +330,21 @@ def draw_lineplot(means: ndarray, stds: ndarray = None,
 
     # draw
     x_range = np.arange(means.shape[1])
+    lineplots = []
     for ii, (label, mean, std) in enumerate(zip(legends, means, stds)):
-        ax.plot(x_range, mean,
-                label=label,
-                color=colors[ii],
-                marker='o')
+        if mode == 'long':
+            line, = ax.plot(x_range, mean,
+                            label=label,
+                            color=colors[ii],
+                            marker='o')
+        elif mode == 'short':
+            for jj in x_range[::2]:
+                line, = ax.plot(x_range[jj:jj+2], mean[jj:jj+2],
+                                color=colors[ii],
+                                marker='o')
+        else:
+            raise NotImplementedError
+        lineplots.append(line)
 
     ax.set_xticks(x_range)
     ax.set_xticklabels(xticklabels)
@@ -154,8 +366,11 @@ def draw_lineplot(means: ndarray, stds: ndarray = None,
     if draw_legend:
         # ax.legend(loc='lower right', bbox_to_anchor=(1, 1),
         #           ncol=4, fontsize='small', columnspacing=1)
-        ax.legend(loc='upper center',
-                  ncol=2, fontsize='small', columnspacing=1)
+        ax.legend(lineplots, legends,
+                  loc='upper center',
+                  ncol=2 if means.shape[1] < 4 else 4,
+                  fontsize='small',
+                  columnspacing=1)
 
     fig.tight_layout()
     return fig
@@ -224,190 +439,31 @@ def draw_bar_graph(means: ndarray, stds: ndarray = None,
         # ax.legend(loc='lower right', bbox_to_anchor=(1, 1),
         #           ncol=4, fontsize='small', columnspacing=1)
         ax.legend(loc='upper center',
-                  ncol=2, fontsize='small', columnspacing=1)
+                  ncol=2,
+                  fontsize='small',
+                  columnspacing=1)
 
     fig.tight_layout()
     return fig
 
 
-# %% dependent constants
+# %% choose kinds to plot
 
-hp.init_dependent_vars()
-
-path_results = {k: path_root / v for k, v in foldername_results.items()}
-
-fstem_analysis = '['
-for method, path in path_results.items():
-    fstem_analysis += path.name
-    if method not in path.name:
-        fstem_analysis += f' ({method})'
-    fstem_analysis += ', '
-
-fstem_analysis = fstem_analysis[:-2]
-fstem_analysis += '] '
-fstem_analysis += f'[{", ".join(kind_test)}]'
-fstem_analysis += f' [rev={method_rev}]'
-
-# %% save scalars
-
-force_save = False
-
-all_scalars: Dict[str, Dict[str, List]] = dict()
-for method, path_result in path_results.items():
-    all_scalars[method] = dict()
-    exist_kinds = []
-    for kind in kind_test:
-        path_test = path_result / kind
-        if list(path_test.glob('events.out.tfevents.*')):
-            exist_kinds.append(kind)
-        else:
-            continue
-        eventacc = EventAccumulator(str(path_test),
-                                    size_guidance=dict(scalars=10000))
-        eventacc.Reload()
-        for tag in eventacc.Tags()['scalars']:
-            if 'Reverberant' in tag or 'Proposed' in tag:
-                _, _, value = zip(*eventacc.Scalars(tag))
-                all_scalars[method][tag] = value
-
-    path_json = path_result / ('scalars_' + '_'.join(exist_kinds) + '.json')
-    if path_json.exists() and not force_save:
-        print(f'"{path_json}" already exists.')
-        continue
-
-    with path_json.open('w') as f:
-        json.dump(dict(**all_scalars[method]), f)
-
-# %% scalars to array
-
-if 'all_scalars' not in dir():
-    all_scalars: Dict[str, Dict[str, List]] = dict()
-    for method, path_result in path_results.items():
-        path_json = path_result / f'scalars_{"_".join(kind_test)}.json'
-
-        if not path_json.exists():
-            raise Exception(f'scalar file does not exist in {path_result}.')
-
-        with path_json.open('w') as f:
-            all_scalars[method] = json.loads(f.read())
-
-# Dictionary of MethodKindMetric - ndarray
-# handle measurements of reverberant data
-all_arrays: Dict[MethodKindMetric, ndarray] = dict()
-all_methods: List[str] = list(all_scalars.keys())
-if method_rev == 'sep':
-    all_methods.append('Unproc.')
-all_metrics = set()
-for method, scalars in all_scalars.items():
-    for k, v in scalars.items():
-        kind, metric, rev_or_prop = k.split('/')
-
-        # metric
-        metric = metric.split('_')[-1]
-        if 'SNRseg' in metric:
-            metric = metric.replace('SNRseg', 'SegSNR')
-        if 'SNR' in metric:
-            metric += ' [dB]'
-        if method_rev == 'delta':
-            metric = 'Δ'+metric
-        all_metrics.add(metric)
-
-        if rev_or_prop == 'Reverberant':
-            if method_rev == 'sep':
-                new_key = MethodKindMetric('Unproc.', kind, metric)
-                if new_key not in all_arrays:
-                    all_arrays[new_key] = np.array(v)
-            elif method_rev == 'delta':
-                new_key = MethodKindMetric(method, kind, metric)
-                if new_key in all_arrays:
-                    all_arrays[new_key] -= np.array(v)
-                else:
-                    all_arrays[new_key] = -np.array(v)
-        else:
-            new_key = MethodKindMetric(method, kind, metric)
-            if new_key in all_arrays:
-                all_arrays[new_key] += np.array(v)
-            else:
-                all_arrays[new_key] = np.array(v)
-
-        scalars[k] = np.array(v)
-
-all_metrics: List[str] = list(all_metrics)
-
-# %% mean / std
-
-all_means: Dict[MethodKindMetric, np.float64] = dict()
-all_stds: Dict[MethodKindMetric, np.float64] = dict()
-for key, value in all_arrays.items():
-    all_means[key] = np.mean(value)
-    all_stds[key] = np.std(value, ddof=1)
-
-# %% save to csv
-
-""" csv example
-METHOD1
-KIND1   METRIC1 0       0       0       ...
-        METRIC2 0       0       0       ...
-KIND2   METRIC1 0       0       0       ...
-        METRIC2 0       0       0       ...
-METHOD2
-KIND1   METRIC1 0       0       0       ...
-        METRIC2 0       0       0       ...
-KIND2   METRIC1 0       0       0       ...
-        METRIC2 0       0       0       ...
-means
-        KIND1           KIND2
-        METHOD1 METHOD2 METHOD1 METHOD2
-METRIC1 0       0       0       0
-METRIC2 0       0       0       0
-stds
-        KIND1           KIND2
-        METHOD1 METHOD2 METHOD1 METHOD2
-METRIC1 0       0       0       0
-METRIC2 0       0       0       0
-"""
-
-
-def make_rows_for_stats(stats):
-    _rows = [None] * 2
-    _rows[0] = [''] * (1 + len(kind_test) * len(all_methods))
-    for i_kind, kind in enumerate(kind_test):
-        _rows[0][1 + len(all_methods) * i_kind] = kind
-    _rows[1] = [''] + all_methods * len(kind_test)
-    for metric in all_metrics:
-        _row = [metric]
-        for kind, method in iterprod(kind_test, all_methods):
-            _row.append(stats[MethodKindMetric(method, kind, metric)])
-        _rows.append(_row)
-    return _rows
-
-
-path_csv = (path_root / fstem_analysis).with_suffix('.csv')
-with path_csv.open('w', newline='', encoding='utf-8') as f:
-    writer = csv.writer(f)
-    rows = []
-    for method in all_methods:
-        rows.append([method])
-        for kind, (i, metric) in iterprod(kind_test, enumerate(all_metrics)):
-            rows.append([kind if i == 0 else '',
-                         metric,
-                         *all_arrays[MethodKindMetric(method, kind, metric)],
-                         ])
-
-    rows += [['means'], *make_rows_for_stats(all_means)]
-    rows += [['stds'], *make_rows_for_stats(all_stds)]
-    for r in rows:
-        writer.writerow(r)
+all_kinds_backup = all_kinds.copy()
+all_kinds = [k for k in all_kinds if 'seen' not in k]
+# all_kinds = [k for k in all_kinds if 'seen' in k or 'unseen' in k]
 
 
 # %% draw graphs
 
+plt.style.use('default')
+
 s_path_fig = str(hp.dict_path['figures'] / fstem_analysis) + ' [{}].png'
 for metric in all_metrics:
-    means = np.empty((len(all_methods), len(kind_test)))
-    stds = np.empty((len(all_methods), len(kind_test)))
+    means = np.empty((len(all_methods), len(all_kinds)))
+    stds = np.empty((len(all_methods), len(all_kinds)))
     for (i, method), (j, kind) \
-            in iterprod(enumerate(all_methods), enumerate(kind_test)):
+            in iterprod(enumerate(all_methods), enumerate(all_kinds)):
         key = MethodKindMetric(method, kind, metric)
         means[i, j] = all_means[key]
         stds[i, j] = all_stds[key]
@@ -415,7 +471,9 @@ for metric in all_metrics:
     # fig = draw_bar_graph(titles, mean, std, sfxs, col)
     fig = draw_lineplot(means, stds,
                         legends=all_methods,
-                        xticklabels=kind_test,
+                        xticklabels=all_kinds.copy(),
                         ylabel=metric,
+                        mode='long',
+                        # mode='short',
                         )
     fig.savefig(s_path_fig.format(metric.replace('Δ', '')), dpi=300)
