@@ -40,6 +40,8 @@ class _HyperParameters:
     l_frame: int = 512
     n_freq: int = 257
     l_hop: int = 256
+    n_data_per_room: int = 23 * 300
+    n_test_per_room: int = 10 * 100
 
     # log & normalize
     eps_for_log: float = 1e-10
@@ -47,8 +49,7 @@ class _HyperParameters:
     refresh_const: bool = False
 
     # training
-    n_data_per_room: int = 13 * 300
-    n_test_per_room: int = 10 * 100
+    n_data: int = 0  # <=0 to use all data
     train_ratio: float = 0.77
     n_epochs: int = 150
     batch_size: int = 32

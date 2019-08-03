@@ -189,6 +189,9 @@ class DirSpecDataset(Dataset):
 
         # path_normconst: path of the file that has information about mean, std, ...
         path_normconst = hp.dict_path[f'normconst_{kind_data}']
+        if hp.n_data > 0:
+            assert not hp.refresh_const and path_normconst.exists()
+            self._all_files = self._all_files[:hp.n_data]
 
         if kind_data == 'train':
             if not hp.refresh_const and path_normconst.exists():
