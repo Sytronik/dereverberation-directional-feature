@@ -250,9 +250,8 @@ class DirSpecDataset(Dataset):
 
         return sample
 
-    @staticmethod
     @torch.no_grad()
-    def pad_collate(batch: List[DataDict]) -> DataDict:
+    def pad_collate(self, batch: List[DataDict]) -> DataDict:
         """ return data with zero-padding
 
         Important data like x, y are all converted to Tensor(cpu).
@@ -281,9 +280,11 @@ class DirSpecDataset(Dataset):
                 data = [batch[idx][key].permute(-2, -3, -1) for idx in idxs_sorted]
                 data = pad_sequence(data, batch_first=True)
                 # B, F, T, C
-                data = data.permute(0, -2, -3, -1).contiguous()
+                data = data.permute(0, -2, -3, -1)
 
                 result[key] = data
+                if key == 'x' or key == 'y':
+                    result[f'normalized_{key}'] = self.normalize(**{key: data})
 
         return result
 
@@ -304,7 +305,7 @@ class DirSpecDataset(Dataset):
                 result[key] = value
             elif type(value) == list:
                 result[key] = value[idx]
-            elif not key.startswith('T_'):
+            elif not key.startswith('T_') and not key.startswith('normalized_'):
                 T_xy = 'T_xs' if 'x' in key else 'T_ys'
                 result[key] = value[idx, :, :batch[T_xy][idx], :].numpy()
         return result
