@@ -22,7 +22,7 @@ class Trainer:
         module = eval(hp.model_name)
 
         self.model = module(**getattr(hp, hp.model_name))
-        self.criterion = nn.MSELoss(reduction='sum')
+        self.criterion = nn.MSELoss(reduction='none')
 
         self.__init_device(hp.device, hp.out_device)
 
@@ -94,7 +94,7 @@ class Trainer:
 
         torch.cuda.set_device(self.in_device)
 
-    def preprocess(self, data: Dict[str, ndarray],
+    def preprocess(self, data: Dict[str, Tensor],
                    dataset: DirSpecDataset) -> Tuple[Tensor, Tensor]:
         # B, F, T, C
         x = data['x']
@@ -129,9 +129,10 @@ class Trainer:
 
     def calc_loss(self, output: Tensor, y: Tensor, T_ys: Sequence[int],
                   dataset: DirSpecDataset) -> Tensor:
-        loss = torch.zeros(1, device=self.out_device)
-        for T, item_y, item_out in zip(T_ys, y, output):
-            loss += self.criterion(item_out[:, :, :T], item_y[:, :, :T]) / T
+        loss_batch = self.criterion(output, y)
+        loss = torch.zeros(1, device=loss_batch.device)
+        for T, loss_sample in zip(T_ys, loss_batch):
+            loss += torch.sum(loss_sample[:, :, :T]) / T
 
         return loss
 
@@ -219,7 +220,7 @@ class Trainer:
             T_ys = data['T_ys']
 
             # forward
-            output = self.model(x)  # [..., :y.shape[-1]]
+            output = self.model(x)[..., :y.shape[-1]]
 
             # loss
             loss = self.calc_loss(output, y, T_ys, loader.dataset)
