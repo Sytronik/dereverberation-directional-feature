@@ -74,8 +74,8 @@ class Normalization:
         return result
 
     def __init__(self, mean, std):
-        self.mean = DataPerDevice(mean)
-        self.std = DataPerDevice(std)
+        self.mean = DataPerDevice(mean.astype(np.float32, copy=False))
+        self.std = DataPerDevice(std.astype(np.float32, copy=False))
 
     @classmethod
     def calc_const(cls, all_files: List[Path], key: str):
@@ -105,7 +105,8 @@ class Normalization:
         result: List[Dict] = [item.get() for item in result]
 
         sum_size = np.sum([item[np.size] for item in result])
-        sum_ = np.sum([item[cls._sum] for item in result], axis=0)
+        sum_ = np.sum([item[cls._sum] for item in result],
+                      axis=0, dtype=np.float32)
         mean = sum_ / (sum_size // sum_.size)
 
         # Calculate squared deviation (parallel)
@@ -126,7 +127,8 @@ class Normalization:
         result: List[Dict] = [item.get() for item in result]
         print()
 
-        sum_sq_dev = np.sum([item[cls._sq_dev] for item in result], axis=0)
+        sum_sq_dev = np.sum([item[cls._sq_dev] for item in result],
+                            axis=0, dtype=np.float32)
 
         std = np.sqrt(sum_sq_dev / (sum_size // sum_sq_dev.size) + 1e-5)
 
