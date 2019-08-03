@@ -58,7 +58,7 @@ class LogModule:
             a[..., :3] *= log_r
             a[..., :3] /= (r + cls.eps)
             if a.shape[-1] == 4:  # if spectrogram exists
-                a[..., 3] = pkg.log10((a[..., 3] + cls.eps) / cls.eps)
+                pkg.log10((a[..., 3] + cls.eps) / cls.eps, out=a[..., 3])
         else:  # spectrogram
             pkg.log10((a + cls.eps) / cls.eps, out=a)
         return a
