@@ -14,8 +14,6 @@ More parameters are in `hparams.py`.
 - N: number of subprocesses to write files.
 """
 
-# noinspection PyUnresolvedReferences
-import logging
 import multiprocessing as mp
 import os
 from argparse import ArgumentParser, ArgumentError
@@ -24,6 +22,8 @@ from typing import Tuple, TypeVar, Optional, List
 from dataclasses import dataclass, asdict
 from itertools import product
 import cupy as cp
+# noinspection PyUnresolvedReferences
+import cupy.lib.stride_tricks
 
 import librosa
 import numpy as np
@@ -42,15 +42,24 @@ class SFTData:
     """ Constant Matrices/Vectors for Spherical Fourier Analysis
 
     """
-    Yenc: NDArray = None
-    bnkr_inv: NDArray = None
-    Wnv: Optional[NDArray] = None
-    Wpv: Optional[NDArray] = None
-    Vv: Optional[NDArray] = None
+    Yenc: NDArray = None  # Encoding Matrix
+    bnkr_inv: NDArray = None  # the inverse of the modal strength
+
+    # SIV
+    Wpv_1_1_m1: Optional[NDArray] = None
+    Wpv_1_0_0: Optional[NDArray] = None
+    Wnv_1_0_0: Optional[NDArray] = None
+    Wnv_1_1_1: Optional[NDArray] = None
+    Vv_1_0_0: Optional[NDArray] = None
+    Vv_1_1_0: Optional[NDArray] = None
+
+    # DirAC
     T_real: Optional[NDArray] = None
 
     def get_for_intensity(self) -> Tuple:
-        return self.Wnv, self.Wpv, self.Vv
+        return (self.Wpv_1_1_m1, self.Wpv_1_0_0,
+                self.Wnv_1_0_0, self.Wnv_1_1_1,
+                self.Vv_1_0_0, self.Vv_1_1_0)
 
     def as_single_prec(self):
         """
@@ -85,17 +94,18 @@ def stft(data: NDArray, _win: NDArray):
 
     n_frame = (data.shape[1] - hp.l_frame) // hp.l_hop + 1
 
-    spec = xp.empty((data.shape[0], hp.n_freq, n_frame), dtype=xp.complex64)
-    interval = np.arange(hp.l_frame)
-    for i_frame in range(n_frame):
-        spec[:, :, i_frame] \
-            = xp.fft.fft(data[:, interval] * _win, n=hp.n_fft)[:, :hp.n_freq]
-        interval += hp.l_hop
+    spec = xp.lib.stride_tricks.as_strided(
+        data,
+        (data.shape[0], hp.l_frame, n_frame),
+        (data.strides[0], data.strides[1], data.strides[1] * hp.l_hop)
+    )
+    spec = spec * _win[:, xp.newaxis]
+    spec = xp.fft.fft(spec)[:, :hp.n_freq, :]
 
     return spec
 
 
-def apply_freq_domain_filter(wave, filter_fft, _win):
+def filter_overlap_add(wave: NDArray, filter_fft: NDArray, _win: NDArray):
     # bnkr equalization in frequency domain
     xp = cp.get_array_module(wave)
 
@@ -104,17 +114,22 @@ def apply_freq_domain_filter(wave, filter_fft, _win):
                   ((0, 0), (hp.n_fft // 2, hp.n_fft // 2)),
                   mode='reflect')
 
-    n_frame = len_original // hp.l_hop
+    n_frame = len_original // hp.l_hop + 1
     len_istft = hp.n_fft + hp.l_hop * (n_frame - 1)
 
+    strided = xp.lib.stride_tricks.as_strided(
+        wave,
+        (wave.shape[0], hp.l_frame, n_frame),
+        (wave.strides[0], wave.strides[1], wave.strides[1] * hp.l_hop)
+    )
+    strided = strided * _win[..., xp.newaxis]
+    strided_filt = xp.fft.ifft(xp.fft.fft(strided) * filter_fft[..., xp.newaxis])
+    strided_filt *= _win[..., xp.newaxis]
     filtered = xp.zeros((wave.shape[0], len_istft), dtype=xp.complex64)
-    interval = np.arange(hp.l_frame)
+    startend = np.array([0, hp.l_frame])
     for i_frame in range(n_frame):
-        spectrum = xp.fft.fft(wave[:, interval] * _win, n=hp.n_fft)
-        filtered[:, interval] += xp.fft.ifft(
-            spectrum * filter_fft, n=hp.n_fft
-        ) * _win
-        interval += hp.l_hop
+        filtered[:, slice(*startend)] += strided_filt[..., i_frame]
+        startend += hp.l_hop
 
     # compensate artifact of stft/istft
     # noinspection PyTypeChecker
@@ -161,41 +176,37 @@ def seltriag(Ain: NDArray, nrord: int, shft: Tuple[int, int]) -> NDArray:
 
 
 # noinspection PyShadowingNames
-def calc_intensity(Asv: NDArray, Wnv: NDArray, Wpv: NDArray, Vv: NDArray) \
-        -> NDArray:
+def calc_intensity(Asv: NDArray,
+                   Wpv_1_1_m1: NDArray, Wpv_1_0_0: NDArray,
+                   Wnv_1_0_0: NDArray, Wnv_1_1_1: NDArray,
+                   Vv_1_0_0: NDArray, Vv_1_1_0: NDArray,
+                   out: NDArray = None) -> NDArray:
     """ Asv(anm) (Order x ...) -> Intensity (... x 3)
 
-    :param Asv:
-    :param Wnv:
-    :param Wpv:
-    :param Vv:
-    :param bn_sel2_0:
-    :param bn_sel2_1:
-    :param bn_sel3_0:
-    :param bn_sel3_1:
-    :param bn_sel_4_0:
-    :param bn_sel_4_1:
-    :return:
     """
 
     xp = cp.get_array_module(Asv)
     other_shape = Asv.shape[1:] if Asv.ndim > 1 else tuple()
 
-    aug1 = seltriag(Asv, 1, (0, 0))
-    aug2 = (seltriag(Wpv, 1, (1, -1)) * seltriag(Asv, 1, (1, -1))
-            - seltriag(Wnv, 1, (0, 0)) * seltriag(Asv, 1, (-1, -1)))
-    aug3 = (seltriag(Wpv, 1, (0, 0)) * seltriag(Asv, 1, (-1, 1))
-            - seltriag(Wnv, 1, (1, 1)) * seltriag(Asv, 1, (1, 1)))
-    aug4 = (seltriag(Vv, 1, (0, 0)) * seltriag(Asv, 1, (-1, 0))
-            + seltriag(Vv, 1, (1, 0)) * seltriag(Asv, 1, (1, 0)))
+    aug1 = seltriag(Asv, 1, (0, 0)).conj()
+    aug2 = (Wpv_1_1_m1 * seltriag(Asv, 1, (1, -1))
+            - Wnv_1_0_0 * seltriag(Asv, 1, (-1, -1)))
+    aug3 = (Wpv_1_0_0 * seltriag(Asv, 1, (-1, 1))
+            - Wnv_1_1_1 * seltriag(Asv, 1, (1, 1)))
+    aug4 = (Vv_1_0_0 * seltriag(Asv, 1, (-1, 0))
+            + Vv_1_1_0 * seltriag(Asv, 1, (1, 0)))
 
-    aug1 = aug1.conj()
-    intensity = xp.empty((*other_shape, 3))
-    intensity[..., 0] = (aug1 * (aug2 + aug3)).real.sum(axis=0) / 2
-    intensity[..., 1] = (aug1 * (aug2 - aug3) / 2j).real.sum(axis=0)
-    intensity[..., 2] = (aug1 * aug4).real.sum(axis=0)
+    if out is None:
+        out = xp.empty((*other_shape, 3), dtype=xp.float32)
+    else:
+        assert out.shape == (*other_shape, 3)
+    (aug1 * (aug2 + aug3)).real.sum(axis=0, out=out[..., 0])
+    out[..., 0] /= 2
+    (aug1 * (aug2 - aug3) / 2j).real.sum(axis=0, out=out[..., 1])
+    (aug1 * aug4).real.sum(axis=0, out=out[..., 2])
+    out /= 2
 
-    return 0.5 * intensity
+    return out
 
 
 def calc_mat_for_real_coeffs(N: int) -> np.ndarray:
@@ -224,16 +235,21 @@ def calc_mat_for_real_coeffs(N: int) -> np.ndarray:
     return matrix.conj()
 
 
-def calc_direction_vec(anm: NDArray) -> NDArray:
+def calc_direction_vec(anm: NDArray, out: NDArray = None) -> NDArray:
     """ Calculate direciton vector in DirAC
      using Complex Spherical Harmonics Coefficients
 
     :param anm: (Order x ...)
+    :param out: (... x 3)
     :return: (... x 3)
     """
-    direction = 1. / np.sqrt(2) * (anm[0].conj() * anm[[3, 1, 2]]).real
+    other_shape = anm.shape[1:] if anm.ndim > 1 else tuple()
+    if out is not None:
+        assert out.shape == (*other_shape, 3)
+    out = (anm[0].conj() * anm[[3, 1, 2]]).real
+    out *= np.sqrt(0.5)
 
-    return direction.transpose([*range(1, anm.ndim), 0])
+    return out
 
 
 def process():
@@ -241,29 +257,29 @@ def process():
 
     print_save_info(idx_start)
     os.cpu_count()
-    pool_propagater = mp.Pool(mp.cpu_count()//2 - n_cuda_dev - hp.num_disk_workers - 1)
-    pool_creator = mp.Pool(n_cuda_dev)
+    pool_propagater = mp.Pool(mp.cpu_count() // 2 - n_cuda_dev - hp.num_disk_workers - 1)
+    pool_extractor = mp.Pool(n_cuda_dev)
     pool_saver = mp.Pool(hp.num_disk_workers)
     with mp.Manager() as manager:
         q_data = [manager.Queue(hp.num_disk_workers * 3) for _ in hp.device]
-        q_result = manager.Queue()
+        q_out = manager.Queue()
 
         # open speech files
         speech = []
         for f_speech in flist_speech:
             speech.append(sf.read(str(f_speech))[0].astype(np.float32))
 
-        # apply creater first
-        # creater gets data from q_data, and sends the result to q_result
-        pool_creator.starmap_async(
-            create_dirspecs,
+        # apply extractor first
+        # extractor gets data from q_data, and sends the result to q_out
+        pool_extractor.starmap_async(
+            calc_dirspecs,
             [(dev,
               q_data[idx],
               len(list_feature[idx_start + idx::n_cuda_dev]),
-              q_result)
+              q_out)
              for idx, dev in enumerate(hp.device)]
         )
-        pool_creator.close()
+        pool_extractor.close()
 
         # apply propagater
         # propagater sends data to q_data
@@ -284,18 +300,18 @@ def process():
         pool_propagater.close()
 
         # apply saver
-        # saver gets results from q_result
+        # saver gets results from q_out
         pbar = tqdm(range(n_feature),
                     desc='create', dynamic_ncols=True, initial=idx_start)
         for _ in range_feature:
-            pool_saver.apply_async(save_result, q_result.get())
+            pool_saver.apply_async(save_result, q_out.get())
             str_qsizes = ' '.join([f'{q.qsize()}' for q in q_data])
-            pbar.set_postfix_str(f'[{str_qsizes}], {q_result.qsize()}')
+            pbar.set_postfix_str(f'[{str_qsizes}], {q_out.qsize()}')
             pbar.update()
         pool_saver.close()
 
         pool_propagater.join()
-        pool_creator.join()
+        pool_extractor.join()
         pool_saver.join()
 
     print_save_info(n_feature)
@@ -313,13 +329,13 @@ def propagate(idx: int, i_speech: int, f_speech: Path,
     queue.put((idx, i_speech, f_speech, i_loc, data, data_room))
 
 
-def create_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_result: mp.Queue):
+def calc_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_out: mp.Queue):
     """ create directional spectrogram.
 
     :param i_dev: GPU Device No.
     :param q_data:
     :param n_data:
-    :param q_result:
+    :param q_out:
 
     :return: None
     """
@@ -334,69 +350,65 @@ def create_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_result: mp.Queu
 
     for _ in range(n_data):
         idx, i_speech, f_speech, i_loc, data, data_room = q_data.get()
-        data_cp = cp.array(data)
-        data_room_cp = cp.array(data_room)
+        data_cp = cp.array(data)  # n,
+        data_room_cp = cp.array(data_room)  # N_MIC, n
 
         # Free-field
-        anm_time_cp = cp.outer(Ys_cp[i_loc].conj(), data_cp)
+        # Order, n
+        anm_time_cp = cp.outer(Ys_cp[i_loc].conj(), data_cp)  # complex coefficients
         if use_dirac:  # real coefficients
             anm_time_cp = (sftdata_cp.T_real @ anm_time_cp).real
 
-        anm_spec_cp = stft(anm_time_cp, win_cp)
+        anm_spec_cp = stft(anm_time_cp, win_cp)  # Order, F, T
 
-        # dirspec_free = np.empty((hp.n_freq, n_frame_free, 4))
+        dirspec_free_cp = cp.empty((hp.n_freq, anm_spec_cp.shape[2], 4),
+                                   dtype=cp.float32)
         if use_dirac:
-            # DirAC and a00
-            df_free = cp.asnumpy(calc_direction_vec(anm_spec_cp))
+            calc_direction_vec(anm_spec_cp, out=dirspec_free_cp[..., :3])
         else:
-            # IV and p00
-            df_free = cp.asnumpy(
-                calc_intensity(anm_spec_cp, *sftdata_cp.get_for_intensity())
-            )
-        mag_free = cp.asnumpy(cp.abs(anm_spec_cp[0]))
-        phase_free = cp.asnumpy(cp.angle(anm_spec_cp[0]))
-        dirspec_free = np.concatenate((df_free, mag_free[..., np.newaxis]), axis=2)
+            calc_intensity(anm_spec_cp, *sftdata_cp.get_for_intensity(),
+                           out=dirspec_free_cp[..., :3])
+        cp.abs(anm_spec_cp[0], out=dirspec_free_cp[..., 3])  # mag
+        phase_free = cp.angle(anm_spec_cp[0])  # F, T
 
-        # Room Intensity Vector Image
-        pnm_time_cp = sftdata_cp.Yenc @ data_room_cp
-        # dirspec_room = np.empty((hp.n_freq, n_frame_room, 4))
-        if use_dirac:
-            # DirAC and a00
+        # Room
+        pnm_time_cp = sftdata_cp.Yenc @ data_room_cp  # Order, n
+        # Order, F, T
+        if use_dirac:  # real coefficients
             # bnkr equalization in frequency domain
-            anm_time_cp = apply_freq_domain_filter(pnm_time_cp, sftdata_cp.bnkr_inv[..., 0], win_cp)
-
-            # real coefficients
+            anm_time_cp = filter_overlap_add(pnm_time_cp,
+                                             sftdata_cp.bnkr_inv[..., 0],
+                                             win_cp)
             anm_t_real_cp = (sftdata_cp.T_real @ anm_time_cp).real
-            anm_spec_real_cp = stft(anm_t_real_cp, win_cp)
-
-            df_room = cp.asnumpy(calc_direction_vec(anm_spec_real_cp))
-            mag_room = cp.asnumpy(cp.abs(anm_spec_real_cp[0]))
-            phase_room = cp.asnumpy(cp.angle(anm_spec_real_cp[0]))
-        else:
-            # IV and p00
+            anm_spec_cp = stft(anm_t_real_cp, win_cp)
+        else:  # complex coefficients
             pnm_spec_cp = stft(pnm_time_cp, win_cp)
             anm_spec_cp = pnm_spec_cp * sftdata_cp.bnkr_inv[:, :hp.n_freq]
-            df_room = cp.asnumpy(
-                calc_intensity(anm_spec_cp, *sftdata_cp.get_for_intensity())
-            )
-            mag_room = cp.asnumpy(cp.abs(anm_spec_cp[0]))
-            phase_room = cp.asnumpy(cp.angle(anm_spec_cp[0]))
-        dirspec_room = np.concatenate((df_room, mag_room[..., np.newaxis]), axis=2)
 
-        # Save
+        dirspec_room_cp = cp.empty((hp.n_freq, anm_spec_cp.shape[2], 4),
+                                   dtype=cp.float32)
+        if use_dirac:
+            calc_direction_vec(anm_spec_cp, out=dirspec_room_cp[..., :3])
+        else:
+            calc_intensity(anm_spec_cp, *sftdata_cp.get_for_intensity(),
+                           out=dirspec_room_cp[..., :3])
+        cp.abs(anm_spec_cp[0], out=dirspec_room_cp[..., 3])  # mag
+        phase_room = cp.angle(anm_spec_cp[0])  # F, T
+
+        # Save (F, T, C)
         dict_result = dict(path_speech=str(f_speech),
-                           dirspec_free=dirspec_free,
-                           dirspec_room=dirspec_room,
-                           phase_free=phase_free[..., np.newaxis],
-                           phase_room=phase_room[..., np.newaxis],
+                           dirspec_free=cp.asnumpy(dirspec_free_cp),
+                           dirspec_room=cp.asnumpy(dirspec_room_cp),
+                           phase_free=cp.asnumpy(phase_free)[..., np.newaxis],
+                           phase_room=cp.asnumpy(phase_room)[..., np.newaxis],
                            )
-        q_result.put((idx, i_speech, i_loc, dict_result))
+        q_out.put((idx, i_speech, i_loc, dict_result))
 
 
-def save_result(idx: int, i_speech: int, i_loc: int, dict_result: dict) -> Tuple[int, int]:
+def save_result(idx: int, i_speech: int, i_loc: int, dict_result: dict):
     np.savez(path_result / hp.form_feature.format(idx, i_speech, hp.room_create, i_loc),
              **dict_result)
-    return i_speech, i_loc
+    # return i_speech, i_loc
 
 
 def print_save_info(i_feature: int):
@@ -411,9 +423,10 @@ def print_save_info(i_feature: int):
                     n_freq=hp.n_freq,
                     l_frame=hp.l_frame,
                     l_hop=hp.l_hop,
-                    n_loc=n_loc,
+                    n_loc=(n_loc,),
                     path_all_speech=[str(p) for p in flist_speech],
                     list_fname=list_feature_to_fname(list_feature),
+                    rooms=(hp.room_create,),
                     )
 
     scio.savemat(f_metadata, metadata)
@@ -493,9 +506,15 @@ if __name__ == '__main__':
         sftdata.bnkr_inv = sftdata.bnkr_inv[:4]
         sftdata.T_real = calc_mat_for_real_coeffs(1)
     else:
-        sftdata.Wnv = sft_dict['Wnv'].astype(np.complex64)[:, np.newaxis, np.newaxis]
-        sftdata.Wpv = sft_dict['Wpv'].astype(np.complex64)[:, np.newaxis, np.newaxis]
-        sftdata.Vv = sft_dict['Vv'].astype(np.complex64)[:, np.newaxis, np.newaxis]
+        Wnv = sft_dict['Wnv'].astype(np.complex64)[:, np.newaxis, np.newaxis]
+        Wpv = sft_dict['Wpv'].astype(np.complex64)[:, np.newaxis, np.newaxis]
+        Vv = sft_dict['Vv'].astype(np.complex64)[:, np.newaxis, np.newaxis]
+        sftdata.Wpv_1_1_m1 = seltriag(Wpv, 1, (1, -1))
+        sftdata.Wpv_1_0_0 = seltriag(Wpv, 1, (0, 0))
+        sftdata.Wnv_1_0_0 = seltriag(Wnv, 1, (0, 0))
+        sftdata.Wnv_1_1_1 = seltriag(Wnv, 1, (1, 1))
+        sftdata.Vv_1_0_0 = seltriag(Vv, 1, (0, 0))
+        sftdata.Vv_1_1_0 = seltriag(Vv, 1, (1, 0))
 
     sftdata = sftdata.as_single_prec()
 
@@ -504,8 +523,8 @@ if __name__ == '__main__':
     # propagation
     win = scsig.windows.hann(hp.l_frame, sym=False)
     win = win.astype(np.float32)
-    p00_RIRs = np.einsum('ijk,j->ik', RIRs, sftdata.Yenc[0])  # n_loc x time
-    a00_RIRs = apply_freq_domain_filter(p00_RIRs, sftdata.bnkr_inv[0, :, 0], win)
+    p00_RIRs = np.einsum('ijk,j->ik', RIRs, sftdata.Yenc[0].real)  # n_loc x time
+    a00_RIRs = filter_overlap_add(p00_RIRs, sftdata.bnkr_inv[0, :, 0], win)
 
     t_peak = a00_RIRs.argmax(axis=1)
     amp_peak = a00_RIRs.max(axis=1)
@@ -521,14 +540,14 @@ if __name__ == '__main__':
         f_reference_meta = None
 
     if f_reference_meta:
-        metadata = scio.loadmat(str(f_reference_meta),
-                                variable_names=('path_all_speech', 'list_fname'),
-                                chars_as_strings=True,
-                                squeeze_me=True)
-        flist_speech = metadata['path_all_speech']
+        metadata_ref = scio.loadmat(str(f_reference_meta),
+                                    variable_names=('path_all_speech', 'list_fname'),
+                                    chars_as_strings=True,
+                                    squeeze_me=True)
+        flist_speech = metadata_ref['path_all_speech']
         flist_speech = [Path(p.rstrip()) for p in flist_speech]
         n_speech = len(flist_speech)
-        list_fname_refer = metadata['list_fname']
+        list_fname_refer = metadata_ref['list_fname']
         list_feature: List[Tuple] = list_fname_to_feature(list_fname_refer)
         n_feature = len(list_feature)
     else:
