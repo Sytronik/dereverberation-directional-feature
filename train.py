@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Sequence, Tuple
+from typing import Dict, Sequence, Tuple, Optional
 
 import torch
 from numpy import ndarray
@@ -11,6 +11,7 @@ from tqdm import tqdm
 from hparams import hp
 from adamwr import AdamW, CosineLRWithRestarts
 from dataset import DirSpecDataset
+# noinspection PyUnresolvedReferences
 from models import UNet
 from tbXwriter import CustomWriter
 from utils import arr2str, print_to_file
@@ -26,7 +27,9 @@ class Trainer:
 
         self.__init_device(hp.device, hp.out_device)
 
-        self.writer: CustomWriter = None
+        self.writer: Optional[CustomWriter] = None
+
+        self.valid_eval_sample: dict = dict()
 
         self.optimizer = AdamW(self.model.parameters(),
                                lr=hp.learning_rate,
@@ -228,17 +231,20 @@ class Trainer:
             # write summary
             if i_iter == 0:
                 # F, T, C
-                if not self.writer.reused_sample:
-                    one_sample = DirSpecDataset.decollate_padded(data, 0)
-                else:
-                    one_sample = dict()
+                if not self.valid_eval_sample:
+                    self.valid_eval_sample = DirSpecDataset.decollate_padded(data, 0)
 
                 out_one = self.postprocess(output, T_ys, 0, loader.dataset)
 
                 DirSpecDataset.save_dirspec(
                     logdir / hp.form_result.format(epoch),
-                    **self.writer.reused_sample, **out_one
+                    **self.valid_eval_sample, **out_one
                 )
+
+                if not self.writer.reused_sample:
+                    one_sample = self.valid_eval_sample
+                else:
+                    one_sample = dict()
 
                 # Process(
                 #     target=write_one,
