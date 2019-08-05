@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any, Dict, Sequence, Tuple, Union
 
 import numpy as np
-import scipy.io as scio
 # noinspection PyCompatibility
 from dataclasses import asdict, dataclass, field
 from numpy import ndarray
@@ -23,7 +22,7 @@ class _HyperParameters:
     # devices
     device: Union[int, str, Sequence[str], Sequence[int]] = (0, 1, 2, 3)
     out_device: Union[int, str] = 3
-    num_disk_workers: int = 3
+    num_disk_workers: int = 4
 
     # select dataset
     DF: str = 'IV'
@@ -233,26 +232,6 @@ class _HyperParameters:
             [f'{k}: {v}' for k, v in asdict(self).items() if not isinstance(v, ndarray)])
         result += '\n-------------------------'
         return result
-
-
-# deprecated
-# n_per_frame: int
-
-# p = 0.5  # Dropout p
-
-# lr scheduler
-# StepLR: Dict[str, Any] = dict(step_size=5, gamma=0.8)
-#
-# CosineAnnealingLR: Dict[str, Any] = dict(
-#     T_max=10,
-#     eta_min=0,
-# )
-
-# def for_MLP(self) -> Tuple:
-#     n_input = self.L_cut_x * self.n_per_frame
-#     n_hidden = 17 * self.n_per_frame
-#     n_output = self.n_per_frame
-#     return (n_input, n_hidden, n_output, self.p)
 
 
 hp = _HyperParameters()

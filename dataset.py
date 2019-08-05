@@ -23,14 +23,17 @@ DataDict = Dict[str, Any]
 def xy_signature(func):
     def wrapper(self, *args, **kwargs):
         assert (len(args) > 0) ^ (len(kwargs) > 0)
-        x, y = func(self, *args, **kwargs)
-        if x is not None:
-            if y is not None:
-                return x, y
-            else:
-                return x
+        if len(args) == 2:
+            kwargs['x'] = args[0]
+            kwargs['y'] = args[1]
+        elif len(args) == 1:
+            kwargs['x'] = args[0]
+
+        output: dict = func(self, **kwargs)
+        if len(output) == 2:
+            return output['x'], output['y']
         else:
-            return y
+            return output.popitem()[1]
 
     return wrapper
 
@@ -176,7 +179,7 @@ class DirSpecDataset(Dataset):
     """
 
     def __init__(self, kind_data: str,
-                 norm_x: Normalization = None, norm_y: Normalization = None,
+                 norm_modules: Dict[str, Normalization] = None,
                  **kwargs: Channel):
         self._PATH = hp.dict_path[f'feature_{kind_data}']
 
@@ -195,32 +198,32 @@ class DirSpecDataset(Dataset):
             assert not hp.refresh_const and path_normconst.exists()
             self._all_files = self._all_files[:hp.n_data]
 
+        self.norm_modules = dict()
         if kind_data == 'train':
             if not hp.refresh_const and path_normconst.exists():
                 # when normconst file exists
                 npz_normconst = np.load(path_normconst, allow_pickle=True)
-                self.norm_x = Normalization(*npz_normconst['normconst_x'])
-                self.norm_y = Normalization(*npz_normconst['normconst_y'])
+                self.norm_modules['x'] = Normalization(*npz_normconst['normconst_x'])
+                self.norm_modules['y'] = Normalization(*npz_normconst['normconst_y'])
             else:
                 print('calculate normalization consts for input')
-                self.norm_x \
+                self.norm_modules['x'] \
                     = Normalization.calc_const(self._all_files, key=hp.spec_data_names['x'])
                 print('calculate normalization consts for output')
-                self.norm_y \
+                self.norm_modules['y'] \
                     = Normalization.calc_const(self._all_files, key=hp.spec_data_names['y'])
                 np.savez(path_normconst,
-                         normconst_x=self.norm_x.astuple(),
-                         normconst_y=self.norm_y.astuple())
+                         normconst_x=self.norm_modules['x'].astuple(),
+                         normconst_y=self.norm_modules['y'].astuple())
                 scio.savemat(path_normconst.with_suffix('.mat'),
-                             dict(normconst_x=self.norm_x.astuple(),
-                                  normconst_y=self.norm_y.astuple()))
+                             dict(normconst_x=self.norm_modules['x'].astuple(),
+                                  normconst_y=self.norm_modules['y'].astuple()))
 
-            print(f'normalization consts for input: {self.norm_x}')
-            print(f'normalization consts for output: {self.norm_y}')
+            print(f'normalization consts for input: {self.norm_modules["x"]}')
+            print(f'normalization consts for output: {self.norm_modules["y"]}')
         else:
-            assert norm_x, norm_y
-            self.norm_x = norm_x
-            self.norm_y = norm_y
+            assert 'x' in norm_modules and 'y' in norm_modules
+            self.norm_modules = norm_modules
 
         print(f'{len(self._all_files)} files are prepared from {kind_data.upper()}.')
 
@@ -333,8 +336,7 @@ class DirSpecDataset(Dataset):
                 self._needs[k] = kwargs[k]
 
     @xy_signature
-    def normalize(self, x: TensArr = None, y: TensArr = None) \
-            -> Union[Optional[TensArr], Tuple]:
+    def normalize(self, **kwargs):
         """
 
         :param x: input dirspec
@@ -342,21 +344,15 @@ class DirSpecDataset(Dataset):
         :return:
         """
 
-        if x is not None:
-            x_norm = LogModule.log(x)
-            x_norm = self.norm_x.normalize_(x_norm)
-        else:
-            x_norm = None
-        if y is not None:
-            y_norm = LogModule.log(y)
-            y_norm = self.norm_y.normalize_(y_norm)
-        else:
-            y_norm = None
-        return x_norm, y_norm
+        for xy, v in kwargs.items():
+            kwargs[xy] = None
+            v_norm = LogModule.log(v)
+            kwargs[xy] = self.norm_modules[xy].normalize_(v_norm)
+
+        return kwargs
 
     @xy_signature
-    def normalize_(self, x: TensArr = None, y: TensArr = None) \
-            -> Union[Optional[TensArr], Tuple]:
+    def normalize_(self, **kwargs):
         """
 
         :param x: input dirspec
@@ -364,17 +360,14 @@ class DirSpecDataset(Dataset):
         :return:
         """
 
-        if x is not None:
-            x = LogModule.log_(x)
-            x = self.norm_x.normalize_(x)
-        if y is not None:
-            y = LogModule.log_(y)
-            y = self.norm_y.normalize_(y)
-        return x, y
+        for xy, v in kwargs.items():
+            v = LogModule.log_(v)
+            kwargs[xy] = self.norm_modules[xy].normalize_(v)
+
+        return kwargs
 
     @xy_signature
-    def denormalize(self, x: TensArr = None, y: TensArr = None) \
-            -> Union[Optional[TensArr], Tuple]:
+    def denormalize(self, **kwargs):
         """
 
         :param x: input dirspec
@@ -382,21 +375,15 @@ class DirSpecDataset(Dataset):
         :return:
         """
 
-        if x is not None:
-            x_denorm = self.norm_x.denormalize(x)
-            x_denorm = LogModule.exp_(x_denorm)
-        else:
-            x_denorm = None
-        if y is not None:
-            y_denorm = self.norm_y.denormalize(y)
-            y_denorm = LogModule.exp_(y_denorm)
-        else:
-            y_denorm = None
-        return x_denorm, y_denorm
+        for xy, v in kwargs.items():
+            kwargs[xy] = None
+            v_denorm = self.norm_modules[xy].denormalize(v)
+            kwargs[xy] = LogModule.exp_(v_denorm)
+
+        return kwargs
 
     @xy_signature
-    def denormalize_(self, x: TensArr = None, y: TensArr = None) \
-            -> Union[Optional[TensArr], Tuple]:
+    def denormalize_(self, **kwargs):
         """
 
         :param x: input dirspec
@@ -404,13 +391,11 @@ class DirSpecDataset(Dataset):
         :return:
         """
 
-        if x is not None:
-            x = self.norm_x.denormalize_(x)
-            x = LogModule.exp_(x)
-        if y is not None:
-            y = self.norm_y.denormalize_(y)
-            y = LogModule.exp_(y)
-        return x, y
+        for xy, v in kwargs.items():
+            v = self.norm_modules[xy].denormalize_(v)
+            kwargs[xy] = LogModule.exp_(v)
+
+        return kwargs
 
     # noinspection PyProtectedMember
     @classmethod
@@ -438,7 +423,6 @@ class DirSpecDataset(Dataset):
         if mask.sum() == 1:
             ratio[mask] = 1 - ratio.sum()
 
-        # TODO not use n_loc, use filename convention instead
         all_files = dataset._all_files
         metadata = scio.loadmat(dataset._PATH / 'metadata.mat',
                                 squeeze_me=True,

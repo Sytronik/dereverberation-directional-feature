@@ -119,7 +119,7 @@ if args.train:
 else:  # args.test
     # Test Set
     dataset_test = DirSpecDataset(args.test,
-                                  dataset_temp.norm_x, dataset_temp.norm_y,
+                                  dataset_temp.norm_modules,
                                   **hp.channels_w_ph)
     loader = DataLoader(dataset_test,
                         batch_size=1,

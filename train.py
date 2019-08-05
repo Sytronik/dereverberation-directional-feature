@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Sequence, Tuple, Optional
+from typing import Dict, Sequence, Tuple, Optional, Any
 
 import torch
 from numpy import ndarray
@@ -29,7 +29,7 @@ class Trainer:
 
         self.writer: Optional[CustomWriter] = None
 
-        self.valid_eval_sample: dict = dict()
+        self.valid_eval_sample: Dict[str, Any] = dict()
 
         self.optimizer = AdamW(self.model.parameters(),
                                lr=hp.learning_rate,
@@ -97,8 +97,7 @@ class Trainer:
 
         torch.cuda.set_device(self.in_device)
 
-    def preprocess(self, data: Dict[str, Tensor],
-                   dataset: DirSpecDataset) -> Tuple[Tensor, Tensor]:
+    def preprocess(self, data: Dict[str, Tensor]) -> Tuple[Tensor, Tensor]:
         # B, F, T, C
         x = data['normalized_x']
         y = data['normalized_y']
@@ -125,8 +124,7 @@ class Trainer:
 
         return dict(out=one)
 
-    def calc_loss(self, output: Tensor, y: Tensor, T_ys: Sequence[int],
-                  dataset: DirSpecDataset) -> Tensor:
+    def calc_loss(self, output: Tensor, y: Tensor, T_ys: Sequence[int]) -> Tensor:
         loss_batch = self.criterion(output, y)
         loss = torch.zeros(1, device=loss_batch.device)
         for T, loss_sample in zip(T_ys, loss_batch):
@@ -160,13 +158,13 @@ class Trainer:
 
             for i_iter, data in enumerate(pbar):
                 # get data
-                x, y = self.preprocess(data, loader_train.dataset)  # B, C, F, T
+                x, y = self.preprocess(data)  # B, C, F, T
                 T_ys = data['T_ys']
 
                 # forward
                 output = self.model(x)[..., :y.shape[-1]]  # B, C, F, T
 
-                loss = self.calc_loss(output, y, T_ys, loader_train.dataset)
+                loss = self.calc_loss(output, y, T_ys)
                 loss_sum = loss.sum()
 
                 # backward
@@ -214,14 +212,14 @@ class Trainer:
         pbar = tqdm(loader, desc='validate ', postfix='[0]', dynamic_ncols=True)
         for i_iter, data in enumerate(pbar):
             # get data
-            x, y = self.preprocess(data, loader.dataset)  # B, C, F, T
+            x, y = self.preprocess(data)  # B, C, F, T
             T_ys = data['T_ys']
 
             # forward
             output = self.model(x)[..., :y.shape[-1]]
 
             # loss
-            loss = self.calc_loss(output, y, T_ys, loader.dataset)
+            loss = self.calc_loss(output, y, T_ys)
             avg_loss += loss
 
             # print
@@ -272,7 +270,7 @@ class Trainer:
         pbar = tqdm(loader, desc=group, dynamic_ncols=True)
         for i_iter, data in enumerate(pbar):
             # get data
-            x, y = self.preprocess(data, loader.dataset)  # B, C, F, T
+            x, y = self.preprocess(data)  # B, C, F, T
             T_ys = data['T_ys']
 
             # forward
@@ -295,8 +293,8 @@ class Trainer:
                 avg_measure += measure
 
             # print
-            str_measure = arr2str(measure).replace('\n', '; ')
-            pbar.write(str_measure)
+            # str_measure = arr2str(measure).replace('\n', '; ')
+            # pbar.write(str_measure)
 
         self.model.train()
 
