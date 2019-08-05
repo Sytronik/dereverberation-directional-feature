@@ -100,7 +100,7 @@ def stft(data: NDArray, _win: NDArray):
         (data.strides[0], data.strides[1], data.strides[1] * hp.l_hop)
     )
     spec = spec * _win[:, xp.newaxis]
-    spec = xp.fft.fft(spec)[:, :hp.n_freq, :]
+    spec = xp.fft.fft(spec, axis=1)[:, :hp.n_freq, :]
 
     return spec
 
@@ -108,6 +108,8 @@ def stft(data: NDArray, _win: NDArray):
 def filter_overlap_add(wave: NDArray, filter_fft: NDArray, _win: NDArray):
     # bnkr equalization in frequency domain
     xp = cp.get_array_module(wave)
+    filter_fft = filter_fft[..., xp.newaxis]
+    _win = _win[..., xp.newaxis]
 
     len_original = wave.shape[1]
     wave = xp.pad(wave,
@@ -122,9 +124,9 @@ def filter_overlap_add(wave: NDArray, filter_fft: NDArray, _win: NDArray):
         (wave.shape[0], hp.l_frame, n_frame),
         (wave.strides[0], wave.strides[1], wave.strides[1] * hp.l_hop)
     )
-    strided = strided * _win[..., xp.newaxis]
-    strided_filt = xp.fft.ifft(xp.fft.fft(strided) * filter_fft[..., xp.newaxis])
-    strided_filt *= _win[..., xp.newaxis]
+    strided = strided * _win
+    strided_filt = xp.fft.ifft(xp.fft.fft(strided, axis=1) * filter_fft, axis=1)
+    strided_filt *= _win
     filtered = xp.zeros((wave.shape[0], len_istft), dtype=xp.complex64)
     startend = np.array([0, hp.l_frame])
     for i_frame in range(n_frame):
@@ -145,7 +147,7 @@ def filter_overlap_add(wave: NDArray, filter_fft: NDArray, _win: NDArray):
     filtered = filtered[:, hp.n_fft // 2:]
     filtered = filtered[:, :len_original]
 
-    return filtered.astype(wave.dtype)
+    return filtered if xp.iscomplexobj(wave) else filtered.real
 
 
 # noinspection PyShadowingNames
@@ -244,25 +246,27 @@ def calc_direction_vec(anm: NDArray, out: NDArray = None) -> NDArray:
     :return: (... x 3)
     """
     other_shape = anm.shape[1:] if anm.ndim > 1 else tuple()
-    if out is not None:
+    result = (anm[0].conj() * anm[[3, 1, 2]]).real
+    result = result.transpose((*range(1, anm.ndim), 0))
+    result *= np.sqrt(0.5)
+    if out is None:
+        return result
+    else:
         assert out.shape == (*other_shape, 3)
-    out = (anm[0].conj() * anm[[3, 1, 2]]).real
-    out *= np.sqrt(0.5)
+        out[...] = result
 
     return out
 
 
 def process():
-    global pbar
-
     print_save_info(idx_start)
-    os.cpu_count()
-    pool_propagater = mp.Pool(mp.cpu_count() // 2 - n_cuda_dev - hp.num_disk_workers - 1)
+    range_feature = range(idx_start, n_feature)
+
+    pool_propagater = mp.Pool(min(n_cuda_dev * 3, mp.cpu_count() // 2 - 1 - n_cuda_dev))
     pool_extractor = mp.Pool(n_cuda_dev)
-    pool_saver = mp.Pool(hp.num_disk_workers)
     with mp.Manager() as manager:
-        q_data = [manager.Queue(hp.num_disk_workers * 3) for _ in hp.device]
-        q_out = manager.Queue()
+        q_data = [manager.Queue(3) for _ in hp.device]
+        q_out = manager.Queue(3 * n_cuda_dev)
 
         # open speech files
         speech = []
@@ -283,36 +287,31 @@ def process():
 
         # apply propagater
         # propagater sends data to q_data
-        pbar = tqdm(range(n_feature),
-                    desc='apply', dynamic_ncols=True, initial=idx_start)
-        range_feature = range(idx_start, n_feature)
         for idx, (i_speech, _, i_loc) in zip(range_feature, list_feature[idx_start:]):
             pool_propagater.apply_async(
                 propagate,
-                (idx, i_speech, flist_speech[i_speech],
-                 speech[i_speech], i_loc,
+                (idx, i_speech, flist_speech[i_speech], speech[i_speech], i_loc,
                  q_data[(idx - idx_start) % n_cuda_dev])
             )
             # propagate(idx, i_speech, flist_speech[i_speech],
             #           speech[i_speech], i_loc,
             #           q_data[(idx - idx_start) % n_cuda_dev])
-            pbar.update()
         pool_propagater.close()
 
-        # apply saver
-        # saver gets results from q_out
+        # save result feature
         pbar = tqdm(range(n_feature),
                     desc='create', dynamic_ncols=True, initial=idx_start)
         for _ in range_feature:
-            pool_saver.apply_async(save_result, q_out.get())
+            idx, i_speech, i_loc, dict_result = q_out.get()
+            p = path_result / hp.form_feature.format(idx, i_speech, hp.room_create, i_loc)
+            np.savez(p, **dict_result)
             str_qsizes = ' '.join([f'{q.qsize()}' for q in q_data])
             pbar.set_postfix_str(f'[{str_qsizes}], {q_out.qsize()}')
             pbar.update()
-        pool_saver.close()
+        pbar.close()
 
         pool_propagater.join()
         pool_extractor.join()
-        pool_saver.join()
 
     print_save_info(n_feature)
 
@@ -405,18 +404,14 @@ def calc_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_out: mp.Queue):
         q_out.put((idx, i_speech, i_loc, dict_result))
 
 
-def save_result(idx: int, i_speech: int, i_loc: int, dict_result: dict):
-    np.savez(path_result / hp.form_feature.format(idx, i_speech, hp.room_create, i_loc),
-             **dict_result)
-    # return i_speech, i_loc
-
-
 def print_save_info(i_feature: int):
     """ Print and save metadata.
 
     """
-    print(f'Feature files processed/total: {i_feature}/{len(list_feature)}\n'
-          f'Number of source location: {n_loc}\n')
+    print(f'{hp.DF}, {hp.room_create}, {args.kind_data}\n'
+          f'Number of mic/source position pairs: {n_loc}\n'
+          f'target folder: {path_result}\n'
+          f'Feature files saved/total: {i_feature}/{len(list_feature)}\n')
 
     metadata = dict(fs=hp.fs,
                     n_fft=hp.n_fft,
@@ -585,7 +580,7 @@ if __name__ == '__main__':
         idx_start = args.from_idx
         should_ask_cont = True
 
-    print(f'Start processing from the {idx_start}-th speech file.')
+    print(f'Start processing from the {idx_start}-th feature.')
     if should_ask_cont:
         while True:
             ans = input(f'{idx_exist} speech files were already processed. continue? (y/n)')
