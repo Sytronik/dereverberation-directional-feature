@@ -6,6 +6,7 @@ finally:
 
 import inspect
 import io
+import os
 from collections import OrderedDict as ODict
 from typing import Union
 
@@ -39,6 +40,7 @@ class Evaluation(metaclass=CallableSingletonMeta):
     def __init__(self):
         self.eng = matlab.engine.start_matlab('-nojvm')
         self.eng.addpath(self.eng.genpath('./matlab_lib'))
+        # self.eng.maxNumCompThreads(os.cpu_count()//4)
         self.strio = io.StringIO()
         Evaluation.instance: Evaluation = self
 
