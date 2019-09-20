@@ -43,7 +43,7 @@ class _HyperParameters:
     n_test_per_room: int = 10 * 100
 
     # log & normalize
-    eps_for_log: float = 1e-10
+    eps_for_log: float = 1e-5
     use_log: bool = True
     refresh_const: bool = False
 
