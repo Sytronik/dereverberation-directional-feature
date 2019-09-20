@@ -282,10 +282,10 @@ class Trainer:
 
                 out_one = self.postprocess(output, T_ys, 0, loader.dataset)
 
-                DirSpecDataset.save_dirspec(
-                    logdir / hp.form_result.format(epoch),
-                    **self.valid_eval_sample, **out_one
-                )
+                # DirSpecDataset.save_dirspec(
+                #     logdir / hp.form_result.format(epoch),
+                #     **self.valid_eval_sample, **out_one
+                # )
 
                 if not self.writer.reused_sample:
                     one_sample = self.valid_eval_sample
