@@ -71,6 +71,8 @@ class _HyperParameters:
     # path_feature: Path = Path('./data')
     path_feature: Path = Path('./backup')
     s_path_metadata: str = ''
+    sfx_featuredir: str = ''
+    # suffix_datadir: str = '_13_10'
 
     # file names
     form_feature: str = '{:05d}_{:04d}_{}_{:02d}.npz'  # idx, i_speech, room, i_loc
@@ -142,8 +144,9 @@ class _HyperParameters:
         if self.room_create:
             self.room_train = self.room_create
             self.room_test = self.room_create
-        path_feature_train = self.path_feature / f'{self.DF}_{self.room_train}/TRAIN'
-        path_feature_test = self.path_feature / f'{self.DF}_{self.room_test}/TEST'
+        feature_folder = f'{self.feature}_{self.room_train}{self.sfx_featuredir}'
+        path_feature_train = self.path_feature / f'{feature_folder}/TRAIN'
+        path_feature_test = self.path_feature / f'{feature_folder}/TEST'
         self.dict_path = dict(
             sft_data=self.path_feature / 'sft_data_32ms.mat',
             RIR_Ys=self.path_feature / f'RIR_Ys_{self.room_create}.mat',
