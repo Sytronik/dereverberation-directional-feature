@@ -21,7 +21,7 @@ class Channel(Enum):
 class _HyperParameters:
     # devices
     device: Union[int, str, Sequence[str], Sequence[int]] = (0, 1, 2, 3)
-    out_device: Union[int, str] = 3
+    out_device: Union[int, str] = 2
     num_disk_workers: int = 4
 
     # select dataset
@@ -50,20 +50,23 @@ class _HyperParameters:
     # training
     n_data: int = 0  # <=0 to use all data
     train_ratio: float = 0.77
-    n_epochs: int = 150
-    batch_size: int = 32
+    n_epochs: int = 60
+    batch_size: int = 16
     learning_rate: float = 5e-4
-    weight_decay: float = 1e-5  # Adam weight_decay
+    weight_decay: float = 1e-4  # Adam weight_decay
+    threshold_stop: float = 0.99
 
     # reconstruction
     n_glim_iter: int = 20  # 0 for not using Griffin Lim
 
     # summary
+    period_save_state: int = 4
     draw_test_fig: bool = False
 
     # paths
     logdir: str = f'./result/test'  # will be converted to type Path
     path_speech: Path = Path('./data/TIMIT')
+    # path_feature: Path = Path('./data')
     path_feature: Path = Path('./backup')
     s_path_metadata: str = ''
 
@@ -82,7 +85,6 @@ class _HyperParameters:
     dict_path: Dict[str, Path] = None
     kwargs_stft: Dict[str, Any] = None
     kwargs_istft: Dict[str, Any] = None
-    period_save_state: int = None
     channels_w_ph: Dict[str, Channel] = None
 
     def __post_init__(self):
@@ -94,11 +96,11 @@ class _HyperParameters:
                              # y_phase=Channel.ALL,
                              )
 
-        self.UNet = dict(ch_base=32,
+        self.UNet = dict(ch_base=64,
                          depth=4,
                          use_cbam=False,
                          )
-        self.scheduler = dict(restart_period=10,
+        self.scheduler = dict(restart_period=4,
                               t_mult=2,
                               eta_threshold=1.5,
                               )
@@ -155,10 +157,6 @@ class _HyperParameters:
                                 n_fft=self.n_fft, dtype=np.complex64)
         self.kwargs_istft = dict(hop_length=self.l_hop, window='hann', center=True,
                                  dtype=np.float32)
-
-        # training
-        if not self.period_save_state:
-            self.period_save_state = self.scheduler['restart_period'] // 2
 
         # reconstruction
         self.channels_w_ph = dict(**self.channels)

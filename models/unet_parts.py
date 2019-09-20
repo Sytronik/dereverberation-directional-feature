@@ -131,7 +131,7 @@ class InConv(nn.Module):
                  kernel_size=(3, 3), padding=None, use_cbam=False,
                  ):
         super().__init__()
-        self.block = FusionNetBlock(in_ch, out_ch, nn.ReLU(inplace=True),
+        self.block = ResidualBlock(in_ch, out_ch, nn.ReLU(inplace=True),
                                     kernel_size=kernel_size, padding=padding,
                                     )
         # self.conv = ResidualBlock(in_ch, out_ch)
@@ -184,9 +184,9 @@ class OutConv(nn.Module):
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.conv1 = nn.Conv2d(in_ch, out_ch, (3, 3), padding=(1, 1))
-        self.act_fn = nn.Tanh()
+        # self.act_fn = nn.Tanh()
 
     def forward(self, x):
         x = self.conv1(x)
-        x = 2 * self.act_fn(x)
+        # x = 2 * self.act_fn(x)
         return x
