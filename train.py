@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Sequence, Tuple, Optional, Any
+from typing import Dict, Sequence, Tuple, Optional, Any, Callable
 
 import torch
 from numpy import ndarray
@@ -17,6 +17,37 @@ from tbXwriter import CustomWriter
 from utils import arr2str, print_to_file
 
 
+# noinspection PyAttributeOutsideInit
+class AverageMeter:
+    """Computes and stores the sum and the last value"""
+
+    def __init__(self,
+                 init_factory: Callable = None,
+                 init_value: Any = 0.,
+                 init_count=0):
+        self.init_factory: Callable = init_factory
+        self.init_value = init_value
+
+        self.reset(init_count)
+
+    def reset(self, init_count=0):
+        if self.init_factory:
+            self.last = self.init_factory()
+            self.sum = self.init_factory()
+        else:
+            self.last = self.init_value
+            self.sum = self.init_value
+        self.count = init_count
+
+    def update(self, value, n=1):
+        self.last = value
+        self.sum += value
+        self.count += n
+
+    def get_average(self):
+        return self.sum / self.count
+
+
 class Trainer:
     def __init__(self, path_state_dict=''):
         self.model_name = hp.model_name
@@ -24,23 +55,26 @@ class Trainer:
 
         self.model = module(**getattr(hp, hp.model_name))
         self.criterion = nn.MSELoss(reduction='none')
-
-        self.__init_device(hp.device, hp.out_device)
-
-        self.writer: Optional[CustomWriter] = None
-
-        self.valid_eval_sample: Dict[str, Any] = dict()
-
         self.optimizer = AdamW(self.model.parameters(),
                                lr=hp.learning_rate,
                                weight_decay=hp.weight_decay,
                                )
 
+        self.__init_device(hp.device, hp.out_device)
+
+        self.scheduler: Optional[CosineLRWithRestarts] = None
+        self.max_epochs = hp.n_epochs
+        self.loss_last_restart = float('inf')
+
+        self.writer: Optional[CustomWriter] = None
+
+        self.valid_eval_sample: Dict[str, Any] = dict()
+
         # Load State Dict
         if path_state_dict:
             st_model, st_optim = torch.load(path_state_dict, map_location=self.in_device)
             try:
-                if isinstance(self.model, nn.DataParallel):
+                if hasattr(self.model, 'module'):
                     self.model.module.load_state_dict(st_model)
                 else:
                     self.model.load_state_dict(st_model)
@@ -61,6 +95,12 @@ class Trainer:
                 f.write(repr(hp))
 
     def __init_device(self, device, out_device):
+        """
+
+        :type device: Union[int, str, Sequence]
+        :type out_device: Union[int, str, Sequence]
+        :return:
+        """
         if device == 'cpu':
             self.in_device = torch.device('cpu')
             self.out_device = torch.device('cpu')
@@ -132,15 +172,27 @@ class Trainer:
 
         return loss
 
+    @torch.no_grad()
+    def should_stop(self, loss_valid, epoch):
+        if epoch == self.max_epochs - 1:
+            return True
+        self.scheduler.step()
+        if self.scheduler.t_epoch == 0:  # if it is restarted now
+            # if self.loss_last_restart < loss_valid:
+            #     return True
+            if self.loss_last_restart * hp.threshold_stop < loss_valid:
+                self.max_epochs = epoch + self.scheduler.restart_period + 1
+            self.loss_last_restart = loss_valid
+
     def train(self, loader_train: DataLoader, loader_valid: DataLoader,
               logdir: Path, first_epoch=0):
         # Learning Rates Scheduler
-        scheduler = CosineLRWithRestarts(self.optimizer,
-                                         batch_size=hp.batch_size,
-                                         epoch_size=len(loader_train.dataset),
-                                         last_epoch=first_epoch - 1,
-                                         **hp.scheduler)
-        avg_loss = torch.zeros(1, device=self.out_device)
+        self.scheduler = CosineLRWithRestarts(self.optimizer,
+                                              batch_size=hp.batch_size,
+                                              epoch_size=len(loader_train.dataset),
+                                              last_epoch=first_epoch - 1,
+                                              **hp.scheduler)
+        self.scheduler.step()
 
         self.writer = CustomWriter(str(logdir), group='train', purge_step=first_epoch)
 
@@ -153,8 +205,9 @@ class Trainer:
         for epoch in range(first_epoch, hp.n_epochs):
 
             print()
-            scheduler.step()
-            pbar = tqdm(loader_train, desc=f'epoch {epoch:3d}', postfix='[]', dynamic_ncols=True)
+            pbar = tqdm(loader_train,
+                        desc=f'epoch {epoch:3d}', postfix='[]', dynamic_ncols=True)
+            avg_loss = AverageMeter(float)
 
             for i_iter, data in enumerate(pbar):
                 # get data
@@ -165,27 +218,22 @@ class Trainer:
                 output = self.model(x)[..., :y.shape[-1]]  # B, C, F, T
 
                 loss = self.calc_loss(output, y, T_ys)
-                loss_sum = loss.sum()
 
                 # backward
                 self.optimizer.zero_grad()
                 loss_sum.backward()
 
                 self.optimizer.step()
-                scheduler.batch_step()
+                self.scheduler.batch_step()
 
                 # print
-                with torch.no_grad():
-                    avg_loss += loss
-                    loss_np = loss.cpu().numpy() / len(T_ys)
-                    pbar.set_postfix_str(arr2str(loss_np, ndigits=1))
+                avg_loss.update(loss.item(), len(T_ys))
+                pbar.set_postfix_str(f'{avg_loss.get_average():.1e}')
 
-            avg_loss /= len(loader_train.dataset)
-            tag = 'loss/train'
-            self.writer.add_scalar(tag, avg_loss.sum().item(), epoch)
+            self.writer.add_scalar('loss/train', avg_loss.get_average(), epoch)
 
             # Validation
-            self.validate(loader_valid, logdir, epoch)
+            loss_valid = self.validate(loader_valid, logdir, epoch)
 
             # save loss & model
             if epoch % hp.period_save_state == hp.period_save_state - 1:
@@ -195,6 +243,12 @@ class Trainer:
                      ),
                     logdir / f'{epoch}.pt'
                 )
+
+            # Early stopping
+            if self.should_stop(loss_valid, epoch):
+                break
+
+        self.writer.close()
 
     @torch.no_grad()
     def validate(self, loader: DataLoader, logdir: Path, epoch: int):
@@ -207,7 +261,7 @@ class Trainer:
 
         self.model.eval()
 
-        avg_loss = torch.zeros(1, device=self.out_device)
+        avg_loss = AverageMeter(float)
 
         pbar = tqdm(loader, desc='validate ', postfix='[0]', dynamic_ncols=True)
         for i_iter, data in enumerate(pbar):
@@ -220,11 +274,10 @@ class Trainer:
 
             # loss
             loss = self.calc_loss(output, y, T_ys)
-            avg_loss += loss
+            avg_loss.update(loss.item(), len(T_ys))
 
             # print
-            loss_np = loss.cpu().numpy() / len(T_ys)
-            pbar.set_postfix_str(arr2str(loss_np, ndigits=1))
+            pbar.set_postfix_str(f'{avg_loss.get_average():.1e}')
 
             # write summary
             if i_iter == 0:
@@ -244,19 +297,13 @@ class Trainer:
                 else:
                     one_sample = dict()
 
-                # Process(
-                #     target=write_one,
-                #     args=(x_one, y_one, x_ph_one, y_ph_one, out_one, epoch)
-                # ).start()
                 self.writer.write_one(epoch, **one_sample, **out_one)
 
-        avg_loss /= len(loader.dataset)
-        tag = 'loss/valid'
-        self.writer.add_scalar(tag, avg_loss.sum().item(), epoch)
+        self.writer.add_scalar('loss/valid', avg_loss.get_average(), epoch)
 
         self.model.train()
 
-        return avg_loss
+        return avg_loss.get_average()
 
     @torch.no_grad()
     def test(self, loader: DataLoader, logdir: Path):
@@ -288,17 +335,16 @@ class Trainer:
 
             measure = self.writer.write_one(i_iter, **out_one, **one_sample)
             if avg_measure is None:
-                avg_measure = measure
+                avg_measure = AverageMeter(init_value=measure, init_count=len(T_ys))
             else:
-                avg_measure += measure
-
+                avg_measure.update(measure)
             # print
             # str_measure = arr2str(measure).replace('\n', '; ')
             # pbar.write(str_measure)
 
         self.model.train()
 
-        avg_measure /= len(loader.dataset)
+        avg_measure = avg_measure.get_average()
 
         self.writer.add_text(f'{group}/Average Measure/Proposed', str(avg_measure[0]))
         self.writer.add_text(f'{group}/Average Measure/Reverberant', str(avg_measure[1]))
