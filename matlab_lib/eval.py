@@ -6,10 +6,9 @@ finally:
 
 import inspect
 import io
-import os
-from collections import OrderedDict as ODict
-from typing import Union
+from typing import Tuple, Sequence
 
+import numpy as np
 from numpy import ndarray
 
 
@@ -44,13 +43,13 @@ class Evaluation(metaclass=CallableSingletonMeta):
         self.strio = io.StringIO()
         Evaluation.instance: Evaluation = self
 
-    def __call__(self, clean: ndarray, noisy: ndarray, fs: int) -> ODict:
+    def __call__(self, clean: ndarray, noisy: ndarray, fs: int) -> Tuple[Sequence[str], tuple]:
         clean = matlab.double(clean.tolist())
         noisy = matlab.double(noisy.tolist())
         fs = matlab.double([fs])
         results = self.eng.se_eval(clean, noisy, fs, nargout=3, stdout=self.strio)
 
-        return ODict([(m, r) for m, r in zip(Evaluation.metrics, results)])
+        return Evaluation.metrics, results
 
     def _exit(self):
         self.eng.quit()

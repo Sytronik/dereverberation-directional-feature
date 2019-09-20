@@ -147,7 +147,7 @@ def calc_snrseg(y_clean: ndarray, y_est: ndarray, T_ys: Sequence[int] = (0,)) \
 
 
 def calc_using_eval_module(y_clean: ndarray, y_est: ndarray,
-                           T_ys: Sequence[int] = (0,)) -> ODict:
+                           T_ys: Sequence[int] = (0,)) -> Dict[str, float]:
     """ calculate metric using EvalModule. y can be a batch.
 
     :param y_clean:
@@ -162,19 +162,23 @@ def calc_using_eval_module(y_clean: ndarray, y_est: ndarray,
     if T_ys == (0,):
         T_ys = (y_clean.shape[1],) * y_clean.shape[0]
 
-    keys = None
-    sum_result = None
-    for T, item_clean, item_est in zip(T_ys, y_clean, y_est):
+    if len(T_ys) > 1:
+        metrics = None
+        sum_result = None
+        for T, item_clean, item_est in zip(T_ys, y_clean, y_est):
+            # noinspection PyArgumentList
+            metrics, result = EvalModule(item_clean[:T], item_est[:T], hp.fs)
+            result = np.array(result)
+            if sum_result is None:
+                sum_result = result
+            else:
+                sum_result += result
+        sum_result = sum_result.tolist()
+    else:
         # noinspection PyArgumentList
-        temp: ODict = EvalModule(item_clean[:T], item_est[:T], hp.fs)
-        result = np.array(list(temp.values()))
-        if not keys:
-            keys = temp.keys()
-            sum_result = result
-        else:
-            sum_result += result
+        metrics, sum_result = EvalModule(y_clean[0, :T_ys[0]], y_est[0, :T_ys[0]], hp.fs)
 
-    return ODict(zip(keys, sum_result.tolist()))
+    return {k: v for k, v in zip(metrics, sum_result)}
 
 
 def reconstruct_wave(*args: ndarray, n_iter=0, n_sample=-1) -> ndarray:

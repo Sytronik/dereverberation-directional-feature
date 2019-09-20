@@ -58,6 +58,9 @@ class _HyperParameters:
     # reconstruction
     n_glim_iter: int = 20  # 0 for not using Griffin Lim
 
+    # summary
+    draw_test_fig: bool = False
+
     # paths
     logdir: str = f'./result/test'  # will be converted to type Path
     path_speech: Path = Path('./data/TIMIT')
