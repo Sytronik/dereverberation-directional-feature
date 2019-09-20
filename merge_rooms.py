@@ -10,6 +10,10 @@ import scipy.io as scio
 from hparams import hp
 
 
+def get_i_loc(fname: str):
+    return int(fname.replace('.npz', '').split('_')[-1])
+
+
 def symlink(_src_path, src_fnames, _dst_path, q, idx):
     for f in src_fnames:
         # f = f.replace('.h5', '')
@@ -40,16 +44,24 @@ def symlink(_src_path, src_fnames, _dst_path, q, idx):
 if __name__ == '__main__':
     parser = ArgumentParser()
 
-    parser.add_argument('DF', choices=('IV', 'DirAC'))
+    parser.add_argument('DF', choices=('IV', 'DirAC', 'mulspec'))
     parser.add_argument('ROOMS', type=str, nargs='+')  # multiple rooms (at least 1 room)
+    parser.add_argument('--n_loc', type=int, nargs=2,
+                        default=[-1, -1])  # multiple rooms (at least 1 room)
 
     args = parser.parse_args()
 
     PATHS_ROOMS = [hp.path_feature / f'{args.DF}_{ROOM}' for ROOM in args.ROOMS]
     s_num_rooms = [room.lstrip('room') for room in args.ROOMS]
-    PATH_MERGED = hp.path_feature / (f'{args.DF}_room' + '+'.join(s_num_rooms))
+    s_folder = f'{args.DF}_room' + '+'.join(s_num_rooms)
+    s_folder += f'_{args.n_loc[0]}_{args.n_loc[1]}' if args.n_loc != [-1, -1] else ''
+    PATH_MERGED = hp.path_feature / s_folder
     if not PATH_MERGED.is_dir():
         os.makedirs(PATH_MERGED)
+    new_n_locs = {'TRAIN': args.n_loc[0],
+                  'TEST/UNSEEN': args.n_loc[1],
+                  'TEST/SEEN': args.n_loc[1],
+                  }
 
     pool = mp.Pool(mp.cpu_count())
     pbars = []
@@ -72,8 +84,13 @@ if __name__ == '__main__':
                 metadata = scio.loadmat(path / kind / 'metadata.mat',
                                         chars_as_strings=True,
                                         squeeze_me=True)
-                list_n_loc.append(metadata['n_loc'])
-                fnames = [f.rstrip() for f in metadata['list_fname']]
+                if new_n_locs[kind] == -1:
+                    new_n_locs[kind] = metadata['n_loc']
+                else:
+                    assert new_n_locs[kind] <= metadata['n_loc']
+                list_n_loc.append(new_n_locs[kind])
+                fnames = [f.rstrip() for f in metadata['list_fname'] if
+                          get_i_loc(f) < new_n_locs[kind]]
                 merged_list_fname += fnames
 
                 src_path = path / kind
