@@ -142,11 +142,6 @@ class Trainer:
         x = data['normalized_x']
         y = data['normalized_y']
 
-        if self.model_name.startswith('UNet'):
-            # B, C, F, T
-            x = x.permute(0, -1, -3, -2).contiguous()
-            y = y.permute(0, -1, -3, -2).contiguous()
-
         x = x.to(self.in_device, non_blocking=True)
         y = y.to(self.out_device, non_blocking=True)
 

@@ -276,7 +276,7 @@ def process():
         # apply extractor first
         # extractor gets data from q_data, and sends the result to q_out
         pool_extractor.starmap_async(
-            calc_dirspecs,
+            calc_specs if hp.DF == 'mulspec' else calc_dirspecs,
             [(dev,
               q_data[idx],
               len(list_feature[idx_start + idx::n_cuda_dev]),
@@ -400,6 +400,64 @@ def calc_dirspecs(i_dev: int, q_data: mp.Queue, n_data: int, q_out: mp.Queue):
                            dirspec_room=cp.asnumpy(dirspec_room_cp),
                            phase_free=cp.asnumpy(phase_free)[..., np.newaxis],
                            phase_room=cp.asnumpy(phase_room)[..., np.newaxis],
+                           )
+        q_out.put((idx, i_speech, i_loc, dict_result))
+
+
+def calc_specs(i_dev: int, q_data: mp.Queue, n_data: int, q_out: mp.Queue):
+    """ create spectrograms.
+
+    :param i_dev: GPU Device No.
+    :param q_data:
+    :param n_data:
+    :param q_out:
+
+    :return: None
+    """
+
+    for _ in range(n_data):
+        idx, i_speech, f_speech, i_loc, data, data_room = q_data.get()
+
+        # Free-field
+        spec_free = librosa.stft((Ys[i_loc][0] * data).real,
+                                 n_fft=hp.n_fft,
+                                 hop_length=hp.l_hop,
+                                 win_length=hp.l_frame,
+                                 )  # F, T
+        phase_free = np.angle(spec_free)
+        spec_free = np.abs(spec_free)
+
+        # Room
+        spec_room = []
+        for item_room in data_room:
+            spec_room.append(
+                librosa.stft(item_room,
+                             n_fft=hp.n_fft,
+                             hop_length=hp.l_hop,
+                             win_length=hp.l_frame,
+                             )
+            )
+        spec_room = np.stack(spec_room, axis=-1)  # F, T, ch
+        spec_room = np.concatenate((np.abs(spec_room), np.angle(spec_room)), axis=-1)
+        p00_time = sftdata.Yenc[0] @ data_room  # Order, n
+        # Order, F, T
+        p00_spec = librosa.stft(p00_time.real,
+                                n_fft=hp.n_fft,
+                                hop_length=hp.l_hop,
+                                win_length=hp.l_frame,
+                                )
+
+        a00_spec = p00_spec * sftdata.bnkr_inv[0, :hp.n_freq]
+        mag_room = np.abs(a00_spec)
+        phase_room = np.angle(a00_spec)
+
+        # Save (F, T, C)
+        dict_result = dict(path_speech=str(f_speech),
+                           dirspec_free=spec_free[..., np.newaxis],
+                           phase_free=phase_free[..., np.newaxis],
+                           dirspec_room=spec_room,
+                           mag_room=mag_room[..., np.newaxis],
+                           phase_room=phase_room[..., np.newaxis],
                            )
         q_out.put((idx, i_speech, i_loc, dict_result))
 

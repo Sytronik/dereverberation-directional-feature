@@ -26,7 +26,8 @@ class _HyperParameters:
 
     # select dataset
     DF: str = 'IV'
-    # DF: str = 'DirAC
+    # DF: str = 'DirAC'
+    # DF: str = 'mulspec'
     room_train: str = 'room1+2+3'
     room_test: str = 'room1+2+3'
     room_create: str = ''
@@ -91,6 +92,7 @@ class _HyperParameters:
         self.channels = dict(path_speech=Channel.NONE,
                              x=Channel.ALL,
                              # x=Channel.LAST,
+                             x_mag=Channel.NONE,
                              y=Channel.LAST,
                              # x_phase=Channel.ALL,
                              # y_phase=Channel.ALL,
@@ -106,6 +108,7 @@ class _HyperParameters:
                               )
 
         self.spec_data_names = dict(x='dirspec_room', y='dirspec_free',
+                                    x_mag='mag_room',
                                     x_phase='phase_room', y_phase='phase_free',
                                     path_speech='path_speech',
                                     out='dirspec_estimated',
@@ -114,7 +117,13 @@ class _HyperParameters:
     def init_dependent_vars(self):
         self.logdir = Path(self.logdir)
         # nn
-        ch_in = 4 if self.channels['x'] == Channel.ALL else 1
+        if self.channels['x'] == Channel.ALL:
+            if self.DF == 'mulspec':
+                ch_in = 64
+            else:
+                ch_in = 4
+        else:
+            ch_in = 1
         ch_out = 4 if self.channels['y'] == Channel.ALL else 1
         if 'x_phase' in self.channels:
             ch_in += 1

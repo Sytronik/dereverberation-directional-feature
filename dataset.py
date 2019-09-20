@@ -56,6 +56,8 @@ class Normalization:
     @staticmethod
     def _load_data(fname: Union[str, Path], key: str, queue: mp.Queue) -> None:
         x = np.load(fname, mmap_mode='r')[key].astype(np.float32, copy=False)
+        if hp.DF == 'mulspec' and key == hp.spec_data_names['x']:
+            x = x[..., :x.shape[-1]//2]
         queue.put(x)
 
     @staticmethod
@@ -185,6 +187,7 @@ class DirSpecDataset(Dataset):
 
         # default needs
         self._needs = dict(x=Channel.ALL, y=Channel.LAST,
+                           x_mag=Channel.NONE,
                            x_phase=Channel.NONE, y_phase=Channel.NONE,
                            path_speech=Channel.ALL)
         self.set_needs(**kwargs)
@@ -279,15 +282,29 @@ class DirSpecDataset(Dataset):
                 else:
                     result[key] = list_data
             else:
-                # B, T, F, C
-                data = [batch[idx][key].permute(-2, -3, -1) for idx in idxs_sorted]
-                data = pad_sequence(data, batch_first=True)
-                # B, F, T, C
-                data = data.permute(0, -2, -3, -1)
+                if len(batch) > 1:
+                    # B, T, F, C
+                    data = [batch[idx][key].permute(-2, -3, -1) for idx in idxs_sorted]
+                    data = pad_sequence(data, batch_first=True)
+                    # B, F, T, C
+                    data = data.permute(0, -2, -3, -1)
+                else:
+                    data = batch[0][key].unsqueeze(0)
+
+                if key == 'x' or key == 'y':
+                    if hp.DF == 'mulspec' and key == 'x':
+                        C = data.shape[-1]
+                        normalized = torch.cat(
+                            (self.normalize(**{key: data[..., :C // 2]}),
+                             data[..., C // 2:] / np.sqrt(np.pi**2 / 3)),
+                            dim=-1,
+                        )
+                    else:
+                        normalized = self.normalize(**{key: data})
+                    normalized = normalized.permute(0, -1, -3, -2).contiguous()
+                    result[f'normalized_{key}'] = normalized
 
                 result[key] = data
-                if key == 'x' or key == 'y':
-                    result[f'normalized_{key}'] = self.normalize(**{key: data})
 
         return result
 
@@ -311,6 +328,9 @@ class DirSpecDataset(Dataset):
             elif not key.startswith('T_') and not key.startswith('normalized_'):
                 T_xy = 'T_xs' if 'x' in key else 'T_ys'
                 result[key] = value[idx, :, :batch[T_xy][idx], :].numpy()
+        if 'x_mag' in result:
+            result['x'] = result['x_mag']
+            del result['x_mag']
         return result
 
     @staticmethod
