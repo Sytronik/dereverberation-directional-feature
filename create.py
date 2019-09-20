@@ -276,7 +276,7 @@ def process():
         # apply extractor first
         # extractor gets data from q_data, and sends the result to q_out
         pool_extractor.starmap_async(
-            calc_specs if hp.DF == 'mulspec' else calc_dirspecs,
+            calc_specs if hp.feature == 'mulspec' else calc_dirspecs,
             [(dev,
               q_data[idx],
               len(list_feature[idx_start + idx::n_cuda_dev]),
@@ -466,7 +466,7 @@ def print_save_info(i_feature: int):
     """ Print and save metadata.
 
     """
-    print(f'{hp.DF}, {hp.room_create}, {args.kind_data}\n'
+    print(f'{hp.feature}, {hp.room_create}, {args.kind_data}\n'
           f'Number of mic/source position pairs: {n_loc}\n'
           f'target folder: {path_result}\n'
           f'Feature files saved/total: {i_feature}/{len(list_feature)}\n')
@@ -515,7 +515,7 @@ if __name__ == '__main__':
     parser.add_argument('--from', type=int, default=-1,
                         dest='from_idx')
     args = hp.parse_argument(parser, print_argument=False)
-    use_dirac = hp.DF == 'DirAC'
+    use_dirac = hp.feature == 'DirAC'
     n_cuda_dev = len(hp.device)
     is_train = args.kind_data.lower() == 'train'
 

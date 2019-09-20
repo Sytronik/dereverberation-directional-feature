@@ -25,9 +25,9 @@ class _HyperParameters:
     num_disk_workers: int = 4
 
     # select dataset
-    DF: str = 'IV'
-    # DF: str = 'DirAC'
-    # DF: str = 'mulspec'
+    feature: str = 'IV'
+    # feature: str = 'DirAC'
+    # feature: str = 'mulspec'
     room_train: str = 'room1+2+3'
     room_test: str = 'room1+2+3'
     room_create: str = ''
@@ -65,7 +65,8 @@ class _HyperParameters:
     draw_test_fig: bool = False
 
     # paths
-    logdir: str = f'./result/test'  # will be converted to type Path
+    # logdir will be converted to type Path in the init_dependent_vars function
+    logdir: str = f'./result/test'
     path_speech: Path = Path('./data/TIMIT')
     # path_feature: Path = Path('./data')
     path_feature: Path = Path('./backup')
@@ -118,7 +119,7 @@ class _HyperParameters:
         self.logdir = Path(self.logdir)
         # nn
         if self.channels['x'] == Channel.ALL:
-            if self.DF == 'mulspec':
+            if self.feature == 'mulspec':
                 ch_in = 64
             else:
                 ch_in = 4
@@ -155,8 +156,6 @@ class _HyperParameters:
             feature_unseen=path_feature_test / 'UNSEEN',
 
             normconst_train=path_feature_train / 'normconst.npz',
-            normconst_seen=path_feature_test / 'normconst.npz',
-            normconst_unseen=path_feature_test / 'normconst.npz',
 
             figures=Path('./figures'),
         )

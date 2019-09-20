@@ -56,7 +56,7 @@ class Normalization:
     @staticmethod
     def _load_data(fname: Union[str, Path], key: str, queue: mp.Queue) -> None:
         x = np.load(fname, mmap_mode='r')[key].astype(np.float32, copy=False)
-        if hp.DF == 'mulspec' and key == hp.spec_data_names['x']:
+        if hp.feature == 'mulspec' and key == hp.spec_data_names['x']:
             x = x[..., :x.shape[-1]//2]
         queue.put(x)
 
@@ -292,7 +292,7 @@ class DirSpecDataset(Dataset):
                     data = batch[0][key].unsqueeze(0)
 
                 if key == 'x' or key == 'y':
-                    if hp.DF == 'mulspec' and key == 'x':
+                    if hp.feature == 'mulspec' and key == 'x':
                         C = data.shape[-1]
                         normalized = torch.cat(
                             (self.normalize(**{key: data[..., :C // 2]}),

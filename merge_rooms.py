@@ -26,7 +26,7 @@ def symlink(_src_path, src_fnames, _dst_path, q, idx):
             same = False
             while dst.resolve().name == src.name:
                 if dst_resolve.parent.name != src_resolve.parent.name:
-                    if dst_resolve.name.startswith(args.DF):
+                    if dst_resolve.name.startswith(args.feature):
                         same = True
                         break
                     else:
@@ -44,16 +44,16 @@ def symlink(_src_path, src_fnames, _dst_path, q, idx):
 if __name__ == '__main__':
     parser = ArgumentParser()
 
-    parser.add_argument('DF', choices=('IV', 'DirAC', 'mulspec'))
+    parser.add_argument('feature', choices=('IV', 'DirAC', 'mulspec'))
     parser.add_argument('ROOMS', type=str, nargs='+')  # multiple rooms (at least 1 room)
     parser.add_argument('--n_loc', type=int, nargs=2,
                         default=[-1, -1])  # multiple rooms (at least 1 room)
 
     args = parser.parse_args()
 
-    PATHS_ROOMS = [hp.path_feature / f'{args.DF}_{ROOM}' for ROOM in args.ROOMS]
+    PATHS_ROOMS = [hp.path_feature / f'{args.feature}_{ROOM}' for ROOM in args.ROOMS]
     s_num_rooms = [room.lstrip('room') for room in args.ROOMS]
-    s_folder = f'{args.DF}_room' + '+'.join(s_num_rooms)
+    s_folder = f'{args.feature}_room' + '+'.join(s_num_rooms)
     s_folder += f'_{args.n_loc[0]}_{args.n_loc[1]}' if args.n_loc != [-1, -1] else ''
     PATH_MERGED = hp.path_feature / s_folder
     if not PATH_MERGED.is_dir():
