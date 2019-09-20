@@ -73,8 +73,7 @@ if args.test:
     else:
         logdir_test /= f'{args.test}_{hp.room_test}'
     if logdir_test.exists() and list(logdir_test.glob(tfevents_fname)):
-        print(form_overwrite_msg.format(logdir_test))
-        ans = input()
+        ans = input(form_overwrite_msg.format(logdir_test))
         if ans.lower().startswith('y'):
             shutil.rmtree(logdir_test)
             os.makedirs(logdir_test)
@@ -104,14 +103,14 @@ if args.train:
                               batch_size=hp.batch_size,
                               num_workers=hp.num_disk_workers,
                               collate_fn=dataset_train.pad_collate,
-                              pin_memory=True,
+                              pin_memory=(hp.device != 'cpu'),
                               shuffle=True,
                               )
     loader_valid = DataLoader(dataset_valid,
-                              batch_size=hp.batch_size * 4,
+                              batch_size=hp.batch_size * 2,
                               num_workers=hp.num_disk_workers,
                               collate_fn=dataset_valid.pad_collate,
-                              pin_memory=True,
+                              pin_memory=(hp.device != 'cpu'),
                               shuffle=False,
                               )
 
@@ -125,7 +124,7 @@ else:  # args.test
                         batch_size=1,
                         num_workers=hp.num_disk_workers,
                         collate_fn=dataset_test.pad_collate,
-                        pin_memory=True,
+                        pin_memory=(hp.device != 'cpu'),
                         shuffle=False,
                         )
 
