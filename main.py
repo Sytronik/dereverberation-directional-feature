@@ -69,9 +69,9 @@ os.makedirs(logdir_train, exist_ok=True)
 if args.test:
     logdir_test = hp.logdir
     if hp.room_test == hp.room_train:
-        logdir_test /= args.test
+        logdir_test /= f'{args.test}_{args.epoch}'
     else:
-        logdir_test /= f'{args.test}_{hp.room_test}'
+        logdir_test /= f'{args.test}_{hp.room_test}_{args.epoch}'
     if logdir_test.exists() and list(logdir_test.glob(tfevents_fname)):
         ans = input(form_overwrite_msg.format(logdir_test))
         if ans.lower().startswith('y'):
