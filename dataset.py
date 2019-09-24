@@ -194,15 +194,14 @@ class DirSpecDataset(Dataset):
 
         self._all_files = [f for f in self._PATH.glob('*.*') if hp.is_featurefile(f)]
         self._all_files = sorted(self._all_files)
-
-        # path_normconst: path of the file that has information about mean, std, ...
-        path_normconst = hp.dict_path[f'normconst_{kind_data}']
         if hp.n_data > 0:
-            assert not hp.refresh_const and path_normconst.exists()
             self._all_files = self._all_files[:hp.n_data]
 
         self.norm_modules = dict()
         if kind_data == 'train':
+            # path_normconst: path of the file that has information about mean, std, ...
+            path_normconst = hp.dict_path[f'normconst_{kind_data}']
+
             if not hp.refresh_const and path_normconst.exists():
                 # when normconst file exists
                 npz_normconst = np.load(path_normconst, allow_pickle=True)
