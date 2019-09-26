@@ -1,8 +1,10 @@
 from pathlib import Path
 from typing import Dict, Sequence, Tuple, Optional, Any, Callable
+from collections import defaultdict
 
 import torch
 from numpy import ndarray
+import scipy.io as scio
 from torch import nn, Tensor
 from torch.utils.data import DataLoader
 from torchsummary import summary
@@ -15,6 +17,7 @@ from dataset import DirSpecDataset
 from models import UNet
 from tbXwriter import CustomWriter
 from utils import arr2str, print_to_file
+from audio_utils import draw_spectrogram
 
 
 # noinspection PyAttributeOutsideInit
@@ -302,12 +305,49 @@ class Trainer:
 
     @torch.no_grad()
     def test(self, loader: DataLoader, logdir: Path):
+        def save_forward(module: nn.Module, in_: Tensor, out: Tensor):
+            module_name = str(module).split('(')[0]
+            dict_to_save = dict()
+            # dict_to_save['in'] = in_.detach().cpu().numpy().squeeze()
+            dict_to_save['out'] = out.detach().cpu().numpy().squeeze()
+
+            i_module = module_counts[module_name]
+            for i, o in enumerate(dict_to_save['out']):
+                save_forward.writer.add_figure(
+                    f'{group}/blockout_{i_iter}/{module_name}{i_module}',
+                    draw_spectrogram(o, to_db=False),
+                    i,
+                )
+            scio.savemat(
+                str(logdir / f'blockout_{i_iter}_{module_name}{i_module}.mat'),
+                dict_to_save,
+            )
+            module_counts[module_name] += 1
+
         group = logdir.name.split('_')[0]
 
         self.writer = CustomWriter(str(logdir), group=group)
 
         avg_measure = None
         self.model.eval()
+
+        module_counts = None
+        if hp.n_save_block_outs:
+            module_counts = defaultdict(int)
+            save_forward.writer = self.writer
+            if isinstance(self.model, nn.DataParallel):
+                module = self.model.module
+            else:
+                module = self.model
+            for sub in module.children():
+                if isinstance(sub, nn.ModuleList):
+                    for m in sub:
+                        m.register_forward_hook(save_forward)
+                elif isinstance(sub, nn.ModuleDict):
+                    for m in sub.values():
+                        m.register_forward_hook(save_forward)
+                else:
+                    sub.register_forward_hook(save_forward)
 
         pbar = tqdm(loader, desc=group, dynamic_ncols=True)
         for i_iter, data in enumerate(pbar):
@@ -316,6 +356,11 @@ class Trainer:
             T_ys = data['T_ys']
 
             # forward
+            if module_counts is not None:
+                module_counts = defaultdict(int)
+
+            if i_iter == hp.n_save_block_outs:
+                break
             output = self.model(x)  # [..., :y.shape[-1]]
 
             # write summary

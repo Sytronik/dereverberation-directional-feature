@@ -63,6 +63,7 @@ class _HyperParameters:
     # summary
     period_save_state: int = 4
     draw_test_fig: bool = False
+    n_save_block_outs: int = 0
 
     # paths
     # logdir will be converted to type Path in the init_dependent_vars function
