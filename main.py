@@ -68,10 +68,13 @@ os.makedirs(logdir_train, exist_ok=True)
 
 if args.test:
     logdir_test = hp.logdir
-    if hp.room_test == hp.room_train:
-        logdir_test /= f'{args.test}_{args.epoch}'
-    else:
-        logdir_test /= f'{args.test}_{hp.room_test}_{args.epoch}'
+    foldername_test = args.test
+    if hp.room_test != hp.room_train:
+        foldername_test += f'_{hp.room_test}'
+    foldername_test += f'_{args.epoch}'
+    if hp.n_save_block_outs > 0:
+        foldername_test += '_blockouts'
+    logdir_test /= foldername_test
     if logdir_test.exists() and list(logdir_test.glob(tfevents_fname)):
         ans = input(form_overwrite_msg.format(logdir_test))
         if ans.lower().startswith('y'):
