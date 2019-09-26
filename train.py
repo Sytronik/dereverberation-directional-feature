@@ -216,7 +216,7 @@ class Trainer:
 
                 # backward
                 self.optimizer.zero_grad()
-                loss_sum.backward()
+                loss.backward()
 
                 self.optimizer.step()
                 self.scheduler.batch_step()
