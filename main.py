@@ -47,11 +47,22 @@ parser = ArgumentParser()
 parser.add_argument('--train', action='store_true', )
 parser.add_argument('--test', choices=('seen', 'unseen'), metavar='DATASET')
 parser.add_argument('--from', type=int, default=-1, dest='epoch', metavar='EPOCH')
+parser.add_argument('--num_threads', type=int, default=0)
 
 args = hp.parse_argument(parser)
 del parser
 if not (args.train ^ (args.test is not None)) or args.epoch < -1:
     raise ArgumentError
+if args.num_threads > 0:
+    np_env_vars = (
+        'OMP_NUM_THREADS',
+        'OPENBLAS_NUM_THREADS',
+        'MKL_NUM_THREADS',
+        'VECLIB_MAXIMUM_THREADS',
+        'NUMEXPR_NUM_THREADS',
+    )
+    for var in np_env_vars:
+        os.environ[var] = str(args.num_threads)
 
 # directory
 logdir_train = hp.logdir / 'train'
