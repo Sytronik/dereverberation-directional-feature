@@ -194,10 +194,10 @@ class Trainer:
 
         self.writer = CustomWriter(str(logdir), group='train', purge_step=first_epoch)
 
-        # self.writer.add_graph(self.model.module.cpu(),
-        #                       torch.zeros(1, hp.get_for_UNet()[0], 256, 256),
-        #                       True,
-        #                       )
+        # self.writer.add_graph(
+        #     self.model.module if hasattr(self.model, 'module') else self.model,
+        #     torch.zeros(1, hp.UNet['ch_in'], 256, 256, device=self.in_device),
+        # )
 
         # Start Training
         for epoch in range(first_epoch, hp.n_epochs):
@@ -359,7 +359,7 @@ class Trainer:
             if module_counts is not None:
                 module_counts = defaultdict(int)
 
-            if i_iter == hp.n_save_block_outs:
+            if 0 < hp.n_save_block_outs == i_iter:
                 break
             output = self.model(x)  # [..., :y.shape[-1]]
 
