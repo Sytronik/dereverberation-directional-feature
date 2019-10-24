@@ -4,7 +4,8 @@ from typing import Dict
 import numpy as np
 import torch
 from numpy import ndarray
-from tensorboardX import SummaryWriter
+# from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 
 from audio_utils import (calc_snrseg,
                          calc_using_eval_module,
