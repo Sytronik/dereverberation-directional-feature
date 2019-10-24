@@ -69,8 +69,8 @@ class _HyperParameters:
     # logdir will be converted to type Path in the init_dependent_vars function
     logdir: str = f'./result/test'
     path_speech: Path = Path('./data/TIMIT')
-    # path_feature: Path = Path('./data')
-    path_feature: Path = Path('./backup')
+    path_feature: Path = Path('./data')
+    # path_feature: Path = Path('./backup')
     s_path_metadata: str = ''
     sfx_featuredir: str = ''
     # suffix_datadir: str = '_13_10'
@@ -145,9 +145,9 @@ class _HyperParameters:
         if self.room_create:
             self.room_train = self.room_create
             self.room_test = self.room_create
-        feature_folder = f'{self.feature}_{self.room_train}{self.sfx_featuredir}'
-        path_feature_train = self.path_feature / f'{feature_folder}/TRAIN'
-        path_feature_test = self.path_feature / f'{feature_folder}/TEST'
+        form = f'{self.feature}_{{}}{self.sfx_featuredir}'
+        p_f_train = self.path_feature / f'{form.format(self.room_train)}/TRAIN'
+        p_f_test = self.path_feature / f'{form.format(self.room_test)}/TEST'
         self.dict_path = dict(
             sft_data=self.path_feature / 'sft_data_32ms.mat',
             RIR_Ys=self.path_feature / f'RIR_Ys_{self.room_create}.mat',
@@ -155,11 +155,11 @@ class _HyperParameters:
             speech_train=self.path_speech / 'TRAIN',
             speech_test=self.path_speech / 'TEST',
 
-            feature_train=path_feature_train,
-            feature_seen=path_feature_test / 'SEEN',
-            feature_unseen=path_feature_test / 'UNSEEN',
+            feature_train=p_f_train,
+            feature_seen=p_f_test / 'SEEN',
+            feature_unseen=p_f_test / 'UNSEEN',
 
-            normconst_train=path_feature_train / 'normconst.npz',
+            normconst_train=p_f_train / 'normconst.npz',
 
             figures=Path('./figures'),
         )
