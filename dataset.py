@@ -193,7 +193,7 @@ class DirSpecDataset(Dataset):
         self.set_needs(**kwargs)
 
         self._all_files = [f for f in self._PATH.glob('*.*') if hp.is_featurefile(f)]
-        self._all_files = sorted(self._all_files)
+        self._all_files.sort()
         if hp.n_data > 0:
             self._all_files = self._all_files[:hp.n_data]
 
