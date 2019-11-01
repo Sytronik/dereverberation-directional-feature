@@ -368,10 +368,10 @@ class Trainer:
 
             out_one = self.postprocess(output, T_ys, 0, loader.dataset)
 
-            DirSpecDataset.save_dirspec(
-                logdir / hp.form_result.format(i_iter),
-                **one_sample, **out_one
-            )
+            # DirSpecDataset.save_dirspec(
+            #     logdir / hp.form_result.format(i_iter),
+            #     **one_sample, **out_one
+            # )
 
             measure = self.writer.write_one(i_iter, **out_one, **one_sample)
             if avg_measure is None:
@@ -393,3 +393,54 @@ class Trainer:
         print()
         str_avg_measure = arr2str(avg_measure).replace('\n', '; ')
         print(f'Average: {str_avg_measure}')
+
+    @torch.no_grad()
+    def save_result(self, loader: DataLoader, logdir: Path):
+        """ Evaluate the performance of the model.
+
+        :param loader: DataLoader to use.
+        :param logdir: path of the result files.
+        :param epoch:
+        """
+
+        import numpy as np
+
+        self.model.eval()
+
+        # avg_loss = AverageMeter(float)
+
+        pbar = tqdm(loader, desc='save ', dynamic_ncols=True)
+        i_cum = 0
+        for i_iter, data in enumerate(pbar):
+            # get data
+            x, y = self.preprocess(data)  # B, C, F, T
+            T_ys = data['T_ys']
+
+            # forward
+            output = self.model(x)[..., :y.shape[-1]]  # B, C, F, T
+
+            output = output.permute(0, 2, 3, 1)  # B, F, T, C
+            out_denorm = loader.dataset.denormalize_(y=output).cpu().numpy()
+            np.maximum(out_denorm, 0, out=out_denorm)
+            out_denorm = out_denorm.squeeze()  # B, F, T
+
+            # B, F, T
+            x_phase = data['x_phase'][..., :y.shape[-1], 0].numpy()
+            y_phase = data['y_phase'].numpy().squeeze()
+            out_x_ph = out_denorm * np.exp(1j*x_phase)
+            out_y_ph = out_denorm * np.exp(1j*y_phase)
+
+            for i_b, T, in enumerate(T_ys):
+                # F, T
+                noisy = np.ascontiguousarray(out_x_ph[i_b, ..., :T])
+                clean = np.ascontiguousarray(out_y_ph[i_b, ..., :T])
+                mag = np.ascontiguousarray(out_denorm[i_b, ..., :T])
+                length = hp.n_fft + hp.l_hop * (T - 1) - hp.n_fft // 2 * 2
+
+                spec_data = dict(spec_noisy=noisy, spec_clean=clean,
+                                 mag_clean=mag, length=length
+                                 )
+                np.savez(str(logdir / f'{i_cum + i_b}.npz'), **spec_data)
+            i_cum += len(T_ys)
+
+        self.model.train()

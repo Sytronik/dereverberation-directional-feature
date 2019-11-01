@@ -46,12 +46,13 @@ parser = ArgumentParser()
 
 parser.add_argument('--train', action='store_true', )
 parser.add_argument('--test', choices=('seen', 'unseen'), metavar='DATASET')
+parser.add_argument('--save', choices=('train', 'valid', 'seen', 'unseen'), metavar='DATASET')
 parser.add_argument('--from', type=int, default=-1, dest='epoch', metavar='EPOCH')
 parser.add_argument('--num_threads', type=int, default=0)
 
 args = hp.parse_argument(parser)
 del parser
-if not (args.train ^ (args.test is not None)) or args.epoch < -1:
+if not (args.train ^ bool(args.test) ^ bool(args.save)) or args.epoch < -1:
     raise ArgumentError
 if args.num_threads > 0:
     np_env_vars = (
@@ -79,13 +80,13 @@ os.makedirs(logdir_train, exist_ok=True)
 
 if args.test:
     logdir_test = hp.logdir
-    foldername_test = args.test
+    foldername = args.test
     if hp.room_test != hp.room_train:
-        foldername_test += f'_{hp.room_test}'
-    foldername_test += f'_{args.epoch}'
+        foldername += f'_{hp.room_test}'
+    foldername += f'_{args.epoch}'
     if hp.n_save_block_outs > 0:
-        foldername_test += '_blockouts'
-    logdir_test /= foldername_test
+        foldername += '_blockouts'
+    logdir_test /= foldername
     if logdir_test.exists() and list(logdir_test.glob(tfevents_fname)):
         ans = input(form_overwrite_msg.format(logdir_test))
         if ans.lower().startswith('y'):
@@ -94,6 +95,17 @@ if args.test:
         else:
             exit()
     os.makedirs(logdir_test, exist_ok=True)
+
+if args.save:
+    logdir_save = hp.logdir
+    foldername = args.save
+    if args.save == 'unseen' or args.save == 'seen' and hp.room_test != hp.room_train:
+        foldername += f'_{hp.room_test}'
+    foldername += f'_{args.epoch}_save'
+    logdir_save /= foldername
+
+    os.makedirs(logdir_save, exist_ok=True)
+    # hp.batch_size /= 2
 
 # epoch, state dict
 first_epoch = args.epoch + 1
@@ -107,29 +119,29 @@ else:
 # Training + Validation Set
 dataset_temp = DirSpecDataset('train')
 dataset_train, dataset_valid = DirSpecDataset.split(dataset_temp, (hp.train_ratio, -1))
-dataset_train.set_needs(**hp.channels)
+dataset_train.set_needs(**(hp.channels if not args.save else hp.channels_w_ph))
 dataset_valid.set_needs(**hp.channels_w_ph)
+
+loader_train = DataLoader(dataset_train,
+                          batch_size=hp.batch_size,
+                          num_workers=hp.num_disk_workers,
+                          collate_fn=dataset_train.pad_collate,
+                          pin_memory=(hp.device != 'cpu'),
+                          shuffle=(not args.save),
+                          )
+loader_valid = DataLoader(dataset_valid,
+                          batch_size=hp.batch_size,
+                          num_workers=hp.num_disk_workers,
+                          collate_fn=dataset_valid.pad_collate,
+                          pin_memory=(hp.device != 'cpu'),
+                          shuffle=False,
+                          )
 
 # run
 trainer = Trainer(path_state_dict)
 if args.train:
-    loader_train = DataLoader(dataset_train,
-                              batch_size=hp.batch_size,
-                              num_workers=hp.num_disk_workers,
-                              collate_fn=dataset_train.pad_collate,
-                              pin_memory=(hp.device != 'cpu'),
-                              shuffle=True,
-                              )
-    loader_valid = DataLoader(dataset_valid,
-                              batch_size=hp.batch_size * 2,
-                              num_workers=hp.num_disk_workers,
-                              collate_fn=dataset_valid.pad_collate,
-                              pin_memory=(hp.device != 'cpu'),
-                              shuffle=False,
-                              )
-
     trainer.train(loader_train, loader_valid, logdir_train, first_epoch)
-else:  # args.test
+elif args.test:  # args.test
     # Test Set
     dataset_test = DirSpecDataset(args.test,
                                   dataset_temp.norm_modules,
@@ -144,3 +156,21 @@ else:  # args.test
 
     # noinspection PyUnboundLocalVariable
     trainer.test(loader, logdir_test)
+else:
+    if args.save == 'train':
+        loader = loader_train
+    elif args.save == 'valid':
+        loader = loader_valid
+    else:
+        dataset_test = DirSpecDataset(args.save,
+                                      dataset_temp.norm_modules,
+                                      **hp.channels_w_ph)
+        loader = DataLoader(dataset_test,
+                            batch_size=hp.batch_size,
+                            num_workers=hp.num_disk_workers,
+                            collate_fn=dataset_test.pad_collate,
+                            pin_memory=(hp.device != 'cpu'),
+                            shuffle=False,
+                            )
+    # noinspection PyUnboundLocalVariable
+    trainer.save_result(loader, logdir_save)
