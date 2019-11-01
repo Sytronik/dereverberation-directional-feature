@@ -1,9 +1,3 @@
-try:
-    import matlab
-    import matlab.engine
-finally:
-    pass
-
 import inspect
 import io
 from typing import Tuple, Sequence
@@ -37,6 +31,10 @@ class Evaluation(metaclass=CallableSingletonMeta):
     metrics = ('fwSegSNR', 'PESQ', 'STOI')
 
     def __init__(self):
+        try:
+            import matlab.engine
+        finally:
+            pass
         self.eng = matlab.engine.start_matlab('-nojvm')
         self.eng.addpath(self.eng.genpath('./matlab_lib'))
         # self.eng.maxNumCompThreads(os.cpu_count()//4)
@@ -44,6 +42,7 @@ class Evaluation(metaclass=CallableSingletonMeta):
         Evaluation.instance: Evaluation = self
 
     def __call__(self, clean: ndarray, noisy: ndarray, fs: int) -> Tuple[Sequence[str], tuple]:
+        import matlab
         clean = matlab.double(clean.tolist())
         noisy = matlab.double(noisy.tolist())
         fs = matlab.double([fs])
