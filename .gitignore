@@ -1,23 +1,26 @@
 *.mat
 *.npy
-*.h5
-
-.ftpconfig
-.ftpignore
+*.npz
 
 *.mp3
+*.wav
 *.png
 *.fig
+
+data/
+backup/
+figures/
+result/
 
 # Python
 __pycache__/
 **.py[cod]
 **$py.class
+
 _[^_]*.py
 
 .flake8
-
 .idea/
 .vscode/
-
-**/_*
+.ipynb_checkpoints/
+backup
