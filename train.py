@@ -15,7 +15,7 @@ from adamwr import AdamW, CosineLRWithRestarts
 from dataset import DirSpecDataset
 # noinspection PyUnresolvedReferences
 from models import UNet
-from tbXwriter import CustomWriter
+from tbwriter import CustomWriter
 from utils import arr2str, print_to_file
 from audio_utils import draw_spectrogram
 
