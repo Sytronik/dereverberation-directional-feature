@@ -1,3 +1,28 @@
+"""
+merge rooms by symbolic link
+
+Usage:
+```
+    python merge_rooms.py feature rooms [--n_loc N_LOC_FOR_TRAIN N_LOC_FOR_TEST]
+```
+
+<example>
+
+If run
+```
+    python merge_rooms.py SIV room1 room2 room3 --n_loc 13 10
+```
+, then
+"SIV_room1+2+3/TRAIN/00000_0000_room1_12.npz" is created
+and it points out "SIV_room1/TRAIN/00000_0000_room1_12.npz".
+But there's no "SIV_room1+2+3/TRAIN/00000_0000_room1_13.npz"
+because N_LOC_FOR_TRAIN==13.
+
+The symbolic link is written in relative path.
+So directory can be moved
+only if SIV_room1, SIV_room2, SIV_room3 exists in the same folder as SIV_room1+2+3.
+
+"""
 import os
 import multiprocessing as mp
 from pathlib import Path
@@ -44,10 +69,11 @@ def symlink(_src_path, src_fnames, _dst_path, q, idx):
 if __name__ == '__main__':
     parser = ArgumentParser()
 
-    parser.add_argument('feature', choices=('IV', 'DirAC', 'mulspec'))
+    parser.add_argument('feature', choices=('SIV', 'DV', 'mulspec', 'mulspec4'))
     parser.add_argument('ROOMS', type=str, nargs='+')  # multiple rooms (at least 1 room)
-    parser.add_argument('--n_loc', type=int, nargs=2,
-                        default=[-1, -1])  # multiple rooms (at least 1 room)
+
+    # truncate no. of locations: [n_loc for TRAIN, n_loc for TEST]
+    parser.add_argument('--n_loc', type=int, nargs=2, default=[-1, -1])
 
     args = parser.parse_args()
 
