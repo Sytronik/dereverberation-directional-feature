@@ -1,5 +1,6 @@
 import multiprocessing as mp
 from typing import Dict
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -22,8 +23,9 @@ class CustomWriter(SummaryWriter):
         super().__init__(*args, **kwargs)
         self.group = group
         if group == 'train':
-            dict_custom_scalars = dict(loss=['Multiline', ['loss/train',
-                                                           'loss/valid']])
+            dict_custom_scalars = dict(
+                loss=['Multiline', ['loss/train', 'loss/valid']]
+            )
         else:
             dict_custom_scalars = dict()
 
@@ -54,6 +56,25 @@ class CustomWriter(SummaryWriter):
         # audio
         self.y_scale = 1.
 
+    def add_scalar(self, tag, scalar_value, global_step=None, walltime=None):
+        if not tag.startswith('loss'):
+            tag = f'{self.group}/{tag}'
+        super().add_scalar(tag, scalar_value, global_step, walltime)
+
+    def add_figure(self, tag, figure, global_step=None, close=True, walltime=None):
+        tag = f'{self.group}/{tag}'
+        super().add_figure(tag, figure, global_step, close, walltime)
+
+    def add_audio(self, tag, snd_tensor, global_step=None, sample_rate=44100, walltime=None):
+        tag = f'{self.group}/{tag}'
+        if isinstance(snd_tensor, ndarray):
+            snd_tensor = torch.from_numpy(snd_tensor)
+        super().add_audio(tag, snd_tensor, global_step, hp.fs, walltime)
+
+    def add_text(self, tag, text_string, global_step=None, walltime=None):
+        tag = f'{self.group}/{tag}'
+        super().add_text(tag, text_string, global_step, walltime)
+
     def write_one(self, step: int,
                   out: ndarray = None,
                   eval_with_y_ph=False, **kwargs: ndarray) -> ndarray:
@@ -61,28 +82,43 @@ class CustomWriter(SummaryWriter):
 
         :param step:
         :param out:
-        :param eval_with_y_ph: determine if `out` is evaluated with `y_phase`
-        :param kwargs: keywords can be [x, y, x_phase, y_phase]
+        :param eval_with_y_ph: if true, out reconstructed with true phase is evaluated.
+        :param kwargs: keywords can be [x, y, x_phase, y_phase, path_feature]
 
         :return: evaluation result
         """
 
         assert out is not None
-        result_eval_x = self.write_x_y(kwargs, step) if kwargs else None
+        result_eval_x = self._write_x_y(kwargs, step) if kwargs else None
 
         assert self.reused_sample
         y = self.reused_sample['y']
         x_phase = self.reused_sample['x_phase']
         y_phase = self.reused_sample['y_phase']
+        # x_wav = self.reused_sample['x_wav']
         y_wav = self.reused_sample['y_wav']
 
         np.maximum(out, 0, out=out)
 
-        snrseg = calc_snrseg(y, out)
+        if not eval_with_y_ph or (hp.add_test_audio or self.group == 'train'):
+            if hp.use_das_phase:
+                path_feature = Path(self.reused_sample['path_feature'])
+                path = Path(
+                    str(path_feature).replace(hp.feature, hp.folder_das_phase)
+                ).with_suffix('.npy')
+                x_phase = np.load(path)
 
-        out_wav = reconstruct_wave(out, x_phase[:, :out.shape[1], :],
-                                   n_iter=hp.n_glim_iter)
-        out_wav_y_ph = reconstruct_wave(out, y_phase)
+            out_wav = reconstruct_wave(out, x_phase[:, :out.shape[1]],
+                                       n_iter=hp.n_gla_iter,
+                                       momentum=hp.momentum_gla,
+                                       )
+        else:
+            out_wav = None
+
+        if eval_with_y_ph or (hp.add_test_audio or self.group == 'train'):
+            out_wav_y_ph = reconstruct_wave(out, y_phase)
+        else:
+            out_wav_y_ph = None
 
         result_eval = self.pool_eval_module.apply_async(
             calc_using_eval_module,
@@ -92,35 +128,38 @@ class CustomWriter(SummaryWriter):
         #     y_wav,
         #     out_wav_y_ph if eval_with_y_ph else out_wav
         # )
+        snrseg = calc_snrseg(y, out)
 
         if hp.draw_test_fig or self.group == 'train':
-            fig_out = draw_spectrogram(np.append(out, self.pad_min, axis=1), **self.kwargs_fig)
-            self.add_figure(f'{self.group}/3_Estimated Anechoic Spectrum', fig_out, step)
+            fig_out = draw_spectrogram(np.append(out, self.pad_min, axis=1),
+                                       **self.kwargs_fig)
 
-        self.add_audio(f'{self.group}/3_Estimated Anechoic Wave',
-                       torch.from_numpy(out_wav / self.y_scale),
-                       step,
-                       sample_rate=hp.fs)
-        self.add_audio(f'{self.group}/4_Estimated Wave with Anechoic Phase',
-                       torch.from_numpy(out_wav_y_ph / self.y_scale),
-                       step,
-                       sample_rate=hp.fs)
+            self.add_figure('3_Estimated Anechoic Spectrum', fig_out, step)
 
-        self.add_scalar(f'{self.group}/1_SNRseg/Reverberant', self.snrseg_x, step)
-        self.add_scalar(f'{self.group}/1_SNRseg/Proposed', snrseg, step)
+        if hp.add_test_audio or self.group == 'train':
+            self.add_audio('3_Estimated Anechoic Wave', out_wav / self.y_scale, step)
+            self.add_audio('4_Estimated Wave with Anechoic Phase',
+                           out_wav_y_ph / self.y_scale, step)
+
+        self.add_scalar('1_SNRseg/Reverberant', self.snrseg_x, step)
+        self.add_scalar('1_SNRseg/Proposed', snrseg, step)
 
         if result_eval_x:
             self.dict_eval_x = result_eval_x.get()
         dict_eval = result_eval.get()
         for i, m in enumerate(dict_eval.keys()):
             j = i + 2
-            self.add_scalar(f'{self.group}/{j}_{m}/Reverberant', self.dict_eval_x[m], step)
-            self.add_scalar(f'{self.group}/{j}_{m}/Proposed', dict_eval[m], step)
+            self.add_scalar(f'{j}_{m}/Reverberant', self.dict_eval_x[m], step)
+            self.add_scalar(f'{j}_{m}/Proposed', dict_eval[m], step)
 
-        return np.array([[snrseg, *(dict_eval.values())],
-                         [self.snrseg_x, *(self.dict_eval_x.values())]], dtype=np.float32)
+        all_results = [[snrseg, *dict_eval.values()],
+                       [self.snrseg_x, *self.dict_eval_x.values()]]
+        return np.array(all_results, dtype=np.float32)
 
-    def write_x_y(self, kwargs: Dict[str, ndarray], step: int) -> mp.pool.AsyncResult:
+    def _write_x_y(self, kwargs: Dict[str, ndarray], step: int) -> mp.pool.AsyncResult:
+        """ write x (input) and y (desired output)
+
+        """
         # F, T, 1
         x = kwargs['x'][..., -1:]
         y = kwargs['y'][..., -1:]
@@ -131,7 +170,9 @@ class CustomWriter(SummaryWriter):
         # T,
         x_wav = reconstruct_wave(x, x_phase)
         y_wav = reconstruct_wave(y, y_phase)
+
         self.y_scale = np.abs(y_wav).max() / 0.5
+
         result_eval_x = self.pool_eval_module.apply_async(
             calc_using_eval_module,
             (y_wav, x_wav[:y_wav.shape[0]])
@@ -148,19 +189,17 @@ class CustomWriter(SummaryWriter):
             fig_x = draw_spectrogram(x)
             fig_y = draw_spectrogram(np.append(y, self.pad_min, axis=1))
 
-            self.add_figure(f'{self.group}/1_Anechoic Spectrum', fig_y, step)
-            self.add_figure(f'{self.group}/2_Reverberant Spectrum', fig_x, step)
+            self.add_figure('1_Anechoic Spectrum', fig_y, step)
+            self.add_figure('2_Reverberant Spectrum', fig_x, step)
 
-        self.add_audio(f'{self.group}/1_Anechoic Wave',
-                       torch.from_numpy(y_wav / self.y_scale),
-                       step,
-                       sample_rate=hp.fs)
-        self.add_audio(f'{self.group}/2_Reverberant Wave',
-                       torch.from_numpy(x_wav / (np.abs(x_wav).max() / 0.5)),
-                       step,
-                       sample_rate=hp.fs)
+        if hp.add_test_audio or self.group == 'train':
+            self.add_audio('1_Anechoic Wave', y_wav / self.y_scale, step)
+            self.add_audio('2_Reverberant Wave', x_wav / (np.abs(x_wav).max() / 0.5), step)
+
         self.reused_sample = dict(x=x, y=y,
                                   x_phase=x_phase, y_phase=y_phase,
-                                  y_wav=y_wav,
+                                  x_wav=x_wav, y_wav=y_wav,
                                   )
+        if 'path_feature' in kwargs:
+            self.reused_sample['path_feature'] = kwargs['path_feature']
         return result_eval_x

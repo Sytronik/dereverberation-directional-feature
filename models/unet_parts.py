@@ -29,8 +29,7 @@ def force_size_same(a: Tensor, b: Tensor) -> Tuple[Tensor, Tensor]:
 
 class ConvBNAct(nn.Module):
     def __init__(self, in_ch, out_ch, act_fn, *,
-                 kernel_size=(3, 3), padding=None,
-                 groups=1, stride=(1, 1)):
+                 kernel_size=(3, 3), padding=None, groups=1, stride=(1, 1)):
         super().__init__()
         if not padding:
             padding = (kernel_size[0] // 2, kernel_size[1] // 2)
@@ -46,40 +45,10 @@ class ConvBNAct(nn.Module):
         return self.cba(x)
 
 
-class ResNeXtBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, act_fn, hidden_ch=-1, *, groups=-1, last_act_fn=True):
-        super().__init__()
-        if hidden_ch == -1:
-            hidden_ch = out_ch // 2
-        if groups == -1:
-            groups = out_ch // 8
-        self.skipcba = ConvBNAct(in_ch, out_ch, None, kernel_size=(1, 1), padding=(0, 0))
-
-        self.incba = ConvBNAct(in_ch, hidden_ch, act_fn, kernel_size=(1, 1), padding=(0, 0))
-        self.groupcba = ConvBNAct(hidden_ch, hidden_ch, act_fn, groups=groups)
-        self.outcba = ConvBNAct(hidden_ch, out_ch, None, kernel_size=(1, 1), padding=(0, 0))
-
-        self.act_fn = act_fn if last_act_fn else None
-
-    def forward(self, x):
-        residual = self.skipcba(x)
-
-        out = self.incba(x)
-        out = self.groupcba(out)
-        out = self.outcba(out)
-
-        out += residual
-        if self.act_fn:
-            out = self.act_fn(out)
-
-        return out
-
-
 # Residual block
 class ResidualBlock(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int, act_fn: nn.Module,
-                 kernel_size=(3, 3), padding=None,
-                 last_act_fn=True):
+    def __init__(self, in_ch: int, out_ch: int, act_fn: nn.Module, *,
+                 kernel_size=(3, 3), padding=None, last_act_fn=True):
         super().__init__()
         self.skipcba = ConvBNAct(in_ch, out_ch, None, kernel_size=(1, 1))
 
@@ -127,14 +96,13 @@ class FusionNetBlock(nn.Module):
 
 
 class InConv(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int,
-                 kernel_size=(3, 3), padding=None, use_cbam=False,
+    def __init__(self, in_ch: int, out_ch: int, *,
+                 kernel_size=(3, 3), padding=None,
                  ):
         super().__init__()
         self.block = ResidualBlock(in_ch, out_ch, nn.ReLU(inplace=True),
-                                    kernel_size=kernel_size, padding=padding,
-                                    )
-        # self.conv = ResidualBlock(in_ch, out_ch)
+                                   kernel_size=kernel_size, padding=padding,
+                                   )
 
     def forward(self, x):
         x = self.block(x)
@@ -142,8 +110,8 @@ class InConv(nn.Module):
 
 
 class DownAndConv(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int,
-                 kernel_size=(3, 3), padding=None, use_cbam=False,
+    def __init__(self, in_ch: int, out_ch: int, *,
+                 kernel_size=(3, 3), padding=None,
                  ):
         super().__init__()
         self.pool = nn.MaxPool2d((2, 2))
@@ -159,13 +127,11 @@ class DownAndConv(nn.Module):
 
 
 class UpAndConv(nn.Module):
-    def __init__(self, in_ch: int, out_ch: int,
-                 kernel_size=(3, 3), padding=None, use_cbam=False,
+    def __init__(self, in_ch: int, out_ch: int, *,
+                 kernel_size=(3, 3), padding=None,
                  ):
         super().__init__()
-
         self.up = nn.ConvTranspose2d(in_ch, out_ch, (2, 2), stride=(2, 2))
-
         self.block = FusionNetBlock(out_ch, out_ch, nn.ReLU(inplace=True),
                                     kernel_size=kernel_size, padding=padding,
                                     )
@@ -174,7 +140,6 @@ class UpAndConv(nn.Module):
         x = self.up(x)
         x, x_skip = force_size_same(x, x_skip)
 
-        # x = torch.cat([x_skip, x_decode], dim=1)
         out = (x + x_skip) / 2
         out = self.block(out)
         return out

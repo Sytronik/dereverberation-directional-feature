@@ -2,25 +2,71 @@ import contextlib
 import gc
 import os
 from pathlib import Path
-from typing import Callable, List, Union
+from typing import Callable, Union, TypeVar
 
 import numpy as np
 import torch
 import torch.optim
+from torch import Tensor
+from numpy import ndarray
+import matplotlib.pyplot as plt
+from matplotlib.transforms import Bbox
 
 
-def static_vars(**kwargs):
-    """ decorator to make static variables in function
+TensArr = TypeVar('TensArr', Tensor, ndarray)
+DICT_PACKAGE = {Tensor: torch, ndarray: np}
 
-    :param kwargs:
-    :return:
+
+class DataPerDevice:
+    """ convert ndarray to Tensor (in cpu or cuda devices) whenever it is needed.
+
     """
-    def decorate(func: Callable):
-        for k, a in kwargs.items():
-            setattr(func, k, a)
-        return func
+    __slots__ = ('data',)
 
-    return decorate
+    def __init__(self, data_np: ndarray):
+        self.data = {ndarray: data_np}
+
+    def __getitem__(self, typeOrtup):
+        if type(typeOrtup) == tuple:
+            _type, device = typeOrtup
+        elif typeOrtup == ndarray:
+            _type = ndarray
+            device = None
+        else:
+            raise IndexError
+
+        if _type == ndarray:
+            return self.data[ndarray]
+        else:
+            if typeOrtup not in self.data:
+                self.data[typeOrtup] = convert(self.data[ndarray],
+                                               Tensor,
+                                               device=device)
+            return self.data[typeOrtup]
+
+    def get_like(self, other: TensArr):
+        if type(other) == Tensor:
+            return self[Tensor, other.device]
+        else:
+            return self[ndarray]
+
+
+def convert(a: TensArr, astype: type, device: Union[int, torch.device] = None) -> TensArr:
+    """ convert Tensor to ndarray or vice versa.
+
+    """
+    if astype == Tensor:
+        if type(a) == Tensor:
+            return a.to(device)
+        else:
+            return torch.as_tensor(a, device=device)
+    elif astype == ndarray:
+        if type(a) == Tensor:
+            return a.cpu().numpy()
+        else:
+            return a
+    else:
+        raise ValueError(astype)
 
 
 def arr2str(a: np.ndarray, format_='e', ndigits=2) -> str:
@@ -37,33 +83,6 @@ def arr2str(a: np.ndarray, format_='e', ndigits=2) -> str:
             float_kind=(lambda x: f'{x:.{ndigits}{format_}}' if x != 0 else '0')
         )
     )
-
-
-# deprecated. Use tqdm
-def print_progress(iteration: int, total: int, prefix='', suffix='',
-                   decimals=1, len_bar=0):
-    percent = f'{100 * iteration / total:>{decimals + 4}.{decimals}f}'
-    if len_bar == 0:
-        len_bar = (min(os.get_terminal_size().columns, 80)
-                   - len(prefix) - len(percent) - len(suffix) - 11)
-
-    len_filled = len_bar * iteration // total
-    bar = '#' * len_filled + '-' * (len_bar - len_filled)
-
-    print(f'{prefix} |{bar}| {percent}% {suffix}', end='\r')
-    if iteration == total:
-        print('')
-
-
-def print_cuda_tensors():
-    """ Print all cuda Tensors """
-    for obj in gc.get_objects():
-        try:
-            if (torch.is_tensor(obj)
-                    or (hasattr(obj, 'data') and torch.is_tensor(obj.data))):
-                print(type(obj), obj.size(), obj.device)
-        finally:
-            pass
 
 
 def print_to_file(fname: Union[str, Path], fn: Callable, args=None, kwargs=None):
@@ -87,3 +106,32 @@ def print_to_file(fname: Union[str, Path], fn: Callable, args=None, kwargs=None)
     with (fname.open('w') if fname else open(os.devnull, 'w')) as file:
         with contextlib.redirect_stdout(file):
             fn(*args, **kwargs)
+
+
+def full_extent(fig: plt.Figure, ax: plt.Axes, *extras, pad=0.01):
+    """ Get the full extent of an axes, including axes labels, tick labels, and
+    titles.
+    
+    """
+    # For text objects, we need to draw the figure first, otherwise the extents
+    # are undefined.
+    ax.figure.canvas.draw()
+    items = [ax, ax.title, ax.xaxis.label, ax.yaxis.label, *extras]
+    items += [*ax.get_xticklabels(), *ax.get_yticklabels()]
+    items += [e.xaxis.label for e in extras if hasattr(e, 'xaxis')]
+    items += [e.yaxis.label for e in extras if hasattr(e, 'yaxis')]
+    items += sum(
+        (e.get_xticklabels() for e in extras if hasattr(e, 'get_xticklabels')),
+        []
+    )
+    items += sum(
+        (e.get_yticklabels() for e in extras if hasattr(e, 'get_yticklabels')),
+        []
+    )
+    bbox = Bbox.union(
+        [item.get_window_extent() for item in items if hasattr(item, 'get_window_extent')]
+    )
+
+    bbox = bbox.expanded(1.0 + pad, 1.0 + pad)
+    bbox = bbox.transformed(fig.dpi_scale_trans.inverted())
+    return bbox

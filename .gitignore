@@ -1,6 +1,7 @@
 *.mat
 *.npy
 *.npz
+*.txt
 
 *.mp3
 *.wav

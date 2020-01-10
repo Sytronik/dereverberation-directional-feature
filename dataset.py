@@ -11,7 +11,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from generic import DataPerDevice, TensArr
+from utils import DataPerDevice, TensArr
 from audio_utils import LogModule
 from hparams import Channel, hp
 
@@ -39,10 +39,10 @@ def xy_signature(func):
 
 
 class Normalization:
-    """
-    Calculating and saving mean/std of all mel spectrogram with respect to time axis,
+    """ Calculating and saving mean/std of all spectrograms with respect to time axis,
     applying normalization to the spectrogram
     This is need only when you don't load all the data on the RAM
+
     """
 
     @staticmethod
@@ -54,10 +54,10 @@ class Normalization:
         return ((LogModule.log_(a) - mean_a)**2).sum(axis=1, keepdims=True)
 
     @staticmethod
-    def _load_data(fname: Union[str, Path], key: str, queue: mp.Queue) -> None:
+    def _load_data(fname: Union[str, Path], key: str, n_channels: int, queue: mp.Queue) -> None:
         x = np.load(fname, mmap_mode='r')[key].astype(np.float32, copy=False)
-        if hp.feature == 'mulspec' and key == hp.spec_data_names['x']:
-            x = x[..., :x.shape[-1]//2]
+        if n_channels != 0:
+            x = x[..., :n_channels]
         queue.put(x)
 
     @staticmethod
@@ -83,22 +83,23 @@ class Normalization:
         self.std = DataPerDevice(std.astype(np.float32, copy=False))
 
     @classmethod
-    def calc_const(cls, all_files: List[Path], key: str):
+    def calc_const(cls, all_files: List[Path], key: str, n_channels=0):
         """
 
         :param all_files:
         :param key: data name in npz file
+        :param n_channels: number of channels that normalization is needed. 0 for all channels.
         :rtype: Normalization
         """
 
         # Calculate summation & size (parallel)
         list_fn = (np.size, cls._sum)
-        pool_loader = mp.Pool(hp.num_disk_workers)
-        pool_calc = mp.Pool(min(mp.cpu_count() - hp.num_disk_workers - 1, 6))
+        pool_loader = mp.Pool(hp.num_workers)
+        pool_calc = mp.Pool(min(mp.cpu_count() - hp.num_workers - 1, 6))
         with mp.Manager() as manager:
             queue_data = manager.Queue()
             pool_loader.starmap_async(cls._load_data,
-                                      [(f, key, queue_data) for f in all_files])
+                                      [(f, key, n_channels, queue_data) for f in all_files])
             result: List[mp.pool.AsyncResult] = []
             for _ in tqdm(range(len(all_files)), desc='mean', dynamic_ncols=True):
                 data = queue_data.get()
@@ -118,7 +119,7 @@ class Normalization:
         with mp.Manager() as manager:
             queue_data = manager.Queue()
             pool_loader.starmap_async(cls._load_data,
-                                      [(f, key, queue_data) for f in all_files])
+                                      [(f, key, n_channels, queue_data) for f in all_files])
             result: List[mp.pool.AsyncResult] = []
             for _ in tqdm(range(len(all_files)), desc='std', dynamic_ncols=True):
                 data = queue_data.get()
@@ -174,7 +175,7 @@ class DirSpecDataset(Dataset):
     (will be copied)
     _PATH
     _needs
-    _trannorm
+    norm_modules
 
     (will be split)
     _all_files
@@ -208,12 +209,21 @@ class DirSpecDataset(Dataset):
                 self.norm_modules['x'] = Normalization(*npz_normconst['normconst_x'])
                 self.norm_modules['y'] = Normalization(*npz_normconst['normconst_y'])
             else:
+                # calculate normalization constants
+                if 'mulspec' in hp.feature:
+                    n_channels = hp.dummy_input_size[0] // 2
+                else:
+                    n_channels = 0
                 print('calculate normalization consts for input')
-                self.norm_modules['x'] \
-                    = Normalization.calc_const(self._all_files, key=hp.spec_data_names['x'])
+                self.norm_modules['x'] = Normalization.calc_const(
+                    self._all_files,
+                    key=hp.spec_data_names['x'], n_channels=n_channels,
+                )
                 print('calculate normalization consts for output')
-                self.norm_modules['y'] \
-                    = Normalization.calc_const(self._all_files, key=hp.spec_data_names['y'])
+                self.norm_modules['y'] = Normalization.calc_const(
+                    self._all_files,
+                    key=hp.spec_data_names['y'],
+                )
                 np.savez(path_normconst,
                          normconst_x=self.norm_modules['x'].astuple(),
                          normconst_y=self.norm_modules['y'].astuple())
@@ -227,7 +237,7 @@ class DirSpecDataset(Dataset):
             assert 'x' in norm_modules and 'y' in norm_modules
             self.norm_modules = norm_modules
 
-        print(f'{len(self._all_files)} files are prepared from {kind_data.upper()}.')
+        print(f'{len(self._all_files)} files from {kind_data.upper()} are ready.')
 
     def __len__(self):
         return len(self._all_files)
@@ -237,21 +247,27 @@ class DirSpecDataset(Dataset):
 
         :param idx:
         :return: DataDict
-            Values can be an integer, ndarray, or str.
+            Values can be a CPU Tensor (x, y, ...), 
+            a str (path_feature), or an int (T_x, T_y).
         """
         sample = dict()
         with np.load(self._all_files[idx], mmap_mode='r') as npz_data:
             for k, v in self._needs.items():
-                if v.value:
+                if v.value is not None:
                     data: ndarray = npz_data[hp.spec_data_names[k]]
-                    data = data[..., v.value]
-                    if type(data) == np.str_:
-                        sample[k] = str(data)
+                    if data.size == 1:  # str
+                        sample[k] = data.item()
                     else:
-                        sample[k] = torch.from_numpy(data.astype(np.float32, copy=False))
+                        data = data[..., v.value]
+
+                        sample[k] = torch.from_numpy(
+                            data.astype(np.float32, copy=False)
+                        )
 
         for xy in ('x', 'y'):
             sample[f'T_{xy}'] = sample[xy].shape[-2]
+
+        sample['path_feature'] = str(self._all_files[idx])
 
         return sample
 
@@ -259,10 +275,10 @@ class DirSpecDataset(Dataset):
     def pad_collate(self, batch: List[DataDict]) -> DataDict:
         """ return data with zero-padding
 
-        Important data like x, y are all converted to Tensor(cpu).
         :param batch:
         :return: DataDict
-            Values can be an Tensor(cpu), list of str, ndarray of int.
+            Values can be a CPU Tensor (x, y, ...),
+            a list of str (path_feature), or a list of int (T_xs, T_ys).
         """
         result = dict()
         T_xs = np.array([item.pop('T_x') for item in batch])
@@ -291,13 +307,11 @@ class DirSpecDataset(Dataset):
                     data = batch[0][key].unsqueeze(0)
 
                 if key == 'x' or key == 'y':
-                    if hp.feature == 'mulspec' and key == 'x':
+                    if 'mulspec' in hp.feature and key == 'x':
                         C = data.shape[-1]
-                        normalized = torch.cat(
-                            (self.normalize(**{key: data[..., :C // 2]}),
-                             data[..., C // 2:] / np.sqrt(np.pi**2 / 3)),
-                            dim=-1,
-                        )
+                        normalized_mag = self.normalize(**{key: data[..., :C // 2]})
+                        normalized_ph = data[..., C // 2:] / np.sqrt(np.pi**2 / 3)
+                        normalized = torch.cat((normalized_mag, normalized_ph), dim=-1)
                     else:
                         normalized = self.normalize(**{key: data})
                     normalized = normalized.permute(0, -1, -3, -2).contiguous()
@@ -310,9 +324,13 @@ class DirSpecDataset(Dataset):
     @staticmethod
     @torch.no_grad()
     def decollate_padded(batch: DataDict, idx: int) -> DataDict:
-        """ select the `idx`-th data, get rid of padded zeros and return it.
+        """ select the `idx`-th data in batch, and return it after following processing:
 
-        Important data like x, y are all converted to ndarray.
+        Padded zeros are removed
+        normalized data are not included.
+        Tensor becomes ndarray.
+        if data is mulspec, x becomes x_mag (magnitude of a00 of reverberant data)
+
         :param batch:
         :param idx:
         :return: DataDict
@@ -334,7 +352,7 @@ class DirSpecDataset(Dataset):
 
     @staticmethod
     def save_dirspec(fname: Union[str, Path], **kwargs):
-        """ save directional spectrograms.
+        """ save directional spectrograms in .mat file.
 
         :param fname:
         :param kwargs:
@@ -420,6 +438,7 @@ class DirSpecDataset(Dataset):
     @classmethod
     def split(cls, dataset, ratio: Sequence[float]) -> Sequence:
         """ Split the dataset into `len(ratio)` datasets.
+        ratio means ratio of `n_loc`.
 
         The sum of elements of ratio must be 1,
         and only one element can have the value of -1 which means that

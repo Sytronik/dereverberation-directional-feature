@@ -8,21 +8,19 @@ from .unet_parts import InConv, DownAndConv, UpAndConv, OutConv
 
 
 class UNet(nn.Module):
-    def __init__(self, ch_in, ch_out, ch_base=32, depth=4,
-                 kernel_size=(3, 3), use_cbam=False,
-                 ):
+    def __init__(self, ch_in, ch_out, ch_base=32, depth=4, kernel_size=(3, 3)):
         super().__init__()
         self.inc = InConv(ch_in, ch_base,
-                          kernel_size=kernel_size, use_cbam=use_cbam)
+                          kernel_size=kernel_size)
 
         self.downs = nn.ModuleList(
             [DownAndConv(ch_base * (2**ii), ch_base * (2**(ii + 1)),
-                         kernel_size=kernel_size, use_cbam=use_cbam)
+                         kernel_size=kernel_size)
              for ii in range(0, depth)]
         )
         self.ups = nn.ModuleList(
             [UpAndConv(ch_base * (2**(ii + 1)), ch_base * (2**ii),
-                       kernel_size=kernel_size, use_cbam=use_cbam)
+                       kernel_size=kernel_size)
              for ii in reversed(range(0, depth))]
         )
 

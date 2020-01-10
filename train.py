@@ -20,9 +20,10 @@ from utils import arr2str, print_to_file
 from audio_utils import draw_spectrogram
 
 
-# noinspection PyAttributeOutsideInit
 class AverageMeter:
-    """Computes and stores the sum and the last value"""
+    """ Computes and stores the sum, count and the last value
+
+    """
 
     def __init__(self,
                  init_factory: Callable = None,
@@ -71,6 +72,7 @@ class Trainer:
 
         self.writer: Optional[CustomWriter] = None
 
+        # a sample in validation set for evaluation
         self.valid_eval_sample: Dict[str, Any] = dict()
 
         # Load State Dict
@@ -93,7 +95,6 @@ class Trainer:
                 (self.model, hp.dummy_input_size),
                 dict(device=self.str_device[:4])
             )
-            # dd.io.save((hp.logdir / hp.hparams_fname).with_suffix('.h5'), asdict(hp))
             with (hp.logdir / 'hparams.txt').open('w') as f:
                 f.write(repr(hp))
 
@@ -175,16 +176,17 @@ class Trainer:
         if epoch == self.max_epochs - 1:
             return True
         self.scheduler.step()
-        if self.scheduler.t_epoch == 0:  # if it is restarted now
-            # if self.loss_last_restart < loss_valid:
-            #     return True
-            if self.loss_last_restart * hp.threshold_stop < loss_valid:
-                self.max_epochs = epoch + self.scheduler.restart_period + 1
-            self.loss_last_restart = loss_valid
+        # early stopping criterion
+        # if self.scheduler.t_epoch == 0:  # if it is restarted now
+        #     # if self.loss_last_restart < loss_valid:
+        #     #     return True
+        #     if self.loss_last_restart * hp.threshold_stop < loss_valid:
+        #         self.max_epochs = epoch + self.scheduler.restart_period + 1
+        #     self.loss_last_restart = loss_valid
 
     def train(self, loader_train: DataLoader, loader_valid: DataLoader,
               logdir: Path, first_epoch=0):
-        # Learning Rates Scheduler
+        # Learning Rate Scheduler
         self.scheduler = CosineLRWithRestarts(self.optimizer,
                                               batch_size=hp.batch_size,
                                               epoch_size=len(loader_train.dataset),
@@ -194,6 +196,7 @@ class Trainer:
 
         self.writer = CustomWriter(str(logdir), group='train', purge_step=first_epoch)
 
+        # write DNN structure to tensorboard. not properly work in PyTorch 1.3
         # self.writer.add_graph(
         #     self.model.module if hasattr(self.model, 'module') else self.model,
         #     torch.zeros(1, hp.UNet['ch_in'], 256, 256, device=self.in_device),
@@ -280,20 +283,17 @@ class Trainer:
             # write summary
             if i_iter == 0:
                 # F, T, C
-                if not self.valid_eval_sample:
-                    self.valid_eval_sample = DirSpecDataset.decollate_padded(data, 0)
+                if epoch == 0:
+                    one_sample = DirSpecDataset.decollate_padded(data, 0)
+                else:
+                    one_sample = dict()
 
                 out_one = self.postprocess(output, T_ys, 0, loader.dataset)
 
                 # DirSpecDataset.save_dirspec(
                 #     logdir / hp.form_result.format(epoch),
-                #     **self.valid_eval_sample, **out_one
+                #     **one_sample, **out_one
                 # )
-
-                if not self.writer.reused_sample:
-                    one_sample = self.valid_eval_sample
-                else:
-                    one_sample = dict()
 
                 self.writer.write_one(epoch, **one_sample, **out_one)
 
@@ -306,6 +306,9 @@ class Trainer:
     @torch.no_grad()
     def test(self, loader: DataLoader, logdir: Path):
         def save_forward(module: nn.Module, in_: Tensor, out: Tensor):
+            """ save forward propagation data
+
+            """
             module_name = str(module).split('(')[0]
             dict_to_save = dict()
             # dict_to_save['in'] = in_.detach().cpu().numpy().squeeze()
@@ -331,6 +334,7 @@ class Trainer:
         avg_measure = None
         self.model.eval()
 
+        # register hook to save output of each block
         module_counts = None
         if hp.n_save_block_outs:
             module_counts = defaultdict(int)
@@ -365,7 +369,6 @@ class Trainer:
 
             # write summary
             one_sample = DirSpecDataset.decollate_padded(data, 0)  # F, T, C
-
             out_one = self.postprocess(output, T_ys, 0, loader.dataset)
 
             # DirSpecDataset.save_dirspec(
@@ -373,21 +376,20 @@ class Trainer:
             #     **one_sample, **out_one
             # )
 
-            measure = self.writer.write_one(i_iter, **out_one, **one_sample)
+            measure = self.writer.write_one(
+                i_iter, eval_with_y_ph=hp.eval_with_y_ph, **out_one, **one_sample,
+            )
             if avg_measure is None:
                 avg_measure = AverageMeter(init_value=measure, init_count=len(T_ys))
             else:
                 avg_measure.update(measure)
-            # print
-            # str_measure = arr2str(measure).replace('\n', '; ')
-            # pbar.write(str_measure)
 
         self.model.train()
 
         avg_measure = avg_measure.get_average()
 
-        self.writer.add_text(f'{group}/Average Measure/Proposed', str(avg_measure[0]))
-        self.writer.add_text(f'{group}/Average Measure/Reverberant', str(avg_measure[1]))
+        self.writer.add_text('Average Measure/Proposed', str(avg_measure[0]))
+        self.writer.add_text('Average Measure/Reverberant', str(avg_measure[1]))
         self.writer.close()  # Explicitly close
 
         print()
@@ -396,7 +398,7 @@ class Trainer:
 
     @torch.no_grad()
     def save_result(self, loader: DataLoader, logdir: Path):
-        """ Evaluate the performance of the model.
+        """ save results in npz files without evaluation for deep griffin-lim algorithm
 
         :param loader: DataLoader to use.
         :param logdir: path of the result files.
@@ -427,8 +429,8 @@ class Trainer:
             # B, F, T
             x_phase = data['x_phase'][..., :y.shape[-1], 0].numpy()
             y_phase = data['y_phase'].numpy().squeeze()
-            out_x_ph = out_denorm * np.exp(1j*x_phase)
-            out_y_ph = out_denorm * np.exp(1j*y_phase)
+            out_x_ph = out_denorm * np.exp(1j * x_phase)
+            out_y_ph = out_denorm * np.exp(1j * y_phase)
 
             for i_b, T, in enumerate(T_ys):
                 # F, T

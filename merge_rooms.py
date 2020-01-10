@@ -23,20 +23,19 @@ So directory can be moved
 only if SIV_room1, SIV_room2, SIV_room3 exists in the same folder as SIV_room1+2+3.
 
 """
-import os
 import multiprocessing as mp
-from pathlib import Path
+import os
 from argparse import ArgumentParser
+from pathlib import Path
 
-import numpy as np
-from tqdm import tqdm
 import scipy.io as scio
+from tqdm import tqdm
 
 from hparams import hp
 
 
 def get_i_loc(fname: str):
-    return int(fname.replace('.npz', '').split('_')[-1])
+    return int(fname[:-4].split('_')[-1])
 
 
 def symlink(_src_path, src_fnames, _dst_path, q, idx):
@@ -60,6 +59,7 @@ def symlink(_src_path, src_fnames, _dst_path, q, idx):
                 src_resolve = src_resolve.parent
             if same:
                 q.put(idx)
+                print(src, dst)
                 continue
             os.remove(dst)
         os.symlink(src, dst)
@@ -69,16 +69,19 @@ def symlink(_src_path, src_fnames, _dst_path, q, idx):
 if __name__ == '__main__':
     parser = ArgumentParser()
 
-    parser.add_argument('feature', choices=('SIV', 'DV', 'mulspec', 'mulspec4'))
-    parser.add_argument('ROOMS', type=str, nargs='+')  # multiple rooms (at least 1 room)
+    parser.add_argument(
+        'feature',
+        choices=('SIV', 'DV', 'mulspec', 'mulspec4', 'das-phase', 'das4-phase'),
+    )
+    parser.add_argument('rooms', type=str, nargs='+')  # multiple rooms (at least 1 room)
 
     # truncate no. of locations: [n_loc for TRAIN, n_loc for TEST]
     parser.add_argument('--n_loc', type=int, nargs=2, default=[-1, -1])
 
     args = parser.parse_args()
 
-    PATHS_ROOMS = [hp.path_feature / f'{args.feature}_{ROOM}' for ROOM in args.ROOMS]
-    s_num_rooms = [room.lstrip('room') for room in args.ROOMS]
+    PATHS_ROOMS = [hp.path_feature / f'{args.feature}_{room}' for room in args.rooms]
+    s_num_rooms = [room.lstrip('room') for room in args.rooms]
     s_folder = f'{args.feature}_room' + '+'.join(s_num_rooms)
     s_folder += f'_{args.n_loc[0]}_{args.n_loc[1]}' if args.n_loc != [-1, -1] else ''
     PATH_MERGED = hp.path_feature / s_folder
@@ -137,8 +140,8 @@ if __name__ == '__main__':
                 # symlink(src_path, fnames, dst_path, n_loc_shift, queue, len(pbars))
 
             metadata['n_loc'] = list_n_loc
-            metadata['rooms'] = args.ROOMS
-            metadata['list_fname'] = merged_list_fname
+            metadata['rooms'] = args.rooms
+            metadata['list_fname'] = sorted(merged_list_fname)
             for k in list(metadata.keys()):
                 if k.startswith('__'):
                     metadata.pop(k)

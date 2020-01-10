@@ -26,7 +26,7 @@ from argparse import ArgumentParser, ArgumentError
 from pathlib import Path
 from typing import Tuple, TypeVar, Optional, List
 from dataclasses import dataclass, asdict
-from itertools import product
+from itertools import product as iterprod
 import cupy as cp
 # noinspection PyUnresolvedReferences
 import cupy.lib.stride_tricks
@@ -636,7 +636,7 @@ if __name__ == '__main__':
         flist_speech = list(path_speech.glob('**/*.WAV')) + list(path_speech.glob('**/*.wav'))
         n_speech = len(flist_speech)
         list_feature = [(i_speech, hp.room_create, i_loc)
-                        for i_speech, i_loc in product(range(n_speech), range(n_loc))]
+                        for i_speech, i_loc in iterprod(range(n_speech), range(n_loc))]
 
         # uniformly random sample
         if args.kind_data.lower() == 'train':
@@ -660,7 +660,7 @@ if __name__ == '__main__':
 
     if args.from_idx == -1:
         if idx_exist == -2:
-            print_save_info(n_speech)
+            print_save_info(n_feature)
             exit(0)
         idx_start = idx_exist + 1
         should_ask_cont = False

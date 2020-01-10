@@ -3,8 +3,9 @@
 Usage:
 ```
     python main.py {--train, --test={seen, unseen}}
-                   [--DF {IV, DirAC}]
+                   [--feature {SIV, DV}]
                    [--room_train ROOM_TRAIN]
+                   [--channels--VAR CH]
                    [--room_test ROOM_TEST]
                    [--logdir LOGDIR]
                    [--n_epochs MAX_EPOCH]
@@ -13,18 +14,21 @@ Usage:
                    [--batch_size B]
                    [--learning_rate LR]
                    [--weight_decay WD]
-                   [--model_name MODEL]
 ```
 
 More parameters are in `hparams.py`.
 - specify `--train` or `--test {seen, unseen}`.
-- DF: "IV" for using spatially-averaged intensity, "DirAC" for using direction vector.
+- feature: "SIV" for using spatially-averaged intensity,
+           "DV" for using direction vector.
+- VAR, CH: VAR can be path_speech, x, x_mag, y.
+           CH can be Channel.NONE, Channel.ALL, Channel.LAST.
+           Read _HyperParameters.__post_init__
 - ROOM_TRAIN: room used to train
 - ROOM_TEST: room used to test
 - LOGDIR: log directory
 - MAX_EPOCH: maximum epoch
 - START_EPOCH: start epoch (Default: -1)
-- DEVICES, OUT_DEVICE, B, LR, WD, MODEL: read `hparams.py`.
+- DEVICES, OUT_DEVICE, B, LR, WD: read `hparams.py`.
 """
 # noinspection PyUnresolvedReferences
 import matlab.engine
@@ -46,8 +50,14 @@ parser = ArgumentParser()
 
 parser.add_argument('--train', action='store_true', )
 parser.add_argument('--test', choices=('seen', 'unseen'), metavar='DATASET')
+
+# save output for deep griffin-lim
 parser.add_argument('--save', choices=('train', 'valid', 'seen', 'unseen'), metavar='DATASET')
+
+# epoch (test mode: this determines which .pt file is used for model)
 parser.add_argument('--from', type=int, default=-1, dest='epoch', metavar='EPOCH')
+
+# no. of threads per process
 parser.add_argument('--num_threads', type=int, default=0)
 
 args = hp.parse_argument(parser)
@@ -64,11 +74,13 @@ if args.num_threads > 0:
     )
     for var in np_env_vars:
         os.environ[var] = str(args.num_threads)
+        # os.environ[var] = str(12)
 
 # directory
 logdir_train = hp.logdir / 'train'
-if (args.train and args.epoch == -1 and
-        logdir_train.exists() and list(logdir_train.glob(tfevents_fname))):
+if (args.train and args.epoch == -1
+    and logdir_train.exists() and list(logdir_train.glob(tfevents_fname))):
+    # ask if overwrite
     ans = input(form_overwrite_msg.format(logdir_train))
     if ans.lower() == 'y':
         shutil.rmtree(logdir_train)
@@ -86,8 +98,13 @@ if args.test:
     foldername += f'_{args.epoch}'
     if hp.n_save_block_outs > 0:
         foldername += '_blockouts'
+    if hp.eval_with_y_ph:
+        foldername += '_true_ph'
+    if hp.use_das_phase and hp.das_err != '':
+        foldername += hp.das_err
     logdir_test /= foldername
     if logdir_test.exists() and list(logdir_test.glob(tfevents_fname)):
+        # ask if overwrite
         ans = input(form_overwrite_msg.format(logdir_test))
         if ans.lower().startswith('y'):
             shutil.rmtree(logdir_test)
@@ -124,14 +141,14 @@ dataset_valid.set_needs(**hp.channels_w_ph)
 
 loader_train = DataLoader(dataset_train,
                           batch_size=hp.batch_size,
-                          num_workers=hp.num_disk_workers,
+                          num_workers=hp.num_workers,
                           collate_fn=dataset_train.pad_collate,
                           pin_memory=(hp.device != 'cpu'),
                           shuffle=(not args.save),
                           )
 loader_valid = DataLoader(dataset_valid,
                           batch_size=hp.batch_size,
-                          num_workers=hp.num_disk_workers,
+                          num_workers=hp.num_workers,
                           collate_fn=dataset_valid.pad_collate,
                           pin_memory=(hp.device != 'cpu'),
                           shuffle=False,
@@ -148,7 +165,7 @@ elif args.test:  # args.test
                                   **hp.channels_w_ph)
     loader = DataLoader(dataset_test,
                         batch_size=1,
-                        num_workers=hp.num_disk_workers,
+                        num_workers=hp.num_workers,
                         collate_fn=dataset_test.pad_collate,
                         pin_memory=(hp.device != 'cpu'),
                         shuffle=False,
@@ -167,7 +184,7 @@ else:
                                       **hp.channels_w_ph)
         loader = DataLoader(dataset_test,
                             batch_size=hp.batch_size,
-                            num_workers=hp.num_disk_workers,
+                            num_workers=hp.num_workers,
                             collate_fn=dataset_test.pad_collate,
                             pin_memory=(hp.device != 'cpu'),
                             shuffle=False,
